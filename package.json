@@ -1,0 +1,60 @@
+{
+  "name": "nekocode-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "NekoCode Desktop - Electron desktop coding agent built on the PI agent core",
+  "main": "out/main/index.js",
+  "workspaces": [
+    "pi/packages/*",
+    "pi/packages/session-backends/*"
+  ],
+  "scripts": {
+    "dev": "bunx --bun --no-install electron-vite dev",
+    "build": "bunx --bun --no-install electron-vite build",
+    "start": "bunx --bun --no-install electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test src/main/ src/shared/",
+    "pi:build": "bun scripts/pi-toolchain.ts build",
+    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build"
+  },
+  "trustedDependencies": [
+    "@google/genai",
+    "electron",
+    "esbuild",
+    "node-pty",
+    "protobufjs"
+  ],
+  "dependencies": {
+    "@base-ui/react": "^1.5.0",
+    "@earendil-works/pi-agent-core": "workspace:0.85.1",
+    "@earendil-works/pi-ai": "workspace:0.85.1",
+    "@earendil-works/pi-coding-agent": "workspace:0.85.1",
+    "@tabler/icons-react": "^3.44.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "class-variance-authority": "^0.7.1",
+    "node-pty": "1.1.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-icons": "^5.6.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^24.10.13",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@typescript/native-preview": "7.0.0-dev.20260120.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "bun-types": "1.4.2",
+    "electron": "44.3.0",
+    "electron-vite": "^5.0.0",
+    "esbuild": "0.28.2",
+    "shx": "0.4.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}

@@ -1,0 +1,79 @@
+// FILE: icon-button.tsx
+// Purpose: Centralizes labeled icon-only button behavior on top of the shadcn Button primitive.
+// Layer: Shared UI primitive
+// Exports: IconButton
+// Depends on: Button variants and tooltip primitives.
+
+import { forwardRef, type ComponentProps, type ReactNode } from "react";
+
+import { cn } from "~/lib/utils";
+
+import { Button } from "./button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
+
+type IconButtonProps = Omit<ComponentProps<typeof Button>, "aria-label" | "children"> & {
+  label: string;
+  tooltip?: ReactNode;
+  tooltipSide?: ComponentProps<typeof TooltipPopup>["side"];
+  children: ReactNode;
+};
+
+// Keeps the accessible label, optional browser title, and tooltip wiring identical everywhere.
+const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
+  {
+    label,
+    tooltip,
+    tooltipSide: tooltipSideProp,
+    title,
+    className,
+    size: sizeProp,
+    variant: variantProp,
+    children,
+    ...buttonProps
+  },
+  ref,
+) {
+  const tooltipSide = tooltipSideProp ?? "top";
+  const size = sizeProp === undefined ? "icon-xs" : sizeProp;
+  const variant = variantProp === undefined ? "ghost" : variantProp;
+  if (tooltip === undefined || tooltip === null) {
+    return (
+      <Button
+        {...buttonProps}
+        ref={ref}
+        aria-label={label}
+        className={cn("[&_svg,&_[data-slot=central-icon]]:mx-0", className)}
+        size={size}
+        title={title}
+        variant={variant}
+      >
+        {children}
+      </Button>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            {...buttonProps}
+            ref={ref}
+            aria-label={label}
+            className={cn("[&_svg,&_[data-slot=central-icon]]:mx-0", className)}
+            size={size}
+            title={title}
+            variant={variant}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side={tooltipSide}>
+        {typeof tooltip === "string" ? <p>{tooltip}</p> : tooltip}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
+
+export { IconButton };

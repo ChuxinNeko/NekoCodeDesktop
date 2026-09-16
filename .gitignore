@@ -1,0 +1,16 @@
+node_modules/
+out/
+dist/
+*.log
+*.tsbuildinfo
+
+# Upstream reference checkouts (not part of this project's source).
+# The PI agent core is in-tree at pi/ and IS part of this project.
+/core/
+/demo/
+
+# PI build artifacts and generated model data.
+pi/packages/*/dist/
+pi/packages/*/*/dist/
+pi/packages/ai/src/providers/data/
+pi/packages/ai/src/providers/.model-generation-*/

@@ -1,0 +1,6 @@
+# PI's build scripts (and the coding-agent bundler in pi/scripts/) resolve bare
+# imports from the repository root, which assumes npm's flat, hoisted node_modules.
+# bun's default per-package linking breaks that, so pin the linker strategy here
+# instead of relying on `bun install --linker=hoisted` being passed by hand.
+[install]
+linker = "hoisted"
