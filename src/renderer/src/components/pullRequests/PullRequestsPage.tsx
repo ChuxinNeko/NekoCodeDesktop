@@ -8,6 +8,7 @@ import type {
 	RepositoryIdentity,
 } from "../../../../shared/pullRequests";
 import { api, errorMessage } from "../../api";
+import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -29,10 +30,10 @@ import {
 	XIcon,
 } from "../../lib/icons";
 
-const FILTERS: { id: PullRequestFilter; label: string }[] = [
-	{ id: "open", label: "Open" },
-	{ id: "closed", label: "Closed" },
-	{ id: "all", label: "All" },
+const FILTERS: { id: PullRequestFilter; labelKey: TranslationKey }[] = [
+	{ id: "open", labelKey: "pr.filter.open" },
+	{ id: "closed", labelKey: "pr.filter.closed" },
+	{ id: "all", labelKey: "pr.filter.all" },
 ];
 
 function relativeTime(iso: string): string {
@@ -165,6 +166,7 @@ function CreatePullRequestForm({
 	onCreated: (pull: PullRequestSummary) => void;
 	onCancel: () => void;
 }) {
+	const { t } = useTranslation();
 	const [title, setTitle] = useState("");
 	const [body, setBody] = useState("");
 	const [base, setBase] = useState("main");
@@ -203,22 +205,22 @@ function CreatePullRequestForm({
 	return (
 		<div className="flex flex-col gap-3 rounded-xl border border-border p-3">
 			<div className="flex flex-col gap-1">
-				<Label>Title</Label>
+				<Label>{t("pr.form.title")}</Label>
 				<Input value={title} onChange={(event) => setTitle(event.target.value)} />
 			</div>
 			<div className="flex flex-col gap-1">
-				<Label>Body</Label>
+				<Label>{t("pr.form.body")}</Label>
 				<Textarea rows={5} value={body} onChange={(event) => setBody(event.target.value)} />
 			</div>
 			<div className="grid grid-cols-2 gap-3">
 				<div className="flex flex-col gap-1">
-					<Label>Head branch</Label>
+					<Label>{t("pr.form.head")}</Label>
 					<select
 						className="h-8 rounded-lg border border-border bg-transparent px-2 text-[length:var(--app-font-size-ui,12px)]"
 						onChange={(event) => setHead(event.target.value)}
 						value={head}
 					>
-						<option value="">Select…</option>
+						<option value="">{t("common.select")}</option>
 						{branches.map((branch) => (
 							<option key={branch.name} value={branch.name}>
 								{branch.name}
@@ -227,13 +229,13 @@ function CreatePullRequestForm({
 					</select>
 				</div>
 				<div className="flex flex-col gap-1">
-					<Label>Base branch</Label>
+					<Label>{t("pr.form.base")}</Label>
 					<Input value={base} onChange={(event) => setBase(event.target.value)} />
 				</div>
 			</div>
 			<label className="flex items-center gap-2 text-[length:var(--app-font-size-ui-sm,11px)]">
 				<input checked={draft} onChange={(event) => setDraft(event.target.checked)} type="checkbox" />
-				Create as draft
+				{t("pr.form.draft")}
 			</label>
 			{error ? (
 				<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">{error}</p>
@@ -241,7 +243,7 @@ function CreatePullRequestForm({
 			<div className="flex items-center gap-2">
 				<div className="flex-1" />
 				<Button onClick={onCancel} size="sm" variant="ghost">
-					Cancel
+					{t("common.cancel")}
 				</Button>
 				<Button
 					disabled={busy || title.trim().length === 0 || head.length === 0}
@@ -250,7 +252,7 @@ function CreatePullRequestForm({
 					variant="subtle"
 				>
 					{busy ? <Spinner className="size-3" /> : null}
-					Create pull request
+					{t("pr.form.submit")}
 				</Button>
 			</div>
 		</div>
@@ -258,6 +260,7 @@ function CreatePullRequestForm({
 }
 
 export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
+	const { t } = useTranslation();
 	const [filter, setFilter] = useState<PullRequestFilter>("open");
 	const [repository, setRepository] = useState<RepositoryIdentity | null>(null);
 	const [pullRequests, setPullRequests] = useState<PullRequestSummary[]>([]);
@@ -316,7 +319,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 		<div className="flex min-h-0 flex-1 flex-col">
 			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
 				<GitPullRequestIcon className="size-3.5" />
-				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">Pull requests</span>
+				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">{t("nav.pullRequests")}</span>
 				{repository ? (
 					<span className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
 						{repository.owner}/{repository.repo}
@@ -335,7 +338,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 									: "text-muted-foreground hover:text-foreground",
 							)}
 						>
-							{entry.label}
+							{t(entry.labelKey)}
 						</button>
 					))}
 				</div>
@@ -348,7 +351,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 					variant="chrome-outline"
 				>
 					<PlusIcon className="size-3.5" />
-					New
+					{t("common.new")}
 				</Button>
 				<Button onClick={() => void refresh()} size="icon-xs" variant="ghost">
 					<RefreshCwIcon className="size-3.5" />
@@ -366,11 +369,11 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 
 			{!cwd ? (
 				<p className="p-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					Open a project to list its pull requests.
+					{t("pr.openProject")}
 				</p>
 			) : !repository && !loading ? (
 				<p className="p-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					No GitHub remote found. Pull requests need an `origin` pointing at a GitHub repository.
+					{t("pr.noRemote")}
 				</p>
 			) : (
 				<div className="flex min-h-0 flex-1">
@@ -388,7 +391,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 						) : null}
 						{pullRequests.length === 0 && !loading ? (
 							<p className="px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-								No pull requests in this filter.
+								{t("pr.empty")}
 							</p>
 						) : (
 							pullRequests.map((pull) => (
@@ -407,7 +410,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 							<div className="flex flex-1 items-center justify-center">
 								{selected === null ? (
 									<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-										Select a pull request.
+										{t("pr.select")}
 									</p>
 								) : (
 									<Spinner className="size-4 text-muted-foreground" />
@@ -427,7 +430,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 											variant="chrome-outline"
 										>
 											<ExternalLinkIcon className="size-3.5" />
-											Open
+											{t("common.open")}
 										</Button>
 									</div>
 									<p className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
@@ -445,7 +448,10 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 								{detail.checkRuns.length > 0 ? (
 									<div className="flex flex-col gap-1">
 										<span className={cn("text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-											Checks ({detail.checks.success}/{detail.checks.total} passing)
+											{t("pr.checks", {
+												success: detail.checks.success,
+												total: detail.checks.total,
+											})}
 										</span>
 										{detail.checkRuns.map((run) => (
 											<div
@@ -468,7 +474,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 								{detail.reviewComments.length > 0 ? (
 									<div className="flex flex-col gap-2">
 										<span className={cn("text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-											Review comments
+											{t("pr.reviewComments")}
 										</span>
 										{detail.reviewComments.map((comment) => (
 											<CommentCard
@@ -490,7 +496,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 								{detail.issueComments.length > 0 ? (
 									<div className="flex flex-col gap-2">
 										<span className={cn("text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-											Comments
+											{t("pr.comments")}
 										</span>
 										{detail.issueComments.map((comment) => (
 											<CommentCard

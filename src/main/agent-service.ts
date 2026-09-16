@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { app, type BrowserWindow } from "electron";
 import type {
@@ -6,17 +13,23 @@ import type {
 	AgentSessionEvent,
 	ModelRuntime,
 	SessionManager,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
+	AgentDefaults,
 	AgentSnapshot,
+	DeleteSessionRequest,
 	ExecutionMode,
 	ModelOption,
-	OpenThreadRequest,
+	OpenSessionRequest,
+	RenameSessionRequest,
 	SendPromptRequest,
 	SendPromptResult,
-	ThreadSummary,
+	SessionSummary,
 	ThinkingLevel,
 } from "../shared/agent";
+import { normalizeLine, sessionTitle } from "../shared/sessions";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import {
 	CellProjector,
@@ -25,7 +38,7 @@ import {
 } from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
 import { decideModelAfterReload } from "./model-refresh";
-import { pi } from "./pi";
+import { pi, piAi } from "./pi";
 
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const FULL_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
@@ -41,7 +54,7 @@ const THINKING_LEVELS: ThinkingLevel[] = [
 
 const HELP_TEXT = [
 	"/help — list commands",
-	"/new, /clear — start a new thread",
+	"/new, /clear — start a new session",
 	"/abort — stop the current run",
 	"/compact — compact context",
 	"/model [provider/id] — list or select a model",
@@ -53,6 +66,54 @@ const NO_MODEL_ERROR =
 	"No model configured. Add credentials to ~/.pi/agent/auth.json or set a provider API key environment variable, then restart.";
 
 const MODES: ExecutionMode[] = ["read-only", "auto", "full-access"];
+
+/**
+ * Preferred model per provider when nothing is configured — a verbatim copy of
+ * `defaultModelPerProvider` from pi's model-resolver (vendored pi@0.85.1), which
+ * the package does not re-export. Keep in sync when bumping pi.
+ */
+const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
+	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
+	"ant-ling": "Ring-2.6-1T",
+	anthropic: "claude-opus-4-8",
+	openai: "gpt-5.5",
+	"azure-openai-responses": "gpt-5.4",
+	"openai-codex": "gpt-5.5",
+	radius: "balanced",
+	nvidia: "nvidia/nemotron-3-super-120b-a12b",
+	deepseek: "deepseek-v4-pro",
+	google: "gemini-3.1-pro-preview",
+	"google-vertex": "gemini-3.1-pro-preview",
+	"github-copilot": "gpt-5.4",
+	openrouter: "moonshotai/kimi-k2.6",
+	"vercel-ai-gateway": "zai/glm-5.1",
+	xai: "grok-4.6",
+	groq: "openai/gpt-oss-120b",
+	cerebras: "gpt-oss-120b",
+	zai: "glm-5.3",
+	"zai-coding-cn": "glm-5.3",
+	mistral: "devstral-medium-latest",
+	minimax: "MiniMax-M2.7",
+	"minimax-cn": "MiniMax-M2.7",
+	moonshotai: "kimi-k2.6",
+	"moonshotai-cn": "kimi-k2.6",
+	huggingface: "moonshotai/Kimi-K2.6",
+	fireworks: "accounts/fireworks/models/kimi-k2p6",
+	together: "moonshotai/Kimi-K2.6",
+	baseten: "zai-org/GLM-5.2",
+	opencode: "kimi-k2.6",
+	"opencode-go": "kimi-k2.6",
+	"kimi-coding": "kimi-for-coding",
+	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
+	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
+	"qwen-token-plan": "qwen3.7-max",
+	"qwen-token-plan-cn": "qwen3.7-max",
+	"qwen-token-plan-individual": "qwen3.8-max",
+	xiaomi: "mimo-v2.5-pro",
+	"xiaomi-token-plan-cn": "mimo-v2.5-pro",
+	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
+	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+};
 
 function assertDirectory(cwd: string): void {
 	if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
@@ -75,7 +136,18 @@ export class AgentService {
 	private createdAt = Date.now();
 	private pendingError: string | undefined;
 	private generation = 0;
+	private wasStreaming = false;
 	private customProviderIds = new Set<string>();
+	/**
+	 * Composer picks made on the welcome screen, applied to the next new session
+	 * (opening an existing session restores its own model instead). In-session
+	 * picks feed back here too, so the choice is one global "last selected".
+	 */
+	private pendingModelKey: string | null = null;
+	private pendingThinkingLevel: ThinkingLevel | null = null;
+	/** Last directory the renderer asked about — where pushed defaults apply. */
+	private cwd: string | null = null;
+	private readonly preferencesPath: string;
 
 	constructor(
 		private readonly win: BrowserWindow,
@@ -83,6 +155,34 @@ export class AgentService {
 	) {
 		this.sessionDir = join(app.getPath("userData"), "sessions");
 		mkdirSync(this.sessionDir, { recursive: true });
+		this.preferencesPath = join(app.getPath("userData"), "preferences.json");
+		this.loadPreferences();
+	}
+
+	/**
+	 * App-level prefs that are not pi settings — currently just the execution
+	 * mode. Missing or corrupt files fall back to "auto".
+	 */
+	private loadPreferences(): void {
+		try {
+			const raw: unknown = JSON.parse(
+				readFileSync(this.preferencesPath, "utf8"),
+			);
+			const mode = (raw as { mode?: unknown }).mode;
+			if (MODES.includes(mode as ExecutionMode)) {
+				this.mode = mode as ExecutionMode;
+			}
+		} catch {
+			// First launch or a torn file — the default stands.
+		}
+	}
+
+	private savePreferences(): void {
+		try {
+			writeFileSync(this.preferencesPath, `${JSON.stringify({ mode: this.mode })}\n`);
+		} catch {
+			// Best-effort — the pick still applies for this run.
+		}
 	}
 
 	/**
@@ -123,7 +223,9 @@ export class AgentService {
 					id,
 					name: id,
 					api: profile.api,
-					reasoning: false,
+					// PI clamps every thinking level to "off" on a model that is not
+					// flagged as reasoning, so this is what makes the picker do anything.
+					reasoning: profile.reasoning,
 					input: ["text"],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: 128000,
@@ -178,6 +280,9 @@ export class AgentService {
 			}
 		}
 		this.emit();
+		// The welcome screen's model list and resolved default change with the
+		// available set too — it is showing even though emit() reported null.
+		this.emitDefaults();
 	}
 
 	async testConfiguredModel(req: ModelTestRequest): Promise<ModelTestResult> {
@@ -245,7 +350,7 @@ export class AgentService {
 		}
 	}
 
-	async listThreads(cwd: string): Promise<ThreadSummary[]> {
+	async listSessions(cwd: string): Promise<SessionSummary[]> {
 		assertDirectory(cwd);
 		const { SessionManager } = await pi();
 		const sessions = await SessionManager.list(cwd, this.sessionDir);
@@ -253,30 +358,28 @@ export class AgentService {
 			id: s.id,
 			sessionFile: s.path,
 			cwd: s.cwd || cwd,
-			title: s.name || s.firstMessage.trim().slice(0, 80) || "New chat",
+			title: sessionTitle(s.name, s.firstMessage),
+			// Only renamed sessions get a second line: for the rest the title
+			// already is the opening prompt, and repeating it reads as noise.
+			preview: s.name?.trim() ? normalizeLine(s.firstMessage, 160) : "",
 			createdAt: s.created.getTime(),
 			updatedAt: s.modified.getTime(),
 			messageCount: s.messageCount,
 		}));
 	}
 
-	async createThread(cwd: string): Promise<AgentSnapshot> {
+	async createSession(cwd: string): Promise<AgentSnapshot> {
 		assertDirectory(cwd);
+		this.cwd = cwd;
 		const { SessionManager } = await pi();
 		const sessionManager = SessionManager.create(cwd, this.sessionDir);
-		return this.startSession(sessionManager);
+		return this.startSession(sessionManager, cwd);
 	}
 
-	async openThread(req: OpenThreadRequest): Promise<AgentSnapshot> {
+	async openSession(req: OpenSessionRequest): Promise<AgentSnapshot> {
 		assertDirectory(req.cwd);
-		const sessionDir = resolve(this.sessionDir);
-		const sessionFile = resolve(req.sessionFile);
-		if (!sessionFile.startsWith(sessionDir + sep)) {
-			throw new Error(`Session file outside session dir: ${req.sessionFile}`);
-		}
-		if (!existsSync(sessionFile) || !statSync(sessionFile).isFile()) {
-			throw new Error(`Session file does not exist: ${req.sessionFile}`);
-		}
+		this.cwd = req.cwd;
+		const sessionFile = this.resolveSessionFile(req.sessionFile);
 		const { SessionManager } = await pi();
 		const sessionManager = SessionManager.open(
 			sessionFile,
@@ -286,13 +389,61 @@ export class AgentService {
 		return this.startSession(sessionManager);
 	}
 
+	/**
+	 * Name a session. The open session has to be renamed through its own manager —
+	 * a second manager over the same file would append behind its back, and the
+	 * header it already holds in memory would go stale.
+	 */
+	async renameSession(req: RenameSessionRequest): Promise<void> {
+		const title = normalizeLine(req.title, 80);
+		if (!title) throw new Error("Session name cannot be empty");
+		const sessionFile = this.resolveSessionFile(req.sessionFile);
+
+		const active = this.session;
+		if (active && active.sessionManager.getSessionFile() === sessionFile) {
+			active.setSessionName(title);
+		} else {
+			const { SessionManager } = await pi();
+			SessionManager.open(sessionFile, this.sessionDir, req.cwd).appendSessionInfo(title);
+		}
+		this.emitSessionsChanged();
+		if (active) this.emit();
+	}
+
+	/**
+	 * Delete a session's transcript. Deleting the open one closes it first, so the
+	 * agent is not left holding a handle to a file that no longer exists; the
+	 * renderer learns the session is gone from the cleared snapshot.
+	 */
+	async deleteSession(req: DeleteSessionRequest): Promise<void> {
+		const sessionFile = this.resolveSessionFile(req.sessionFile);
+		const closedActive = this.session?.sessionManager.getSessionFile() === sessionFile;
+		if (closedActive) this.close();
+		rmSync(sessionFile, { force: true });
+		this.emitSessionsChanged();
+		if (closedActive) this.emit();
+	}
+
+	/** Resolve a renderer-supplied path, refusing anything outside the session directory. */
+	private resolveSessionFile(path: string): string {
+		const sessionDir = resolve(this.sessionDir);
+		const sessionFile = resolve(path);
+		if (!sessionFile.startsWith(sessionDir + sep)) {
+			throw new Error(`Session file outside session dir: ${path}`);
+		}
+		if (!existsSync(sessionFile) || !statSync(sessionFile).isFile()) {
+			throw new Error(`Session file does not exist: ${path}`);
+		}
+		return sessionFile;
+	}
+
 	getSnapshot(): AgentSnapshot | null {
 		return this.session ? this.buildSnapshot() : null;
 	}
 
 	async send(req: SendPromptRequest): Promise<SendPromptResult> {
 		const session = this.session;
-		if (!session) return { accepted: false, error: "No active thread" };
+		if (!session) return { accepted: false, error: "No active session" };
 		const text = req.text;
 		if (!text.trim()) return { accepted: false, error: "Empty message" };
 
@@ -314,9 +465,12 @@ export class AgentService {
 			return { accepted: false, error: msg };
 		}
 
+		// The opening prompt becomes the session's name, which is also what makes a
+		// brand-new session appear in the list — until then it has no transcript.
 		const firstPrompt = !session.messages.some((m) => m.role === "user");
 		if (firstPrompt) {
-			session.setSessionName(text.trim().replace(/\s+/g, " ").slice(0, 80));
+			session.setSessionName(normalizeLine(text, 80));
+			this.emitSessionsChanged();
 		}
 
 		try {
@@ -345,13 +499,102 @@ export class AgentService {
 		this.emit();
 	}
 
-	async setModel(modelKey: string): Promise<AgentSnapshot> {
+	/**
+	 * Picker state for the welcome screen, where no session exists to snapshot.
+	 * The model is what a new session in `cwd` would start with, so the picker
+	 * never shows a selection the session would not actually use.
+	 */
+	async getDefaults(cwd: string): Promise<AgentDefaults> {
+		assertDirectory(cwd);
+		this.cwd = cwd;
+		const runtime = await this.getModelRuntime();
+		const { SettingsManager } = await pi();
+		const { clampThinkingLevel, getSupportedThinkingLevels } = await piAi();
+		const settings = SettingsManager.create(cwd);
+		const model = this.resolveNewSessionModel(runtime, settings);
+		const thinkingLevels = model
+			? (getSupportedThinkingLevels(model) as ThinkingLevel[])
+			: [...THINKING_LEVELS];
+		const requested =
+			this.pendingThinkingLevel ??
+			(model
+				? settings.getModelThinkingLevel(model.provider, model.id)
+				: undefined) ??
+			settings.getDefaultThinkingLevel() ??
+			"medium";
+		return {
+			modelKey: model ? modelKeyOf(model) : null,
+			models: this.modelOptions(),
+			thinkingLevel: model
+				? (clampThinkingLevel(model, requested) as ThinkingLevel)
+				: "off",
+			thinkingLevels,
+			mode: this.mode,
+		};
+	}
+
+	/**
+	 * The model a new session in `cwd` starts with: a welcome-screen pick wins,
+	 * then the saved default, then pi's per-provider preference order, then the
+	 * first available model. Mirrors findInitialModel()'s non-continuing path;
+	 * createAgentSession() skips its own resolution when we pass `model`.
+	 */
+	private resolveNewSessionModel(
+		runtime: ModelRuntime,
+		settings: SettingsManager,
+	): Model<Api> | undefined {
+		const available = runtime.getAvailableSnapshot();
+		if (this.pendingModelKey) {
+			const picked = available.find(
+				(m) => modelKeyOf(m) === this.pendingModelKey,
+			);
+			if (picked) return picked;
+			// Stale pick — the profile was deleted or lost auth since.
+			this.pendingModelKey = null;
+		}
+		const defaultProvider = settings.getDefaultProvider();
+		const defaultModelId = settings.getDefaultModel();
+		if (defaultProvider && defaultModelId) {
+			const found = runtime.getModel(defaultProvider, defaultModelId);
+			if (found && runtime.hasConfiguredAuth(found.provider)) return found;
+		}
+		for (const [provider, id] of Object.entries(PROVIDER_DEFAULT_MODEL)) {
+			const match = available.find(
+				(m) => m.provider === provider && m.id === id,
+			);
+			if (match) return match;
+		}
+		return available[0];
+	}
+
+	/**
+	 * The settings manager that owns default writes: the open session's when
+	 * there is one (a second manager over the same files could clobber them),
+	 * else a fresh one for the current directory.
+	 */
+	private async settingsForDefaults(): Promise<SettingsManager> {
+		if (this.session) return this.session.settingsManager;
+		const { SettingsManager } = await pi();
+		return SettingsManager.create(this.cwd ?? app.getPath("home"));
+	}
+
+	async setModel(modelKey: string): Promise<AgentSnapshot | null> {
 		const runtime = await this.getModelRuntime();
 		const model = runtime
 			.getAvailableSnapshot()
 			.find((m) => modelKeyOf(m) === modelKey);
 		if (!model) throw new Error(`Unknown model: ${modelKey}`);
-		if (!this.session) throw new Error("No active thread");
+		this.pendingModelKey = modelKey;
+		// A pick is the user's default for future sessions too — persist it like
+		// the SDK's { persist: true } does, so it survives a restart.
+		(await this.settingsForDefaults()).setDefaultModelAndProvider(
+			model.provider,
+			model.id,
+		);
+		if (!this.session) {
+			this.emitDefaults();
+			return null;
+		}
 		await this.session.setModel(model);
 		this.pendingError = undefined;
 		const snapshot = this.buildSnapshot();
@@ -359,10 +602,15 @@ export class AgentService {
 		return snapshot;
 	}
 
-	setThinkingLevel(level: ThinkingLevel): AgentSnapshot {
-		if (!this.session) throw new Error("No active thread");
+	async setThinkingLevel(level: ThinkingLevel): Promise<AgentSnapshot | null> {
 		if (!THINKING_LEVELS.includes(level)) {
 			throw new Error(`Unknown thinking level: ${level}`);
+		}
+		this.pendingThinkingLevel = level;
+		(await this.settingsForDefaults()).setDefaultThinkingLevel(level);
+		if (!this.session) {
+			this.emitDefaults();
+			return null;
 		}
 		this.session.setThinkingLevel(level);
 		const snapshot = this.buildSnapshot();
@@ -370,12 +618,16 @@ export class AgentService {
 		return snapshot;
 	}
 
-	setMode(mode: ExecutionMode): AgentSnapshot {
+	setMode(mode: ExecutionMode): AgentSnapshot | null {
 		if (!MODES.includes(mode)) {
 			throw new Error(`Unknown execution mode: ${String(mode)}`);
 		}
-		if (!this.session) throw new Error("No active thread");
 		this.mode = mode;
+		this.savePreferences();
+		if (!this.session) {
+			this.emitDefaults();
+			return null;
+		}
 		this.session.setActiveToolsByName(
 			mode === "read-only" ? READ_ONLY_TOOLS : FULL_TOOLS,
 		);
@@ -390,10 +642,14 @@ export class AgentService {
 		this.unsubscribe = null;
 		this.session?.dispose();
 		this.session = null;
+		this.wasStreaming = false;
+		this.projector.reset();
+		this.pendingError = undefined;
 	}
 
 	private async startSession(
 		sessionManager: SessionManager,
+		freshCwd?: string,
 	): Promise<AgentSnapshot> {
 		const generation = ++this.generation;
 		// This transition owns the currently-active session; dispose it now.
@@ -404,12 +660,24 @@ export class AgentService {
 		this.projector.reset();
 		this.pendingError = undefined;
 
-		const { createAgentSession } = await pi();
+		const { createAgentSession, SettingsManager } = await pi();
 		const modelRuntime = await this.getModelRuntime();
+		// A brand-new session takes the welcome screen's picks; an opened one
+		// keeps the model it was saved with.
+		const model = freshCwd
+			? this.resolveNewSessionModel(
+					modelRuntime,
+					SettingsManager.create(freshCwd),
+				)
+			: undefined;
 		const { session, modelFallbackMessage } = await createAgentSession({
 			cwd: sessionManager.getCwd(),
 			sessionManager,
 			modelRuntime,
+			model,
+			thinkingLevel: freshCwd
+				? (this.pendingThinkingLevel ?? undefined)
+				: undefined,
 		});
 		if (generation !== this.generation) {
 			session.dispose();
@@ -427,19 +695,25 @@ export class AgentService {
 			this.projector.notice("warning", modelFallbackMessage);
 		}
 		this.projector.rebuild(session.messages);
+		this.wasStreaming = session.isStreaming;
 		this.unsubscribe = session.subscribe((event: AgentSessionEvent) => {
 			this.onSessionEvent(event);
 		});
 		const snapshot = this.buildSnapshot();
 		this.emit(snapshot);
+		this.emitSessionsChanged();
 		return snapshot;
 	}
 
 	private onSessionEvent(event: AgentSessionEvent): void {
-		if (!this.session) return;
+		const session = this.session;
+		if (!session) return;
 		this.projector.handleEvent(event as ProjectionEvent);
-		this.projector.rebuild(this.session.messages);
+		this.projector.rebuild(session.messages);
 		this.emit();
+		// A finished run is when the row's message count and timestamp settle.
+		if (this.wasStreaming && !session.isStreaming) this.emitSessionsChanged();
+		this.wasStreaming = session.isStreaming;
 	}
 
 	private async handleSlash(
@@ -447,7 +721,7 @@ export class AgentService {
 		args: string,
 	): Promise<SendPromptResult | null> {
 		const session = this.session;
-		if (!session) return { accepted: false, error: "No active thread" };
+		if (!session) return { accepted: false, error: "No active session" };
 		switch (command) {
 			case "help":
 				this.projector.notice("info", HELP_TEXT);
@@ -455,7 +729,7 @@ export class AgentService {
 				return { accepted: true };
 			case "new":
 			case "clear":
-				return { accepted: true, action: "new-thread" };
+				return { accepted: true, action: "new-session" };
 			case "abort":
 				await session.abort();
 				this.emit();
@@ -501,7 +775,7 @@ export class AgentService {
 					this.emit();
 					return { accepted: false, error: message };
 				}
-				this.setThinkingLevel(args as ThinkingLevel);
+				await this.setThinkingLevel(args as ThinkingLevel);
 				return { accepted: true };
 			}
 			case "terminal":
@@ -532,7 +806,7 @@ export class AgentService {
 
 	private buildSnapshot(): AgentSnapshot {
 		const session = this.session;
-		if (!session) throw new Error("No active thread");
+		if (!session) throw new Error("No active session");
 		const sm = session.sessionManager;
 		const messages = session.messages;
 		const sessionFile = sm.getSessionFile() ?? "";
@@ -549,16 +823,15 @@ export class AgentService {
 			firstUser && typeof firstUser.content === "string"
 				? firstUser.content
 				: "";
+		const name = sm.getSessionName();
 		const model = session.model;
 		return {
-			thread: {
+			session: {
 				id: sm.getSessionId(),
 				sessionFile,
 				cwd: sm.getCwd(),
-				title:
-					sm.getSessionName() ||
-					firstText.trim().slice(0, 80) ||
-					"New chat",
+				title: sessionTitle(name, firstText),
+				preview: name?.trim() ? normalizeLine(firstText, 160) : "",
 				createdAt,
 				updatedAt: Date.now(),
 				messageCount: messages.length,
@@ -573,13 +846,50 @@ export class AgentService {
 					: null,
 			models: this.modelOptions(),
 			thinkingLevel: session.thinkingLevel,
+			thinkingLevels: session.getAvailableThinkingLevels(),
 			mode: this.mode,
 			error: this.pendingError,
 		};
 	}
 
+	/**
+	 * Push the current state to the renderer, or `null` when no session is open.
+	 *
+	 * Not every emit comes from a session: saving a model profile refreshes the
+	 * runtime and emits, and that happens from the welcome screen before there is
+	 * anything to project. Reporting "no session" is the answer there — building a
+	 * snapshot would throw out of whatever triggered the emit.
+	 */
 	private emit(snapshot?: AgentSnapshot): void {
 		if (this.win.isDestroyed()) return;
-		this.win.webContents.send("agent:snapshot", snapshot ?? this.buildSnapshot());
+		const payload = snapshot ?? (this.session ? this.buildSnapshot() : null);
+		this.win.webContents.send("agent:snapshot", payload);
+	}
+
+	/**
+	 * Push refreshed welcome-screen picker state. Only sent once the renderer
+	 * has named a directory — before that there is no welcome screen showing.
+	 */
+	private emitDefaults(): void {
+		if (this.win.isDestroyed() || !this.cwd) return;
+		const cwd = this.cwd;
+		void this.getDefaults(cwd)
+			.then((defaults) => {
+				if (!this.win.isDestroyed()) {
+					this.win.webContents.send("agent:defaults", defaults);
+				}
+			})
+			.catch(() => undefined);
+	}
+
+	/**
+	 * Nudge the sidebar to re-read the session list. Sent on the transitions that
+	 * change what a row shows — a session opening, being named, finishing a run,
+	 * being renamed or deleted — rather than on every streaming event, because
+	 * listing re-reads every transcript on disk.
+	 */
+	private emitSessionsChanged(): void {
+		if (this.win.isDestroyed()) return;
+		this.win.webContents.send("agent:sessionsChanged");
 	}
 }

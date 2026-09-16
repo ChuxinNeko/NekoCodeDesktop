@@ -3,11 +3,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { api, errorMessage } from "../api";
+import { useTranslation } from "../i18n";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { XIcon } from "../lib/icons";
 
 export function TerminalPanel({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
+	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const terminalRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<FitAddon | null>(null);
@@ -39,7 +41,7 @@ export function TerminalPanel({ cwd, onClose }: { cwd: string | null; onClose: (
 		});
 		const offExit = api.onTerminalExit((exit) => {
 			if (exit.id === sessionIdRef.current) {
-				terminal.write(`\r\n[process exited: ${String(exit.exitCode)}]\r\n`);
+				terminal.write(`\r\n${t("terminal.exited", { code: exit.exitCode })}\r\n`);
 			}
 		});
 
@@ -79,7 +81,7 @@ export function TerminalPanel({ cwd, onClose }: { cwd: string | null; onClose: (
 			terminalRef.current = null;
 			fitRef.current = null;
 		};
-	}, [cwd]);
+	}, [cwd, t]);
 
 	return (
 		<div
@@ -88,7 +90,7 @@ export function TerminalPanel({ cwd, onClose }: { cwd: string | null; onClose: (
 		>
 			<div className="flex h-8 shrink-0 items-center gap-2 px-2">
 				<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-					Terminal {cwd ? `— ${cwd}` : ""}
+					{t("terminal.title")} {cwd ? `— ${cwd}` : ""}
 				</span>
 				<div className="flex-1" />
 				<Button onClick={onClose} size="icon-chip" variant="ghost">

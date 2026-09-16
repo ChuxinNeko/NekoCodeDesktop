@@ -10,6 +10,8 @@ export interface ModelProfileSummary {
 	route: string;
 	api: ModelApiProtocol;
 	modelIds: string[];
+	/** The endpoint serves reasoning models, so thinking levels apply to them. */
+	reasoning: boolean;
 	hasApiKey: boolean;
 	createdAt: number;
 	updatedAt: number;
@@ -29,6 +31,7 @@ export interface SaveModelProfileRequest {
 	api: ModelApiProtocol;
 	apiKey?: string;
 	modelIds: string[];
+	reasoning?: boolean;
 }
 
 export interface FetchModelsRequest {

@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { AgentSnapshot, ExecutionMode, ThinkingLevel, ThreadSummary } from "../../shared/agent";
+import { useEffect, useRef, useState } from "react";
+import type {
+	AgentDefaults,
+	AgentSnapshot,
+	ExecutionMode,
+	SessionSummary,
+	ThinkingLevel,
+} from "../../shared/agent";
+import { projectLabel } from "../../shared/paths";
 import { api, errorMessage } from "./api";
 import { AutomationsPage } from "./components/automations/AutomationsPage";
 import { BrowserPanel } from "./components/BrowserPanel";
@@ -9,7 +16,9 @@ import { ReviewPanel } from "./components/ReviewPanel";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { TitleBar } from "./components/TitleBar";
 import { useAppearanceVariables } from "./hooks/useAppearanceVariables";
+import { useSessions } from "./hooks/useSessions";
 import { useTheme } from "./hooks/useTheme";
 import { DEFAULT_UI_DENSITY, type UiDensity } from "./lib/appDensity";
 import { DEFAULT_CHAT_WIDTH, type ChatWidthMode } from "./lib/chatWidth";
@@ -45,7 +54,11 @@ function writeStored(key: string, value: string | null): void {
 
 export default function App() {
 	const { resolvedTheme, setTheme, theme } = useTheme();
-	const [cwd, setCwd] = useState<string | null>(() => readStored(PROJECT_STORAGE_KEY));
+	// Fall back to the home directory rather than to "no project": the welcome
+	// screen is usable immediately, and the folder chip is right there to change.
+	const [cwd, setCwd] = useState<string | null>(
+		() => readStored(PROJECT_STORAGE_KEY) ?? (api.homeDir || null),
+	);
 	const [density] = useState<UiDensity>(() => {
 		const stored = readStored(DENSITY_STORAGE_KEY);
 		return stored === "compact" || stored === "spacious" || stored === "comfortable"
@@ -67,8 +80,9 @@ export default function App() {
 	});
 
 	const [view, setView] = useState<WorkspaceView>("chat");
-	const [threads, setThreads] = useState<ThreadSummary[]>([]);
+	const sessions = useSessions(cwd);
 	const [snapshot, setSnapshot] = useState<AgentSnapshot | null>(null);
+	const [defaults, setDefaults] = useState<AgentDefaults | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [terminalOpen, setTerminalOpen] = useState(false);
@@ -84,10 +98,30 @@ export default function App() {
 	useEffect(() => {
 		const unsubscribe = api.onAgentSnapshot((next) => {
 			setSnapshot(next);
-			setError(next.error ?? null);
+			setError(next?.error ?? null);
 		});
 		return unsubscribe;
 	}, []);
+
+	useEffect(() => api.onAgentDefaults(setDefaults), []);
+
+	// The welcome screen's pickers are resolved per directory — project settings
+	// can change which model a new session starts with.
+	useEffect(() => {
+		if (snapshot || !cwd) return;
+		let cancelled = false;
+		api
+			.agentDefaults(cwd)
+			.then((next) => {
+				if (!cancelled) setDefaults(next);
+			})
+			.catch((cause) => {
+				if (!cancelled) setError(errorMessage(cause));
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [snapshot, cwd]);
 
 	// A directory passed on the command line is an explicit request, so it wins
 	// over the remembered project.
@@ -107,37 +141,6 @@ export default function App() {
 		};
 	}, []);
 
-	// Load threads whenever the project directory changes.
-	useEffect(() => {
-		if (!cwd) {
-			setThreads([]);
-			return;
-		}
-		let cancelled = false;
-		api
-			.agentListThreads(cwd)
-			.then((list) => {
-				if (!cancelled) setThreads(list);
-			})
-			.catch((cause: unknown) => {
-				if (!cancelled) setError(errorMessage(cause));
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [cwd]);
-
-	const refreshThreads = useMemo(
-		() => async (target: string) => {
-			try {
-				setThreads(await api.agentListThreads(target));
-			} catch (cause) {
-				setError(errorMessage(cause));
-			}
-		},
-		[],
-	);
-
 	const pickProject = async () => {
 		const picked = await api.pickDirectory();
 		if (!picked) return;
@@ -146,11 +149,11 @@ export default function App() {
 		setSnapshot(null);
 	};
 
-	const openThread = async (thread: ThreadSummary) => {
+	const openSession = async (session: SessionSummary) => {
 		if (!cwd) return;
 		setBusy(true);
 		try {
-			setSnapshot(await api.agentOpen({ cwd, sessionFile: thread.sessionFile }));
+			setSnapshot(await api.agentOpen({ cwd, sessionFile: session.sessionFile }));
 			setView("chat");
 			setError(null);
 		} catch (cause) {
@@ -160,17 +163,17 @@ export default function App() {
 		}
 	};
 
-	const createThread = async () => {
-		if (!cwd) return;
+	const createSession = async (): Promise<boolean> => {
+		if (!cwd) return false;
 		setBusy(true);
 		try {
-			const next = await api.agentCreate(cwd);
-			setSnapshot(next);
+			setSnapshot(await api.agentCreate(cwd));
 			setView("chat");
 			setError(null);
-			await refreshThreads(cwd);
+			return true;
 		} catch (cause) {
 			setError(errorMessage(cause));
+			return false;
 		} finally {
 			setBusy(false);
 		}
@@ -183,17 +186,27 @@ export default function App() {
 				setError(result.error);
 				return;
 			}
-			if (result.action === "new-thread") await createThread();
+			if (result.action === "new-session") await createSession();
 			if (result.action === "open-terminal") setTerminalOpen(true);
-			if (cwd) await refreshThreads(cwd);
+			// The list refreshes itself: main pushes `sessionsChanged` once the
+			// prompt names the session and again when the run settles.
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
 	};
 
+	/** Welcome screen: the first prompt both opens the session and is sent to it. */
+	const startSession = async (text: string) => {
+		if (!(await createSession())) return;
+		await send(text);
+	};
+
+	// A null return means the pick landed on the welcome screen: it is held as
+	// the pending default and comes back through onAgentDefaults.
 	const setModel = async (modelKey: string) => {
 		try {
-			setSnapshot(await api.agentSetModel(modelKey));
+			const next = await api.agentSetModel(modelKey);
+			if (next) setSnapshot(next);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -201,7 +214,8 @@ export default function App() {
 
 	const setThinking = async (level: ThinkingLevel) => {
 		try {
-			setSnapshot(await api.agentSetThinking(level));
+			const next = await api.agentSetThinking(level);
+			if (next) setSnapshot(next);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -209,7 +223,8 @@ export default function App() {
 
 	const setMode = async (mode: ExecutionMode) => {
 		try {
-			setSnapshot(await api.agentSetMode(mode));
+			const next = await api.agentSetMode(mode);
+			if (next) setSnapshot(next);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -245,76 +260,85 @@ export default function App() {
 	};
 
 	return (
-		<div className="flex h-dvh min-h-0 w-full overflow-hidden text-foreground">
-			<Sidebar
-				cwd={cwd}
-				threads={threads}
-				activeThreadId={snapshot?.thread.id ?? null}
-				view={view}
-				busy={busy}
-				theme={theme}
-				resolvedTheme={resolvedTheme}
-				browserOpen={browserOpen}
-				onPickProject={pickProject}
-				onNewThread={createThread}
-				onOpenThread={openThread}
-				onSelectView={setView}
-				onToggleBrowser={() => setBrowserOpen((open) => !open)}
-				onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-			/>
-			<main
-				className={cn(
-					CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
-					"flex min-h-0 min-w-0 flex-1 flex-col",
-				)}
-			>
-				{view === "settings" ? (
-					<SettingsPage onClose={() => setView("chat")} />
-				) : view === "review" ? (
-					<ReviewPanel cwd={cwd} onClose={() => setView("chat")} />
-				) : view === "pull-requests" ? (
-					<PullRequestsPage cwd={cwd} onClose={() => setView("chat")} />
-				) : view === "automations" ? (
-					<AutomationsPage cwd={cwd} onClose={() => setView("chat")} />
-				) : (
-					<ChatView
-						cwd={cwd}
-						snapshot={snapshot}
-						busy={busy}
-						error={error}
-						terminalOpen={terminalOpen}
-						browserOpen={browserOpen}
-						onPickProject={pickProject}
-						onSend={send}
-						onAbort={() => void api.agentAbort()}
-						onSetModel={setModel}
-						onSetThinking={setThinking}
-						onSetMode={setMode}
-						onOpenReview={() => setView("review")}
-						onToggleTerminal={() => setTerminalOpen((open) => !open)}
-						onToggleBrowser={() => setBrowserOpen((open) => !open)}
-						onDismissError={() => setError(null)}
-					/>
-				)}
-				{terminalOpen ? (
-					<TerminalPanel cwd={cwd} onClose={() => setTerminalOpen(false)} />
+		<div className="flex h-dvh min-h-0 w-full flex-col overflow-hidden text-foreground">
+			<TitleBar projectLabel={cwd ? projectLabel(cwd, api.homeDir) : null} />
+			<div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+				<Sidebar
+					cwd={cwd}
+					sessions={sessions.sessions}
+					sessionsLoading={sessions.loading}
+					activeSessionId={snapshot?.session.id ?? null}
+					streaming={snapshot?.streaming ?? false}
+					view={view}
+					busy={busy}
+					theme={theme}
+					resolvedTheme={resolvedTheme}
+					browserOpen={browserOpen}
+					onPickProject={pickProject}
+					onNewSession={createSession}
+					onOpenSession={openSession}
+					onRenameSession={(session, title) => void sessions.rename(session, title)}
+					onDeleteSession={(session) => void sessions.remove(session)}
+					onSelectView={setView}
+					onToggleBrowser={() => setBrowserOpen((open) => !open)}
+					onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+				/>
+				<main
+					className={cn(
+						CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
+						"flex min-h-0 min-w-0 flex-1 flex-col",
+					)}
+				>
+					{view === "settings" ? (
+						<SettingsPage onClose={() => setView("chat")} />
+					) : view === "review" ? (
+						<ReviewPanel cwd={cwd} onClose={() => setView("chat")} />
+					) : view === "pull-requests" ? (
+						<PullRequestsPage cwd={cwd} onClose={() => setView("chat")} />
+					) : view === "automations" ? (
+						<AutomationsPage cwd={cwd} onClose={() => setView("chat")} />
+					) : (
+						<ChatView
+							cwd={cwd}
+							snapshot={snapshot}
+							defaults={defaults}
+							busy={busy}
+							error={error}
+							terminalOpen={terminalOpen}
+							browserOpen={browserOpen}
+							onPickProject={pickProject}
+							onSend={send}
+							onAbort={() => void api.agentAbort()}
+							onSetModel={setModel}
+							onSetThinking={setThinking}
+							onSetMode={setMode}
+							onOpenReview={() => setView("review")}
+							onToggleTerminal={() => setTerminalOpen((open) => !open)}
+							onToggleBrowser={() => setBrowserOpen((open) => !open)}
+							onDismissError={() => setError(null)}
+							onStartSession={startSession}
+						/>
+					)}
+					{terminalOpen ? (
+						<TerminalPanel cwd={cwd} onClose={() => setTerminalOpen(false)} />
+					) : null}
+				</main>
+				{browserOpen ? (
+					<>
+						<div
+							aria-hidden="true"
+							className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--color-background-button-secondary-hover)]"
+							onMouseDown={startDockDrag}
+						/>
+						<div
+							className="flex min-h-0 shrink-0 flex-col border-l border-[color:var(--app-surface-divider)]"
+							style={{ width: browserWidth }}
+						>
+							<BrowserPanel onClose={() => setBrowserOpen(false)} />
+						</div>
+					</>
 				) : null}
-			</main>
-			{browserOpen ? (
-				<>
-					<div
-						aria-hidden="true"
-						className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--color-background-button-secondary-hover)]"
-						onMouseDown={startDockDrag}
-					/>
-					<div
-						className="flex min-h-0 shrink-0 flex-col border-l border-[color:var(--app-surface-divider)]"
-						style={{ width: browserWidth }}
-					>
-						<BrowserPanel onClose={() => setBrowserOpen(false)} />
-					</div>
-				</>
-			) : null}
+			</div>
 		</div>
 	);
 }

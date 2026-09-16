@@ -1,19 +1,15 @@
 import { useEffect, useState } from "react";
 import type { GitHubAuthStatus } from "../../../../shared/pullRequests";
 import { api, errorMessage } from "../../api";
+import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 
-const SOURCE_LABELS: Record<NonNullable<GitHubAuthStatus["source"]>, string> = {
-	settings: "token saved in Settings",
-	"gh-cli": "gh CLI (gh auth token)",
-	anonymous: "anonymous (public repositories only)",
-};
-
 export function GitHubSettings() {
+	const { t } = useTranslation();
 	const [status, setStatus] = useState<GitHubAuthStatus | null>(null);
 	const [token, setToken] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -40,7 +36,7 @@ export function GitHubSettings() {
 			const next = await api.githubSave(token);
 			setStatus(next);
 			setToken("");
-			setMessage(`已保存，登录身份: ${next.login ?? "unknown"}`);
+			setMessage(t("github.savedAs", { login: next.login ?? "unknown" }));
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
@@ -54,7 +50,7 @@ export function GitHubSettings() {
 		setMessage(null);
 		try {
 			setStatus(await api.githubClear());
-			setMessage("已清除保存的 token。");
+			setMessage(t("github.cleared"));
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
@@ -62,24 +58,33 @@ export function GitHubSettings() {
 		}
 	};
 
+	const sourceLabel = (source: NonNullable<GitHubAuthStatus["source"]>) => {
+		switch (source) {
+			case "settings":
+				return t("github.source.settings");
+			case "gh-cli":
+				return t("github.source.ghCli");
+			case "anonymous":
+				return t("github.source.anonymous");
+		}
+	};
+
 	return (
 		<section className="flex flex-col gap-3">
 			<div className="flex flex-col gap-1">
-				<span className="text-[length:var(--app-font-size-ui,12px)]">GitHub access</span>
+				<span className="text-[length:var(--app-font-size-ui,12px)]">{t("github.title")}</span>
 				<span className={cn("text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-					Pull requests read the GitHub REST API directly, so the `gh` CLI is optional. A token
-					raises the rate limit from 60 to 5000 requests/hour and unlocks private repositories.
-					Create one with `repo` scope (or `public_repo` for public repositories only).
+					{t("github.description")}
 				</span>
 			</div>
 
 			<div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
 				<span className="text-[length:var(--app-font-size-ui-sm,11px)]">
-					{status?.configured ? "Configured" : "Not configured"}
+					{status?.configured ? t("github.configured") : t("github.notConfigured")}
 				</span>
 				{status?.source ? (
 					<span className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-						via {SOURCE_LABELS[status.source]}
+						{t("github.via", { source: sourceLabel(status.source) })}
 					</span>
 				) : null}
 				{status?.login ? (
@@ -96,7 +101,7 @@ export function GitHubSettings() {
 			) : null}
 
 			<div className="flex flex-col gap-1">
-				<Label>Personal access token</Label>
+				<Label>{t("github.token")}</Label>
 				<div className="flex items-center gap-2">
 					<Input
 						disabled={status !== null && !status.encryptionAvailable}
@@ -111,10 +116,10 @@ export function GitHubSettings() {
 						size="sm"
 						variant="subtle"
 					>
-						Save
+						{t("common.save")}
 					</Button>
 					<Button disabled={busy} onClick={() => void clear()} size="sm" variant="chrome-outline">
-						Clear
+						{t("common.clear")}
 					</Button>
 				</div>
 			</div>

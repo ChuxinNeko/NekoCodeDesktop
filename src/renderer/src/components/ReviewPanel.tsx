@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RepoStatus, ReviewScope } from "../../../shared/git";
 import { api, errorMessage } from "../api";
+import { useTranslation, type TranslationKey } from "../i18n";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { DiffStat } from "./ui/diff-stat";
 import { Spinner } from "./ui/spinner";
 import { XIcon } from "../lib/icons";
 
-const SCOPES: { id: ReviewScope; label: string }[] = [
-	{ id: "unstaged", label: "Unstaged" },
-	{ id: "staged", label: "Staged" },
-	{ id: "branch", label: "Branch" },
+const SCOPES: { id: ReviewScope; labelKey: TranslationKey }[] = [
+	{ id: "unstaged", labelKey: "review.scope.unstaged" },
+	{ id: "staged", labelKey: "review.scope.staged" },
+	{ id: "branch", labelKey: "review.scope.branch" },
 ];
 
 /** Minimal unified-diff renderer: colors +/- lines without a diff library. */
 function DiffView({ patch }: { patch: string }) {
+	const { t } = useTranslation();
 	if (!patch.trim()) {
 		return (
 			<p className="px-3 py-4 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-				No changes in this scope.
+				{t("review.noChanges")}
 			</p>
 		);
 	}
@@ -49,6 +51,7 @@ function DiffView({ patch }: { patch: string }) {
 }
 
 export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
+	const { t } = useTranslation();
 	const [status, setStatus] = useState<RepoStatus | null>(null);
 	const [scope, setScope] = useState<ReviewScope>("unstaged");
 	const [files, setFiles] = useState<string[]>([]);
@@ -119,7 +122,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
-				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">Review</span>
+				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">{t("review.title")}</span>
 				{status?.branch ? (
 					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/70">
 						{status.branch}
@@ -138,14 +141,14 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 									: "text-muted-foreground hover:text-foreground",
 							)}
 						>
-							{entry.label}
+							{t(entry.labelKey)}
 						</button>
 					))}
 				</div>
 				{loading ? <Spinner className="size-3 text-muted-foreground" /> : null}
 				<div className="flex-1" />
 				<Button onClick={() => void refresh()} size="xs" variant="chrome-outline">
-					Refresh
+					{t("common.refresh")}
 				</Button>
 				<Button onClick={onClose} size="icon-xs" variant="ghost">
 					<XIcon className="size-3.5" />
@@ -160,28 +163,28 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 
 			{!cwd ? (
 				<p className="p-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					Open a project to review changes.
+					{t("review.openProject")}
 				</p>
 			) : status && !status.gitAvailable ? (
 				<div className="flex flex-col items-start gap-2 p-3">
 					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-[var(--warning)]">
-						{status.gitError ?? "git is not available."}
+						{status.gitError ?? t("review.gitUnavailable")}
 					</p>
 					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						Diff, stage, and revert stay disabled until git is on PATH.
+						{t("review.gitUnavailableHint")}
 					</p>
 				</div>
 			) : status && !status.isRepo ? (
 				<div className="flex flex-col items-start gap-2 p-3">
 					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						This directory is not a git repository.
+						{t("review.notRepo")}
 					</p>
 					<Button
 						onClick={() => void api.gitInit(cwd).then(refresh)}
 						size="sm"
 						variant="subtle"
 					>
-						Initialize repository
+						{t("review.initRepo")}
 					</Button>
 				</div>
 			) : (
@@ -189,7 +192,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 					<div className="flex w-64 min-w-0 shrink-0 flex-col overflow-y-auto border-r border-[color:var(--app-surface-divider)] p-1.5">
 						{files.length === 0 ? (
 							<p className="px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-								No changed files.
+								{t("review.noFiles")}
 							</p>
 						) : (
 							files.map((file) => {
@@ -232,7 +235,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 										size="xs"
 										variant="chrome-outline"
 									>
-										Unstage
+										{t("review.unstage")}
 									</Button>
 								) : scope === "unstaged" ? (
 									<Button
@@ -240,7 +243,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 										size="xs"
 										variant="chrome-outline"
 									>
-										Stage
+										{t("review.stage")}
 									</Button>
 								) : null}
 								{scope !== "branch" ? (
@@ -249,7 +252,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 										size="xs"
 										variant="destructive-outline"
 									>
-										Revert
+										{t("review.revert")}
 									</Button>
 								) : null}
 							</div>

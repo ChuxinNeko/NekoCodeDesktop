@@ -25,6 +25,27 @@ describe("validateProfileFile", () => {
 		).toHaveLength(1);
 	});
 
+	test("accepts the reasoning flag and profiles written before it existed", () => {
+		expect(
+			validateProfileFile({
+				version: 1,
+				profiles: [{ ...validProfile, reasoning: true }],
+			}),
+		).toHaveLength(1);
+		// `validProfile` has no `reasoning` key at all — the field stays optional so
+		// existing model-profiles.json files keep loading.
+		expect(validateProfileFile({ version: 1, profiles: [validProfile] })).toHaveLength(1);
+	});
+
+	test("rejects a non-boolean reasoning flag", () => {
+		expect(() =>
+			validateProfileFile({
+				version: 1,
+				profiles: [{ ...validProfile, reasoning: "yes" }],
+			}),
+		).toThrow("unexpected shape");
+	});
+
 	test("rejects bad version", () => {
 		expect(() =>
 			validateProfileFile({ version: 2, profiles: [validProfile] }),

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { DEFAULT_SHELL_INFO, type ShellInfo } from "../shared/window";
 import type { AutomationEvent, AutomationRun, AutomationWithState, SaveAutomationRequest } from "../shared/automation";
 import type { BrowserPopupRequest } from "../shared/browser";
 import type {
@@ -11,12 +12,15 @@ import type {
 	RepositoryBranch,
 } from "../shared/pullRequests";
 import type {
+	AgentDefaults,
 	AgentSnapshot,
+	DeleteSessionRequest,
 	ExecutionMode,
-	OpenThreadRequest,
+	OpenSessionRequest,
+	RenameSessionRequest,
 	SendPromptRequest,
 	SendPromptResult,
-	ThreadSummary,
+	SessionSummary,
 	ThinkingLevel,
 } from "../shared/agent";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
@@ -47,7 +51,17 @@ function subscribe<T>(
 	return () => ipcRenderer.removeListener(channel, wrapped);
 }
 
+// Read once, synchronously: the theme module applies CSS variables at import
+// time, well before any promise from the bridge could resolve.
+const shellInfo: ShellInfo =
+	(ipcRenderer.sendSync("app:shellInfo") as ShellInfo | undefined) ?? DEFAULT_SHELL_INFO;
+
 const api = {
+	/** Window chrome the renderer has to lay out around (caption strip, backdrop). */
+	shell: shellInfo,
+	/** The user's home directory — the working directory a fresh install starts in. */
+	homeDir: (ipcRenderer.sendSync("app:homeDir") as string | undefined) ?? "",
+
 	initialProjectDir: (): Promise<string | null> =>
 		ipcRenderer.invoke("app:initialProjectDir"),
 
@@ -67,24 +81,39 @@ const api = {
 	gitInit: (cwd: string) => ipcRenderer.invoke("git:init", cwd),
 	pickDirectory: () => ipcRenderer.invoke("dialog:openDirectory"),
 
-	agentListThreads: (cwd: string): Promise<ThreadSummary[]> =>
-		ipcRenderer.invoke("agent:listThreads", cwd),
+	sessionList: (cwd: string): Promise<SessionSummary[]> =>
+		ipcRenderer.invoke("agent:listSessions", cwd),
+	sessionRename: (req: RenameSessionRequest): Promise<void> =>
+		ipcRenderer.invoke("agent:rename", req),
+	sessionDelete: (req: DeleteSessionRequest): Promise<void> =>
+		ipcRenderer.invoke("agent:delete", req),
+	onSessionsChanged: (listener: () => void) =>
+		subscribe("agent:sessionsChanged", listener),
+
 	agentCreate: (cwd: string): Promise<AgentSnapshot> =>
 		ipcRenderer.invoke("agent:create", cwd),
-	agentOpen: (req: OpenThreadRequest): Promise<AgentSnapshot> =>
+	agentOpen: (req: OpenSessionRequest): Promise<AgentSnapshot> =>
 		ipcRenderer.invoke("agent:open", req),
 	agentSnapshot: (): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:snapshot"),
 	agentSend: (req: SendPromptRequest): Promise<SendPromptResult> =>
 		ipcRenderer.invoke("agent:send", req),
 	agentAbort: (): Promise<void> => ipcRenderer.invoke("agent:abort"),
-	agentSetModel: (modelKey: string): Promise<AgentSnapshot> =>
+	// Picker state for the welcome screen — a session snapshot before one exists.
+	agentDefaults: (cwd: string): Promise<AgentDefaults> =>
+		ipcRenderer.invoke("agent:defaults", cwd),
+	onAgentDefaults: (listener: (defaults: AgentDefaults) => void) =>
+		subscribe("agent:defaults", listener),
+	// Null without a session: the pick is held as the welcome screen's default
+	// and pushed back through onAgentDefaults.
+	agentSetModel: (modelKey: string): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setModel", modelKey),
-	agentSetThinking: (level: ThinkingLevel): Promise<AgentSnapshot> =>
+	agentSetThinking: (level: ThinkingLevel): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setThinking", level),
-	agentSetMode: (mode: ExecutionMode): Promise<AgentSnapshot> =>
+	agentSetMode: (mode: ExecutionMode): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setMode", mode),
-	onAgentSnapshot: (listener: (snapshot: AgentSnapshot) => void) =>
+	// Null when the open session goes away (it was deleted).
+	onAgentSnapshot: (listener: (snapshot: AgentSnapshot | null) => void) =>
 		subscribe("agent:snapshot", listener),
 
 	terminalCreate: (req: TerminalCreateRequest): Promise<TerminalSession> =>

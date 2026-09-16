@@ -25,6 +25,10 @@ export type AgentCell =
 			streaming: boolean;
 			error?: string;
 			timestamp: number;
+			/** ms epoch when the thinking block first appeared in the stream. */
+			thinkingStartedAt?: number;
+			/** ms epoch when non-thinking output began (or the message ended). */
+			thinkingEndedAt?: number;
 	  }
 	| {
 			id: string;
@@ -44,29 +48,64 @@ export type AgentCell =
 			timestamp: number;
 	  };
 
-export interface ThreadSummary {
+/** One row in the session list, and the header of the open session. */
+export interface SessionSummary {
 	id: string;
 	sessionFile: string;
 	cwd: string;
+	/** User-set name when there is one, else the opening prompt, else a placeholder. */
 	title: string;
+	/**
+	 * Second line of a row. Only set for renamed sessions, where the opening
+	 * prompt is extra information; for the rest the title already is that prompt.
+	 */
+	preview: string;
 	createdAt: number;
 	updatedAt: number;
 	messageCount: number;
 }
 
+/**
+ * The composer pickers' state before a session exists — what the next new
+ * session starts with. Mirrors the pickers' half of AgentSnapshot.
+ */
+export interface AgentDefaults {
+	modelKey: string | null;
+	models: ModelOption[];
+	thinkingLevel: ThinkingLevel;
+	thinkingLevels: ThinkingLevel[];
+	mode: ExecutionMode;
+}
+
 export interface AgentSnapshot {
-	thread: ThreadSummary;
+	session: SessionSummary;
 	cells: AgentCell[];
 	streaming: boolean;
 	modelKey: string | null;
 	models: ModelOption[];
 	thinkingLevel: ThinkingLevel;
+	/**
+	 * Levels the active model actually accepts. A non-reasoning model only offers
+	 * "off", and PI silently clamps anything else back to it — so the picker has
+	 * to offer these rather than the full list.
+	 */
+	thinkingLevels: ThinkingLevel[];
 	mode: ExecutionMode;
 	error?: string;
 }
 
-export interface OpenThreadRequest {
+export interface OpenSessionRequest {
 	cwd: string;
+	sessionFile: string;
+}
+
+export interface RenameSessionRequest {
+	sessionFile: string;
+	cwd: string;
+	title: string;
+}
+
+export interface DeleteSessionRequest {
 	sessionFile: string;
 }
 
@@ -75,5 +114,5 @@ export interface SendPromptRequest {
 }
 
 export type SendPromptResult =
-	| { accepted: true; action?: "new-thread" | "open-terminal" }
+	| { accepted: true; action?: "new-session" | "open-terminal" }
 	| { accepted: false; error: string };

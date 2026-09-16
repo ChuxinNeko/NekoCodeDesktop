@@ -84,7 +84,15 @@ bun run dev          # electron-vite 开发模式
 
 `bun run pi:build` 会调用 `scripts/pi-toolchain.ts`：它为 pi 的构建脚本提供 `node`（Electron
 自带的 Node 运行时）与 `npm`（转发到 `bun run`）两个 shim，因此不需要系统级 node/npm。
+Windows 上这两个 shim 是 `.cmd`（cmd.exe 不认 shebang，Bun Shell 也只按扩展名在 PATH 上找可执行文件）。
 pi 的依赖（含 `tsgo`、`shx`、`esbuild` 等构建工具）都来自根目录这一次 `bun install`。
+
+shim 依赖 `node_modules/electron/dist/` 里的 Electron 二进制，它由 electron 包的 postinstall 下载。
+若下载被墙导致 `pi:build` 报 `Electron binary not found`，设置镜像后重跑安装脚本即可：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ bun node_modules/electron/install.js
+```
 
 `bunfig.toml` 把 bun 的 linker 固定为 `hoisted`：pi 的构建脚本与 `pi/scripts/` 里的打包器都从
 仓库根解析裸导入，这假设 npm 那种扁平 hoisted 的 `node_modules`；bun 默认的按包链接会让这些

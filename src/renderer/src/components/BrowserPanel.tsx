@@ -8,6 +8,7 @@ import {
 	resolveBrowserInputUrl,
 } from "../../../shared/browser";
 import { api } from "../api";
+import { useTranslation } from "../i18n";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { IconButton } from "./ui/icon-button";
@@ -29,11 +30,11 @@ const BROWSER_CHROME_CONTROL_CLASS_NAME = "h-8 rounded-lg border text-xs";
 const BROWSER_CHROME_CONTROL_FILLED_CLASS_NAME = "border-border bg-background/70";
 
 let tabSequence = 0;
-function makeTab(url = ""): BrowserTabState {
+function makeTab(url = "", title = "New tab"): BrowserTabState {
 	tabSequence += 1;
 	return {
 		id: `browser-tab-${String(tabSequence)}`,
-		title: "New tab",
+		title,
 		url,
 		loading: false,
 		canGoBack: false,
@@ -53,7 +54,8 @@ function scrollTabIntoView(strip: HTMLElement, tab: HTMLElement): void {
 }
 
 export function BrowserPanel({ onClose }: { onClose: () => void }) {
-	const [tabs, setTabs] = useState<BrowserTabState[]>(() => [makeTab()]);
+	const { t } = useTranslation();
+	const [tabs, setTabs] = useState<BrowserTabState[]>(() => [makeTab("", t("browser.newTab"))]);
 	const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0]?.id ?? "");
 	const [addressDraft, setAddressDraft] = useState("");
 	const [addressFocused, setAddressFocused] = useState(false);
@@ -70,12 +72,15 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 		);
 	}, []);
 
-	const createTab = useCallback((url = "") => {
-		const tab = makeTab(url);
-		setTabs((current) => [...current, tab]);
-		setActiveTabId(tab.id);
-		return tab;
-	}, []);
+	const createTab = useCallback(
+		(url = "") => {
+			const tab = makeTab(url, t("browser.newTab"));
+			setTabs((current) => [...current, tab]);
+			setActiveTabId(tab.id);
+			return tab;
+		},
+		[t],
+	);
 
 	const closeTab = useCallback(
 		(tabId: string) => {
@@ -83,7 +88,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 				const next = current.filter((tab) => tab.id !== tabId);
 				if (next.length === 0) {
 					// Closing the last tab leaves one blank tab rather than an empty panel.
-					const replacement = makeTab();
+					const replacement = makeTab("", t("browser.newTab"));
 					setActiveTabId(replacement.id);
 					return [replacement];
 				}
@@ -96,7 +101,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 			});
 			webviews.current.delete(tabId);
 		},
-		[activeTabId],
+		[activeTabId, t],
 	);
 
 	// Guest popups (target=_blank / window.open) open as panel tabs.
@@ -151,7 +156,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 			const onFail = (event: Electron.DidFailLoadEvent) => {
 				if (event.errorCode === -3) return; // ERR_ABORTED: a superseded navigation
 				updateTab(tabId, { loading: false });
-				setError(`Failed to load ${event.validatedURL} (${event.errorDescription})`);
+				setError(t("browser.loadFailed", { url: event.validatedURL, reason: event.errorDescription }));
 			};
 
 			element.addEventListener("did-start-loading", onStart);
@@ -162,7 +167,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 			element.addEventListener("page-favicon-updated", onFavicon);
 			element.addEventListener("did-fail-load", onFail);
 		},
-		[updateTab],
+		[updateTab, t],
 	);
 
 	// Keep one guest per tab, created before connection and removed with its tab.
@@ -197,7 +202,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 	const navigate = (raw: string) => {
 		const url = resolveBrowserInputUrl(raw);
 		if (!url) {
-			setError(`Not a loadable URL: ${raw}`);
+			setError(t("browser.notUrl", { url: raw }));
 			return;
 		}
 		setError(null);
@@ -241,7 +246,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 									{tab.title || browserUrlLabel(tab.url)}
 								</button>
 								<Button
-									aria-label="Close tab"
+									aria-label={t("browser.closeTab")}
 									className={cn(
 										"ml-1 size-5 shrink-0 rounded-sm p-0 text-muted-foreground/70 hover:text-foreground",
 										isActive ? "hover:bg-background" : "hover:bg-card",
@@ -259,7 +264,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 						<TooltipTrigger
 							render={
 								<Button
-									aria-label="New tab"
+									aria-label={t("browser.newTab")}
 									className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
 									onClick={() => createTab()}
 									size="icon-sm"
@@ -269,10 +274,14 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 						>
 							<PlusIcon className="size-3.5" />
 						</TooltipTrigger>
-						<TooltipPopup>New tab</TooltipPopup>
+						<TooltipPopup>{t("browser.newTab")}</TooltipPopup>
 					</Tooltip>
 				</div>
-				<IconButton label="Close browser panel" onClick={onClose} tooltip="Close">
+				<IconButton
+					label={t("browser.closePanel")}
+					onClick={onClose}
+					tooltip={t("common.close")}
+				>
 					<XIcon className="size-3.5" />
 				</IconButton>
 			</div>
@@ -280,7 +289,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 			<div className="flex items-center gap-1 border-b border-[color:var(--app-surface-divider)] px-2 py-1.5">
 				<IconButton
 					disabled={!activeTab?.canGoBack}
-					label="Back"
+					label={t("common.back")}
 					onClick={() => {
 						const webview = activeTab ? webviews.current.get(activeTab.id) : undefined;
 						if (webview?.canGoBack()) webview.goBack();
@@ -290,7 +299,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 				</IconButton>
 				<IconButton
 					disabled={!activeTab?.canGoForward}
-					label="Forward"
+					label={t("common.forward")}
 					onClick={() => {
 						const webview = activeTab ? webviews.current.get(activeTab.id) : undefined;
 						if (webview?.canGoForward()) webview.goForward();
@@ -300,7 +309,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 				</IconButton>
 				{activeTab?.loading ? (
 					<IconButton
-						label="Stop"
+						label={t("common.stop")}
 						onClick={() => {
 							const webview = activeTab ? webviews.current.get(activeTab.id) : undefined;
 							webview?.stop();
@@ -310,7 +319,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 					</IconButton>
 				) : (
 					<IconButton
-						label="Reload"
+						label={t("common.reload")}
 						onClick={() => {
 							const webview = activeTab ? webviews.current.get(activeTab.id) : undefined;
 							webview?.reload();
@@ -328,7 +337,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 					}}
 				>
 					<input
-						aria-label="Address"
+						aria-label={t("browser.address")}
 						className={cn(
 							BROWSER_CHROME_CONTROL_CLASS_NAME,
 							BROWSER_CHROME_CONTROL_FILLED_CLASS_NAME,
@@ -337,14 +346,14 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 						onBlur={() => setAddressFocused(false)}
 						onChange={(event) => setAddressDraft(event.target.value)}
 						onFocus={() => setAddressFocused(true)}
-						placeholder="Search or enter address"
+						placeholder={t("browser.addressPlaceholder")}
 						spellCheck={false}
 						value={addressDraft}
 					/>
 				</form>
 				<IconButton
 					disabled={!activeTab || isBlankBrowserUrl(activeTab.url)}
-					label="Open in system browser"
+					label={t("browser.openExternal")}
 					onClick={() => {
 						if (activeTab && !isBlankBrowserUrl(activeTab.url)) {
 							void api.openExternal(activeTab.url);

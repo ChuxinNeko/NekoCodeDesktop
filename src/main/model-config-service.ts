@@ -47,6 +47,7 @@ export interface RegistrationProfile {
 	api: ModelApiProtocol;
 	apiKey: string;
 	modelIds: string[];
+	reasoning: boolean;
 }
 
 export class ModelConfigService {
@@ -173,6 +174,7 @@ export class ModelConfigService {
 					api: req.api,
 					encryptedApiKey,
 					modelIds,
+					reasoning: req.reasoning === true,
 					updatedAt: now,
 				}
 			: {
@@ -183,6 +185,7 @@ export class ModelConfigService {
 					api: req.api,
 					encryptedApiKey,
 					modelIds,
+					reasoning: req.reasoning === true,
 					createdAt: now,
 					updatedAt: now,
 				};
@@ -266,6 +269,7 @@ export class ModelConfigService {
 				api: p.api,
 				apiKey: this.decryptApiKey(p),
 				modelIds: [...p.modelIds],
+				reasoning: p.reasoning === true,
 			};
 		});
 	}

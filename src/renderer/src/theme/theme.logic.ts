@@ -687,19 +687,32 @@ export function resolveThemeVariant(mode: ThemeMode, systemDark: boolean): Theme
 export function buildThemeCssVariables(
   pack: ThemePack,
   variant: ThemeVariant,
-  options?: { electron?: boolean; isMac?: boolean; systemUiFont?: boolean },
+  options?: {
+    electron?: boolean;
+    isMac?: boolean;
+    micaBackdrop?: boolean;
+    systemUiFont?: boolean;
+  },
 ): ThemeCssVariableBuild {
   const resolvedTokens = buildResolvedThemeTokens(pack, variant);
   const codexVariables = resolvedTokens.codexVariables;
   const readCodexVariable = (name: string) => getRequiredVariable(codexVariables, name);
-  // The translucent shell relies on macOS window vibrancy as its backing
-  // material. Windows/Linux have no equivalent, so a translucent shell there
-  // leaves the transparent body and backdrop-filter surfaces bleeding through
-  // and (on fractional DPI) rendering blurry. Restrict translucency to macOS.
+  // A translucent shell needs a system material behind the window: macOS
+  // vibrancy, or Windows 11 Mica (main turns that on and reports it through
+  // ShellInfo.backdrop). Anywhere without one — Linux, Windows 10, the browser —
+  // a transparent body would bleed through to nothing, so the shell stays opaque.
   const material: WindowMaterial =
-    options?.electron === true && options?.isMac === true && !pack.theme.opaqueWindows
+    options?.electron === true &&
+    !pack.theme.opaqueWindows &&
+    (options?.isMac === true || options?.micaBackdrop === true)
       ? "translucent"
       : "opaque";
+  // Frosting is macOS-only. Vibrancy is sampled by the window, so its surfaces
+  // have to blur it themselves; Mica is already composited by DWM behind the
+  // window and needs no help. That distinction matters because on Windows a
+  // backdrop-filter promotes the surface to a GPU layer that Chromium rasterizes
+  // at the wrong scale on fractional DPI, leaving text blurry until a repaint.
+  const frosted = material === "translucent" && options?.isMac === true;
   const warningColor = WARNING_COLOR_BY_VARIANT[variant];
   // Codex paints the app sidebar with the PRIMARY surface (--color-background-surface,
   // mapped through --color-token-side-bar-background), not the darker "under" surface.
@@ -733,25 +746,23 @@ export function buildThemeCssVariables(
         ? "transparent"
         : readCodexVariable("--color-background-surface-under"),
     "--app-composer-focus-border": composerFocusBorder,
-    // Frosted blur only when the shell is translucent (macOS). On an opaque
-    // shell this promotes the surface to a GPU layer that Chromium rasterizes at
-    // the wrong scale on fractional DPI (Windows), so text reads blurry until a
-    // repaint. Keep it "none" off macOS.
+    // Frosted blur only where the window material has to be blurred by the page
+    // itself (macOS vibrancy) — see the `frosted` note above.
     // NOTE: this gates window-vibrancy frosting only. The composer's own glass
     // (`.chat-composer-surface`, index.css) frosts page content, not the window
     // material, so — like the floating menus — it stays on across platforms.
-    "--app-composer-picker-backdrop-filter": material === "translucent" ? "blur(32px)" : "none",
+    "--app-composer-picker-backdrop-filter": frosted ? "blur(32px)" : "none",
     "--app-composer-picker-surface": composerPickerMenuSurface,
     "--app-chat-code-surface": chatCodeSurface,
     "--app-user-message-background": chatCodeSurface,
-    "--app-sidebar-backdrop-filter":
-      material === "translucent" ? "blur(4px) saturate(130%)" : "none",
+    "--app-sidebar-backdrop-filter": frosted ? "blur(4px) saturate(130%)" : "none",
     // Settings mirrors the chat surface (opaque --color-background-surface) so every
     // settings element reads as outline-only. With an opaque page there is nothing to
     // frost, so we skip the backdrop blur (and its compositing cost) entirely.
     "--app-settings-backdrop-filter": "none",
-    // Translucent shell: a sheer fill so the desktop clearly shows through, paired
-    // with a very light blur that only takes the edge off the backdrop. Dark themes
+    // Translucent shell: a sheer fill so the window material (macOS vibrancy, or
+    // Windows 11 Mica) clearly shows through — on macOS paired with a very light
+    // blur that only takes the edge off the backdrop. Dark themes
     // deepen the fill toward black and keep it denser so the sidebar reads as
     // charcoal glass. Keep in sync with the `:root` / `.dark` fallbacks in index.css.
     "--app-sidebar-surface":

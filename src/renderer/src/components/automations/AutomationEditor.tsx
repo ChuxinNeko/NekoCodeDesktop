@@ -8,6 +8,7 @@ import { normalizeSchedule } from "../../../../shared/automation";
 import { nextOccurrence } from "../../../../shared/automationSchedule";
 import type { ExecutionMode, ModelOption } from "../../../../shared/agent";
 import { errorMessage } from "../../api";
+import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -17,16 +18,16 @@ import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 
 type ScheduleKind = AutomationSchedule["kind"];
 
-const KIND_LABELS: Record<ScheduleKind, string> = {
-	interval: "Interval",
-	daily: "Daily",
-	cron: "Cron",
+const KIND_LABEL_KEYS: Record<ScheduleKind, TranslationKey> = {
+	interval: "automations.editor.kind.interval",
+	daily: "automations.editor.kind.daily",
+	cron: "automations.editor.kind.cron",
 };
 
-const MODE_LABELS: Record<ExecutionMode, string> = {
-	"read-only": "Read only",
-	auto: "Auto",
-	"full-access": "Full access",
+const MODE_LABEL_KEYS: Record<ExecutionMode, TranslationKey> = {
+	"read-only": "mode.read-only",
+	auto: "mode.auto",
+	"full-access": "mode.full-access",
 };
 
 export interface AutomationDraft {
@@ -126,6 +127,7 @@ export function AutomationEditor({
 	onCancel: () => void;
 	onSave: () => void;
 }) {
+	const { t } = useTranslation();
 	const preview = useSchedulePreview(draft);
 	const [error, setError] = useState<string | null>(null);
 
@@ -137,22 +139,22 @@ export function AutomationEditor({
 		<div className="flex flex-col gap-3 rounded-xl border border-border p-3">
 			<div className="grid grid-cols-2 gap-3">
 				<div className="flex flex-col gap-1">
-					<Label>Name</Label>
+					<Label>{t("common.name")}</Label>
 					<Input
 						value={draft.name}
 						onChange={(event) => onChange({ ...draft, name: event.target.value })}
 					/>
 				</div>
 				<div className="flex flex-col gap-1">
-					<Label>Execution mode</Label>
+					<Label>{t("automations.editor.executionMode")}</Label>
 					<select
 						className="h-8 rounded-lg border border-border bg-transparent px-2 text-[length:var(--app-font-size-ui,12px)]"
 						onChange={(event) => onChange({ ...draft, mode: event.target.value as ExecutionMode })}
 						value={draft.mode}
 					>
-						{Object.entries(MODE_LABELS).map(([value, label]) => (
+						{(Object.keys(MODE_LABEL_KEYS) as ExecutionMode[]).map((value) => (
 							<option key={value} value={value}>
-								{label}
+								{t(MODE_LABEL_KEYS[value])}
 							</option>
 						))}
 					</select>
@@ -160,7 +162,7 @@ export function AutomationEditor({
 			</div>
 
 			<div className="flex flex-col gap-1">
-				<Label>Prompt</Label>
+				<Label>{t("common.prompt")}</Label>
 				<Textarea
 					rows={5}
 					value={draft.prompt}
@@ -169,7 +171,7 @@ export function AutomationEditor({
 			</div>
 
 			<div className="flex flex-col gap-1">
-				<Label>Model</Label>
+				<Label>{t("common.model")}</Label>
 				<select
 					className="h-8 rounded-lg border border-border bg-transparent px-2 text-[length:var(--app-font-size-ui,12px)]"
 					onChange={(event) =>
@@ -177,7 +179,7 @@ export function AutomationEditor({
 					}
 					value={draft.modelKey ?? ""}
 				>
-					<option value="">Runtime default</option>
+					<option value="">{t("automations.editor.runtimeDefault")}</option>
 					{models.map((model) => (
 						<option key={model.key} value={model.key}>
 							{model.name} ({model.provider})
@@ -187,9 +189,9 @@ export function AutomationEditor({
 			</div>
 
 			<div className="flex flex-col gap-2">
-				<Label>Schedule</Label>
+				<Label>{t("automations.editor.schedule")}</Label>
 				<div className="flex items-center gap-0.5 rounded-md bg-[var(--color-background-elevated-secondary)] p-0.5">
-					{(Object.keys(KIND_LABELS) as ScheduleKind[]).map((kind) => (
+					{(Object.keys(KIND_LABEL_KEYS) as ScheduleKind[]).map((kind) => (
 						<button
 							key={kind}
 							type="button"
@@ -201,7 +203,7 @@ export function AutomationEditor({
 									: "text-muted-foreground hover:text-foreground",
 							)}
 						>
-							{KIND_LABELS[kind]}
+							{t(KIND_LABEL_KEYS[kind])}
 						</button>
 					))}
 				</div>
@@ -217,7 +219,7 @@ export function AutomationEditor({
 							value={draft.intervalMinutes}
 						/>
 						<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-							minutes
+							{t("automations.editor.minutes")}
 						</span>
 					</div>
 				) : draft.kind === "daily" ? (
@@ -240,7 +242,7 @@ export function AutomationEditor({
 							value={draft.dailyMinute}
 						/>
 						<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-							local time
+							{t("automations.editor.localTime")}
 						</span>
 					</div>
 				) : (
@@ -252,7 +254,7 @@ export function AutomationEditor({
 							value={draft.cronExpression}
 						/>
 						<span className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-							5 fields: minute hour day-of-month month day-of-week. Supports * , - and /.
+							{t("automations.editor.cronHint")}
 						</span>
 					</div>
 				)}
@@ -266,8 +268,8 @@ export function AutomationEditor({
 					{preview.error
 						? preview.error
 						: preview.next
-							? `Next run: ${preview.next.toLocaleString()}`
-							: "No upcoming run in the next four years."}
+							? t("automations.editor.nextRun", { time: preview.next.toLocaleString() })
+							: t("automations.editor.noUpcoming")}
 				</span>
 			</div>
 
@@ -277,12 +279,12 @@ export function AutomationEditor({
 					onChange={(event) => onChange({ ...draft, enabled: event.target.checked })}
 					type="checkbox"
 				/>
-				Enabled (the scheduler only fires enabled automations)
+				{t("automations.editor.enabledHint")}
 			</label>
 
 			{!cwd ? (
 				<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
-					打开一个项目目录后才能保存自动化。
+					{t("automations.editor.noCwd")}
 				</p>
 			) : null}
 			{error ? (
@@ -292,7 +294,7 @@ export function AutomationEditor({
 			<div className="flex items-center gap-2">
 				<div className="flex-1" />
 				<Button onClick={onCancel} size="sm" variant="ghost">
-					Cancel
+					{t("common.cancel")}
 				</Button>
 				<Button
 					disabled={!cwd || preview.error !== null}
@@ -306,7 +308,7 @@ export function AutomationEditor({
 					size="sm"
 					variant="subtle"
 				>
-					Save
+					{t("common.save")}
 				</Button>
 			</div>
 		</div>

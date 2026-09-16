@@ -163,12 +163,22 @@ function ts(message: ProjectableMessage): number {
 
 type ToolCell = Extract<AgentCell, { type: "tool" }>;
 
+/** Thinking-block timing observed while the message streamed, by message ts. */
+export type ThinkingTiming = Map<number, { startedAt: number; endedAt?: number }>;
+
 /**
  * Rebuild cells for all persisted messages in a session. IDs are stable:
  * derived from message timestamp + array index, or toolCallId for tool cells,
  * so identical input yields identical output.
+ *
+ * `thinkingTiming` carries the live-observed think start/end onto the persisted
+ * cell — history alone has no per-block timestamps, so sessions reopened from
+ * disk simply show "Thought" without a duration.
  */
-export function projectMessages(messages: readonly ProjectableMessage[]): AgentCell[] {
+export function projectMessages(
+	messages: readonly ProjectableMessage[],
+	thinkingTiming?: ThinkingTiming,
+): AgentCell[] {
 	const cells: AgentCell[] = [];
 	const toolByCallId = new Map<string, ToolCell>();
 	let noticeSeq = 0;
@@ -195,6 +205,7 @@ export function projectMessages(messages: readonly ProjectableMessage[]): AgentC
 						? (message.errorMessage ?? message.stopReason)
 						: undefined;
 				if (text || thinking || error) {
+					const timing = thinking ? thinkingTiming?.get(t) : undefined;
 					cells.push({
 						id: `assistant-${t}-${index}`,
 						type: "assistant",
@@ -203,6 +214,8 @@ export function projectMessages(messages: readonly ProjectableMessage[]): AgentC
 						streaming: false,
 						error,
 						timestamp: t || Date.now(),
+						thinkingStartedAt: timing?.startedAt,
+						thinkingEndedAt: timing?.endedAt,
 					});
 				}
 				// Tool calls inside the assistant content become pending tool cells
@@ -317,9 +330,10 @@ export class CellProjector {
 	private persisted: AgentCell[] = [];
 	private overlay: AgentCell[] = [];
 	private noticeSeq = 0;
+	private thinkingTiming: ThinkingTiming = new Map();
 
 	rebuild(messages: readonly ProjectableMessage[]): void {
-		this.persisted = projectMessages(messages);
+		this.persisted = projectMessages(messages, this.thinkingTiming);
 		const persistedTools = new Map<string, ToolCell>();
 		for (const c of this.persisted) {
 			if (c.type === "tool") persistedTools.set(c.toolCallId, c);
@@ -347,6 +361,10 @@ export class CellProjector {
 			}
 			case "message_end": {
 				if (event.message.role === "assistant") {
+					const timing = this.thinkingTiming.get(ts(event.message));
+					if (timing && timing.endedAt === undefined) {
+						timing.endedAt = Date.now();
+					}
 					this.dropStreamCell(event.message);
 				}
 				break;
@@ -389,6 +407,10 @@ export class CellProjector {
 			}
 			case "agent_end":
 			case "agent_settled": {
+				const now = Date.now();
+				for (const timing of this.thinkingTiming.values()) {
+					timing.endedAt ??= now;
+				}
 				this.overlay = this.overlay.filter(
 					(c) => !(c.type === "assistant" && c.streaming),
 				);
@@ -468,21 +490,41 @@ export class CellProjector {
 	reset(): void {
 		this.persisted = [];
 		this.overlay = [];
+		this.thinkingTiming.clear();
 	}
 
 	private upsertStreamCell(message: ProjectableMessage): void {
-		const id = `assistant-stream-${ts(message)}`;
+		const t = ts(message);
+		const id = `assistant-stream-${t}`;
 		const text = textOf(message.content);
 		const thinking = thinkingOf(message.content);
 		const error =
 			message.stopReason === "error" || message.stopReason === "aborted"
 				? (message.errorMessage ?? message.stopReason)
 				: undefined;
+
+		// Thinking ends when the first non-thinking block (text or tool call)
+		// arrives; if none does, message_end/agent_end stamp it instead.
+		let timing = this.thinkingTiming.get(t);
+		if (thinking && !timing) {
+			timing = { startedAt: Date.now() };
+			this.thinkingTiming.set(t, timing);
+		}
+		const nonThinkingContent =
+			text.length > 0 ||
+			(Array.isArray(message.content) &&
+				message.content.some(isToolCallBlock));
+		if (timing && timing.endedAt === undefined && nonThinkingContent) {
+			timing.endedAt = Date.now();
+		}
+
 		const existing = this.overlay.find((c) => c.id === id);
 		if (existing && existing.type === "assistant") {
 			existing.text = text;
 			existing.thinking = thinking;
 			existing.error = error;
+			existing.thinkingStartedAt = timing?.startedAt;
+			existing.thinkingEndedAt = timing?.endedAt;
 			return;
 		}
 		this.overlay.push({
@@ -492,7 +534,9 @@ export class CellProjector {
 			thinking,
 			streaming: true,
 			error,
-			timestamp: ts(message) || Date.now(),
+			timestamp: t || Date.now(),
+			thinkingStartedAt: timing?.startedAt,
+			thinkingEndedAt: timing?.endedAt,
 		});
 	}
 

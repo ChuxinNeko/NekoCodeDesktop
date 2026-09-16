@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from "electron";
 import { existsSync, statSync } from "node:fs";
+import { release } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { AgentService } from "./agent-service";
 import { AutomationService } from "./automation/service";
@@ -10,8 +11,10 @@ import { ModelConfigService } from "./model-config-service";
 import { PullRequestService } from "./pull-request-service";
 import { TerminalService } from "./terminal-service";
 import type {
+	DeleteSessionRequest,
 	ExecutionMode,
-	OpenThreadRequest,
+	OpenSessionRequest,
+	RenameSessionRequest,
 	SendPromptRequest,
 	ThinkingLevel,
 } from "../shared/agent";
@@ -31,6 +34,7 @@ import type {
 	CreatePullRequestRequest,
 	PullRequestFilter,
 } from "../shared/pullRequests";
+import { TITLE_BAR_HEIGHT, type ShellInfo } from "../shared/window";
 
 // Set before anything reads app.getPath("userData"): launched as
 // `electron out/main/index.js` the entry directory has no package.json, so Electron
@@ -69,15 +73,64 @@ function initialProjectDirectory(): string | null {
 	return null;
 }
 
+/**
+ * `backgroundMaterial` only does anything from Windows 11 22H2 (build 22621) on.
+ * Below that the transparent window background Mica needs would paint plain
+ * black, so those builds keep the opaque shell.
+ */
+function supportsMica(): boolean {
+	if (process.platform !== "win32") return false;
+	const build = Number(release().split(".")[2]);
+	return Number.isFinite(build) && build >= 22621;
+}
+
+const shellInfo: ShellInfo = {
+	backdrop: supportsMica() ? "mica" : "none",
+	titleBarHeight: TITLE_BAR_HEIGHT,
+};
+
+/**
+ * The caption glyphs are drawn by Windows, not by us, so they only get a single
+ * color. Follow the resolved system theme, which the renderer keeps in sync
+ * through `theme:set`.
+ */
+function captionOverlay() {
+	return {
+		// Transparent so the title bar row behind the buttons (and the Mica
+		// material behind that) shows through instead of a flat patch of color.
+		color: "#00000000",
+		symbolColor: nativeTheme.shouldUseDarkColors ? "#ffffff" : "#1a1a19",
+		height: TITLE_BAR_HEIGHT,
+	};
+}
+
 function createWindow(): void {
+	const mica = shellInfo.backdrop === "mica";
 	const win = new BrowserWindow({
 		width: 1440,
 		height: 900,
 		minWidth: 1100,
 		minHeight: 700,
 		title: "NekoCode Desktop",
-		backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a19" : "#f9f9f7",
-		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+		// Mica is composited behind the window by DWM, so the window's own
+		// background has to be fully transparent for it to show at all.
+		backgroundColor: mica
+			? "#00000000"
+			: nativeTheme.shouldUseDarkColors
+				? "#1a1a19"
+				: "#f9f9f7",
+		...(mica ? { backgroundMaterial: "mica" as const } : {}),
+		// The app draws its own caption strip. `hidden` rather than `frame: false`
+		// so Windows still gives the window its rounded corners, drop shadow and
+		// resize borders; the caption buttons stay system-drawn (below) so Snap
+		// Layouts keeps working.
+		titleBarStyle:
+			process.platform === "darwin"
+				? "hiddenInset"
+				: process.platform === "win32"
+					? "hidden"
+					: "default",
+		...(process.platform === "win32" ? { titleBarOverlay: captionOverlay() } : {}),
 		webPreferences: {
 			preload: join(__dirname, "../preload/index.js"),
 			contextIsolation: true,
@@ -91,6 +144,16 @@ function createWindow(): void {
 
 	installBrowserGuards(win);
 
+	if (process.platform === "win32") {
+		// Repaint the caption glyphs when the app flips light/dark, otherwise they
+		// stay in the color they had when the window opened.
+		const syncOverlay = () => {
+			if (!win.isDestroyed()) win.setTitleBarOverlay(captionOverlay());
+		};
+		nativeTheme.on("updated", syncOverlay);
+		win.on("closed", () => nativeTheme.off("updated", syncOverlay));
+	}
+
 	if (!modelConfig) modelConfig = new ModelConfigService();
 	agentService = new AgentService(win, modelConfig);
 	terminalService = new TerminalService(win);
@@ -102,7 +165,7 @@ function createWindow(): void {
 			userDataDir: app.getPath("userData"),
 			// Automation runs get their own session directory: a run creates a PI
 			// session, and sharing the interactive directory would make every
-			// scheduled run show up as a thread in the sidebar.
+			// scheduled run show up as a session in the sidebar.
 			sessionsDir: join(app.getPath("userData"), "automation-sessions"),
 			getModelRuntime: async () => {
 				if (!agentService) throw new Error("Agent service is not running");
@@ -137,6 +200,19 @@ function createWindow(): void {
 function registerIpc(): void {
 	ipcMain.handle("app:initialProjectDir", () => initialProjectDirectory());
 
+	// Synchronous on purpose: the preload reads this once at load time so the
+	// theme can pick its shell material before the first paint, with no flash of
+	// the wrong background.
+	ipcMain.on("app:shellInfo", (event) => {
+		event.returnValue = shellInfo;
+	});
+
+	// Also synchronous: it is the default working directory, so the welcome
+	// screen needs it in its first render rather than a tick later.
+	ipcMain.on("app:homeDir", (event) => {
+		event.returnValue = app.getPath("home");
+	});
+
 	ipcMain.handle("browser:openExternal", (_event, url: string) => {
 		if (!/^https?:\/\//i.test(url)) {
 			throw new Error(`Refusing to open non-http(s) URL: ${url}`);
@@ -167,16 +243,25 @@ function registerIpc(): void {
 		return result.canceled ? null : result.filePaths[0];
 	});
 
-	ipcMain.handle("agent:listThreads", (_e, cwd: string) =>
-		agentService?.listThreads(cwd),
+	ipcMain.handle("agent:listSessions", (_e, cwd: string) =>
+		agentService?.listSessions(cwd),
 	);
 	ipcMain.handle("agent:create", (_e, cwd: string) =>
-		agentService?.createThread(cwd),
+		agentService?.createSession(cwd),
 	);
-	ipcMain.handle("agent:open", (_e, req: OpenThreadRequest) =>
-		agentService?.openThread(req),
+	ipcMain.handle("agent:open", (_e, req: OpenSessionRequest) =>
+		agentService?.openSession(req),
+	);
+	ipcMain.handle("agent:rename", (_e, req: RenameSessionRequest) =>
+		agentService?.renameSession(req),
+	);
+	ipcMain.handle("agent:delete", (_e, req: DeleteSessionRequest) =>
+		agentService?.deleteSession(req),
 	);
 	ipcMain.handle("agent:snapshot", () => agentService?.getSnapshot() ?? null);
+	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
+		agentService?.getDefaults(cwd),
+	);
 	ipcMain.handle("agent:send", (_e, req: SendPromptRequest) =>
 		agentService?.send(req),
 	);

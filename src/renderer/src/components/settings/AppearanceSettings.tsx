@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "../../hooks/useTheme";
+import { useTranslation, type TranslationKey } from "../../i18n";
 import { getAvailableCodeThemes, type ThemeMode, type ThemeVariant } from "../../theme/theme.logic";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -7,30 +8,16 @@ import { Menu, MenuGroupLabel, MenuRadioGroup, MenuRadioItem, MenuTrigger } from
 import { ComposerPickerMenuPopup } from "../chat/ComposerPickerMenuPopup";
 import { COMPOSER_PICKER_MENU_OPTION_CLASS_NAME, COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME } from "../chat/composerPickerStyles";
 import { ChevronDownIcon } from "../../lib/icons";
+import { SettingsRow } from "./SettingsRow";
 
-const MODES: { id: ThemeMode; label: string }[] = [
-	{ id: "light", label: "Light" },
-	{ id: "dark", label: "Dark" },
-	{ id: "system", label: "System" },
+const MODES: { id: ThemeMode; labelKey: TranslationKey }[] = [
+	{ id: "light", labelKey: "theme.light" },
+	{ id: "dark", labelKey: "theme.dark" },
+	{ id: "system", labelKey: "theme.system" },
 ];
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-	return (
-		<div className="flex items-center justify-between gap-4 py-2.5">
-			<div className="flex min-w-0 flex-col">
-				<span className="text-[length:var(--app-font-size-ui,12px)]">{label}</span>
-				{hint ? (
-					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-						{hint}
-					</span>
-				) : null}
-			</div>
-			<div className="shrink-0">{children}</div>
-		</div>
-	);
-}
-
 export function AppearanceSettings() {
+	const { t } = useTranslation();
 	const {
 		theme,
 		resolvedTheme,
@@ -47,7 +34,7 @@ export function AppearanceSettings() {
 
 	return (
 		<section className="flex flex-col divide-y divide-[color:var(--app-surface-divider)]">
-			<Row hint="Follows the OS when set to system." label="Theme mode">
+			<SettingsRow hint={t("settings.themeModeHint")} label={t("settings.themeMode")}>
 				<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 					{MODES.map((entry) => (
 						<button
@@ -61,13 +48,18 @@ export function AppearanceSettings() {
 									: "text-muted-foreground hover:text-foreground",
 							)}
 						>
-							{entry.label}
+							{t(entry.labelKey)}
 						</button>
 					))}
 				</div>
-			</Row>
+			</SettingsRow>
 
-			<Row hint={`Applies to the ${resolvedTheme} variant.`} label="Code theme">
+			<SettingsRow
+				hint={t("settings.codeThemeHint", {
+					variant: t(resolvedTheme === "dark" ? "theme.dark" : "theme.light"),
+				})}
+				label={t("settings.codeTheme")}
+			>
 				<Menu open={menuOpen} onOpenChange={setMenuOpen}>
 					<MenuTrigger
 						render={
@@ -85,7 +77,9 @@ export function AppearanceSettings() {
 						}
 					/>
 					<ComposerPickerMenuPopup align="end" side="bottom">
-						<MenuGroupLabel>Code theme</MenuGroupLabel>
+						{/* Inside the radio group, not beside it: Base UI takes the group
+						    context from MenuRadioGroup, and a label outside one throws as
+						    soon as the menu opens. */}
 						<MenuRadioGroup
 							value={activeCodeThemeId}
 							onValueChange={(value) => {
@@ -93,6 +87,7 @@ export function AppearanceSettings() {
 								setMenuOpen(false);
 							}}
 						>
+							<MenuGroupLabel>{t("settings.codeTheme")}</MenuGroupLabel>
 							{codeThemes.map((option) => (
 								<MenuRadioItem
 									key={option.id}
@@ -105,23 +100,23 @@ export function AppearanceSettings() {
 						</MenuRadioGroup>
 					</ComposerPickerMenuPopup>
 				</Menu>
-			</Row>
+			</SettingsRow>
 
-			<Row hint="Use the OS UI font instead of the bundled stack." label="System UI font">
+			<SettingsRow hint={t("settings.systemUiFontHint")} label={t("settings.systemUiFont")}>
 				<Button
 					onClick={() => setSystemUiFont(!systemUiFont)}
 					size="sm"
 					variant={systemUiFont ? "subtle" : "chrome-outline"}
 				>
-					{systemUiFont ? "On" : "Off"}
+					{systemUiFont ? t("common.on") : t("common.off")}
 				</Button>
-			</Row>
+			</SettingsRow>
 
-			<Row hint="Restore both variants to the Codex default pack." label="Reset appearance">
+			<SettingsRow hint={t("settings.resetAppearanceHint")} label={t("settings.resetAppearance")}>
 				<Button onClick={resetAllThemes} size="sm" variant="chrome-outline">
-					Reset
+					{t("common.reset")}
 				</Button>
-			</Row>
+			</SettingsRow>
 		</section>
 	);
 }

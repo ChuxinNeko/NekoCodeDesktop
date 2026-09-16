@@ -15,3 +15,16 @@ export function pi(): Promise<PiCodingAgentModule> {
 	piModulePromise ??= import("@earendil-works/pi-coding-agent");
 	return piModulePromise;
 }
+
+export type PiAiModule = typeof import("@earendil-works/pi-ai");
+
+let piAiModulePromise: Promise<PiAiModule> | null = null;
+
+/**
+ * Load pi-ai on first use. ESM-only like pi-coding-agent — a static import would
+ * compile to `require()` in the CJS main bundle and fail.
+ */
+export function piAi(): Promise<PiAiModule> {
+	piAiModulePromise ??= import("@earendil-works/pi-ai");
+	return piAiModulePromise;
+}

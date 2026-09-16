@@ -40,6 +40,10 @@ let lastSnapshotKey = "";
 let lastDesktopTheme: ThemeMode | null = null;
 
 const isElectronRuntime = typeof window !== "undefined" && "nekocode" in window;
+// Read straight off the bridge rather than through `api`: the theme is applied at
+// module load, before React mounts, and this only needs the one synchronous value
+// the preload already resolved.
+const hasMicaBackdrop = isElectronRuntime && window.nekocode?.shell?.backdrop === "mica";
 
 function emitChange() {
 	for (const listener of listeners) {
@@ -130,6 +134,7 @@ function applyThemeState(state: ThemeState, suppressTransitions = false) {
 	const cssVariableBuild = buildThemeCssVariables(activeTheme, variant, {
 		electron: isElectronRuntime,
 		isMac: isMacNavigatorPlatform(),
+		micaBackdrop: hasMicaBackdrop,
 		systemUiFont: state.systemUiFont,
 	});
 

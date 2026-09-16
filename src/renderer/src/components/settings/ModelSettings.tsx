@@ -6,6 +6,7 @@ import type {
 	ModelStoreStatus,
 } from "../../../../shared/settings";
 import { api, errorMessage } from "../../api";
+import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -34,6 +35,7 @@ interface Draft {
 	api: ModelApiProtocol;
 	apiKey: string;
 	modelIds: string;
+	reasoning: boolean;
 }
 
 function emptyDraft(): Draft {
@@ -44,6 +46,7 @@ function emptyDraft(): Draft {
 		api: "openai-completions",
 		apiKey: "",
 		modelIds: "",
+		reasoning: false,
 	};
 }
 
@@ -56,10 +59,12 @@ function draftFrom(profile: ModelProfileSummary): Draft {
 		api: profile.api,
 		apiKey: "",
 		modelIds: profile.modelIds.join("\n"),
+		reasoning: profile.reasoning,
 	};
 }
 
 export function ModelSettings() {
+	const { t } = useTranslation();
 	const [profiles, setProfiles] = useState<ModelProfileSummary[]>([]);
 	const [status, setStatus] = useState<ModelStoreStatus | null>(null);
 	const [draft, setDraft] = useState<Draft | null>(null);
@@ -99,11 +104,12 @@ export function ModelSettings() {
 					.split("\n")
 					.map((line) => line.trim())
 					.filter(Boolean),
+				reasoning: draft.reasoning,
 			});
 			setDraft(null);
 			setFetched([]);
 			await reload();
-			setMessage("Saved.");
+			setMessage(t("models.saved"));
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
@@ -151,7 +157,7 @@ export function ModelSettings() {
 		try {
 			const result = await api.modelTest({ profileId, modelId });
 			setMessage(
-				`${result.ok ? "OK" : "Failed"} · ${String(result.latencyMs)}ms · ${result.message}`,
+				`${result.ok ? t("models.testOk") : t("models.testFailed")} · ${String(result.latencyMs)}ms · ${result.message}`,
 			);
 		} catch (cause) {
 			setError(errorMessage(cause));
@@ -170,13 +176,13 @@ export function ModelSettings() {
 
 			<div className="flex items-center gap-2">
 				<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					{profiles.length} endpoint{profiles.length === 1 ? "" : "s"} configured
+					{t("models.endpointsConfigured", { count: profiles.length })}
 				</span>
 				<div className="flex-1" />
 				{busy ? <Spinner className="size-3 text-muted-foreground" /> : null}
 				<Button onClick={() => setDraft(emptyDraft())} size="sm" variant="subtle">
 					<PlusIcon className="size-3.5" />
-					Add model
+					{t("models.add")}
 				</Button>
 			</div>
 
@@ -186,8 +192,7 @@ export function ModelSettings() {
 			<div className="flex flex-col divide-y divide-[color:var(--app-surface-divider)] rounded-xl border border-border">
 				{profiles.length === 0 ? (
 					<p className="px-3 py-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						No custom endpoints. PI's built-in providers still work through their own
-						credentials (~/.pi/agent/auth.json or provider env vars).
+						{t("models.empty")}
 					</p>
 				) : (
 					profiles.map((profile) => (
@@ -201,7 +206,7 @@ export function ModelSettings() {
 								</span>
 								<div className="flex-1" />
 								<Button onClick={() => setDraft(draftFrom(profile))} size="xs" variant="chrome-outline">
-									Edit
+									{t("common.edit")}
 								</Button>
 								<Button
 									onClick={() => void remove(profile.id)}
@@ -225,7 +230,7 @@ export function ModelSettings() {
 											"rounded-full border border-border px-2 py-0.5 font-mono text-[length:var(--app-font-size-ui-2xs,9px)]",
 											"transition-colors hover:bg-[var(--color-background-button-secondary-hover)]",
 										)}
-										title="Send a tiny test request"
+										title={t("models.testTooltip")}
 									>
 										{modelId}
 									</button>
@@ -240,14 +245,14 @@ export function ModelSettings() {
 				<div className="flex flex-col gap-3 rounded-xl border border-border p-3">
 					<div className="grid grid-cols-2 gap-3">
 						<div className="flex flex-col gap-1">
-							<Label>Name</Label>
+							<Label>{t("common.name")}</Label>
 							<Input
 								value={draft.name}
 								onChange={(event) => setDraft({ ...draft, name: event.target.value })}
 							/>
 						</div>
 						<div className="flex flex-col gap-1">
-							<Label>Protocol</Label>
+							<Label>{t("models.protocol")}</Label>
 							<select
 								value={draft.api}
 								onChange={(event) => {
@@ -268,7 +273,7 @@ export function ModelSettings() {
 							</select>
 						</div>
 						<div className="flex flex-col gap-1">
-							<Label>API base URL</Label>
+							<Label>{t("models.baseUrl")}</Label>
 							<Input
 								placeholder="https://api.example.com"
 								value={draft.baseUrl}
@@ -276,7 +281,7 @@ export function ModelSettings() {
 							/>
 						</div>
 						<div className="flex flex-col gap-1">
-							<Label>Route</Label>
+							<Label>{t("models.route")}</Label>
 							<Input
 								value={draft.route}
 								onChange={(event) => setDraft({ ...draft, route: event.target.value })}
@@ -284,7 +289,9 @@ export function ModelSettings() {
 						</div>
 					</div>
 					<div className="flex flex-col gap-1">
-						<Label>API key {draft.id ? "(leave blank to keep the saved key)" : ""}</Label>
+						<Label>
+							{t("models.apiKey")} {draft.id ? t("models.apiKeyKeep") : ""}
+						</Label>
 						<Input
 							type="password"
 							value={draft.apiKey}
@@ -292,7 +299,7 @@ export function ModelSettings() {
 						/>
 					</div>
 					<div className="flex flex-col gap-1">
-						<Label>Model ids (one per line)</Label>
+						<Label>{t("models.modelIds")}</Label>
 						<Textarea
 							rows={4}
 							value={draft.modelIds}
@@ -320,16 +327,34 @@ export function ModelSettings() {
 							))}
 						</div>
 					) : null}
+					{/* PI clamps every thinking level to "off" unless the model is flagged
+					    as reasoning-capable, and an OpenAI-compatible endpoint does not
+					    advertise that — so it has to be declared here. */}
+					<div className="flex items-start gap-3">
+						<div className="flex min-w-0 flex-1 flex-col">
+							<Label>{t("models.reasoning")}</Label>
+							<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+								{t("models.reasoningHint")}
+							</span>
+						</div>
+						<Button
+							onClick={() => setDraft({ ...draft, reasoning: !draft.reasoning })}
+							size="sm"
+							variant={draft.reasoning ? "subtle" : "chrome-outline"}
+						>
+							{draft.reasoning ? t("common.on") : t("common.off")}
+						</Button>
+					</div>
 					<div className="flex items-center gap-2">
 						<Button onClick={() => void fetchModels()} size="sm" variant="chrome-outline">
-							Fetch models
+							{t("models.fetch")}
 						</Button>
 						<div className="flex-1" />
 						<Button onClick={() => setDraft(null)} size="sm" variant="ghost">
-							Cancel
+							{t("common.cancel")}
 						</Button>
 						<Button onClick={() => void save()} size="sm" variant="subtle">
-							Save
+							{t("common.save")}
 						</Button>
 					</div>
 				</div>

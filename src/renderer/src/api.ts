@@ -1,11 +1,14 @@
 import type {
+	AgentDefaults,
 	AgentSnapshot,
+	DeleteSessionRequest,
 	ExecutionMode,
-	OpenThreadRequest,
+	OpenSessionRequest,
+	RenameSessionRequest,
 	SendPromptRequest,
 	SendPromptResult,
+	SessionSummary,
 	ThinkingLevel,
-	ThreadSummary,
 } from "../../shared/agent";
 import type { BrowserPopupRequest } from "../../shared/browser";
 import type {
@@ -41,8 +44,14 @@ import type {
 	TerminalResizeRequest,
 	TerminalSession,
 } from "../../shared/terminal";
+import type { ShellInfo } from "../../shared/window";
 
 export interface AgentApi {
+	/** Window chrome the renderer lays out around: caption strip height, backdrop material. */
+	shell: ShellInfo;
+	/** The user's home directory — the working directory a fresh install starts in. */
+	homeDir: string;
+
 	initialProjectDir(): Promise<string | null>;
 
 	openExternal(url: string): Promise<void>;
@@ -58,16 +67,24 @@ export interface AgentApi {
 	gitAction(req: GitActionRequest): Promise<void>;
 	gitInit(cwd: string): Promise<void>;
 
-	agentListThreads(cwd: string): Promise<ThreadSummary[]>;
+	sessionList(cwd: string): Promise<SessionSummary[]>;
+	sessionRename(req: RenameSessionRequest): Promise<void>;
+	sessionDelete(req: DeleteSessionRequest): Promise<void>;
+	onSessionsChanged(listener: () => void): () => void;
+
 	agentCreate(cwd: string): Promise<AgentSnapshot>;
-	agentOpen(req: OpenThreadRequest): Promise<AgentSnapshot>;
+	agentOpen(req: OpenSessionRequest): Promise<AgentSnapshot>;
 	agentSnapshot(): Promise<AgentSnapshot | null>;
 	agentSend(req: SendPromptRequest): Promise<SendPromptResult>;
 	agentAbort(): Promise<void>;
-	agentSetModel(modelKey: string): Promise<AgentSnapshot>;
-	agentSetThinking(level: ThinkingLevel): Promise<AgentSnapshot>;
-	agentSetMode(mode: ExecutionMode): Promise<AgentSnapshot>;
-	onAgentSnapshot(listener: (snapshot: AgentSnapshot) => void): () => void;
+	/** Picker state for the welcome screen — a session snapshot before one exists. */
+	agentDefaults(cwd: string): Promise<AgentDefaults>;
+	onAgentDefaults(listener: (defaults: AgentDefaults) => void): () => void;
+	/** Null without a session: the pick becomes the welcome screen's default. */
+	agentSetModel(modelKey: string): Promise<AgentSnapshot | null>;
+	agentSetThinking(level: ThinkingLevel): Promise<AgentSnapshot | null>;
+	agentSetMode(mode: ExecutionMode): Promise<AgentSnapshot | null>;
+	onAgentSnapshot(listener: (snapshot: AgentSnapshot | null) => void): () => void;
 
 	terminalCreate(req: TerminalCreateRequest): Promise<TerminalSession>;
 	terminalInput(req: TerminalInputRequest): Promise<void>;

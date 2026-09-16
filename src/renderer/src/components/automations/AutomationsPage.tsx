@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AutomationRun, AutomationWithState } from "../../../../shared/automation";
-import { describeSchedule } from "../../../../shared/automation";
+import type { AutomationRun, AutomationSchedule, AutomationWithState } from "../../../../shared/automation";
 import type { ModelOption } from "../../../../shared/agent";
 import { api, errorMessage } from "../../api";
+import { useTranslation, type TranslateFn, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -21,20 +21,44 @@ import {
 	XIcon,
 } from "../../lib/icons";
 
-function relativeTime(timestamp: number | undefined): string {
+function relativeTime(timestamp: number | undefined, t: TranslateFn): string {
 	if (timestamp === undefined) return "—";
 	const minutes = Math.round((Date.now() - timestamp) / 60_000);
-	if (Math.abs(minutes) < 1) return "now";
+	if (Math.abs(minutes) < 1) return t("automations.time.now");
 	if (minutes < 0) {
 		const ahead = -minutes;
-		if (ahead < 60) return `in ${String(ahead)}m`;
-		if (ahead < 60 * 24) return `in ${String(Math.round(ahead / 60))}h`;
-		return `in ${String(Math.round(ahead / (60 * 24)))}d`;
+		if (ahead < 60) return t("automations.time.inMinutes", { count: ahead });
+		if (ahead < 60 * 24) return t("automations.time.inHours", { count: Math.round(ahead / 60) });
+		return t("automations.time.inDays", { count: Math.round(ahead / (60 * 24)) });
 	}
-	if (minutes < 60) return `${String(minutes)}m ago`;
-	if (minutes < 60 * 24) return `${String(Math.round(minutes / 60))}h ago`;
-	return `${String(Math.round(minutes / (60 * 24)))}d ago`;
+	if (minutes < 60) return t("automations.time.minutesAgo", { count: minutes });
+	if (minutes < 60 * 24) {
+		return t("automations.time.hoursAgo", { count: Math.round(minutes / 60) });
+	}
+	return t("automations.time.daysAgo", { count: Math.round(minutes / (60 * 24)) });
 }
+
+function scheduleText(schedule: AutomationSchedule, t: TranslateFn): string {
+	switch (schedule.kind) {
+		case "interval":
+			return schedule.minutes % 60 === 0
+				? t("automations.schedule.everyHours", { count: schedule.minutes / 60 })
+				: t("automations.schedule.everyMinutes", { count: schedule.minutes });
+		case "daily":
+			return t("automations.schedule.daily", {
+				time: `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`,
+			});
+		case "cron":
+			return schedule.expression;
+	}
+}
+
+const RUN_STATUS_LABEL_KEYS: Record<AutomationRun["status"], TranslationKey> = {
+	running: "automations.status.running",
+	succeeded: "automations.status.succeeded",
+	failed: "automations.status.failed",
+	aborted: "automations.status.aborted",
+};
 
 function RunStatusGlyph({ run }: { run: AutomationRun }) {
 	switch (run.status) {
@@ -66,6 +90,7 @@ function AutomationRow({
 	onAbort: () => void;
 	onRemove: () => void;
 }) {
+	const { t } = useTranslation();
 	const lastRun = automation.lastRun;
 	return (
 		<div
@@ -87,23 +112,25 @@ function AutomationRow({
 				{lastRun ? <RunStatusGlyph run={lastRun} /> : null}
 			</button>
 			<div className={cn("flex items-center gap-2 text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-				<span className="shrink-0">{describeSchedule(automation.schedule)}</span>
-				<span className="shrink-0">next {relativeTime(automation.nextRunAt ?? undefined)}</span>
+				<span className="shrink-0">{scheduleText(automation.schedule, t)}</span>
+				<span className="shrink-0">
+					{t("automations.next", { time: relativeTime(automation.nextRunAt ?? undefined, t) })}
+				</span>
 			</div>
 			<div className="flex items-center gap-1">
 				<Button onClick={onToggle} size="xs" variant="chrome-outline">
 					{automation.enabled ? <PauseIcon className="size-3" /> : <PlayIcon className="size-3" />}
-					{automation.enabled ? "Disable" : "Enable"}
+					{automation.enabled ? t("automations.disable") : t("automations.enable")}
 				</Button>
 				{automation.running ? (
 					<Button onClick={onAbort} size="xs" variant="destructive-outline">
 						<StopIcon className="size-3" />
-						Abort
+						{t("automations.abort")}
 					</Button>
 				) : (
 					<Button onClick={onRunNow} size="xs" variant="chrome-outline">
 						<PlayIcon className="size-3" />
-						Run now
+						{t("automations.runNow")}
 					</Button>
 				)}
 				<div className="flex-1" />
@@ -116,6 +143,7 @@ function AutomationRow({
 }
 
 export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
+	const { t } = useTranslation();
 	const [automations, setAutomations] = useState<AutomationWithState[]>([]);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [runs, setRuns] = useState<AutomationRun[]>([]);
@@ -204,9 +232,12 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 		<div className="flex min-h-0 flex-1 flex-col">
 			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
 				<WorkflowIcon className="size-3.5" />
-				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">Automations</span>
+				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">{t("nav.automations")}</span>
 				<span className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-					{automations.filter((entry) => entry.enabled).length}/{automations.length} enabled
+					{t("automations.enabledCount", {
+						enabled: automations.filter((entry) => entry.enabled).length,
+						total: automations.length,
+					})}
 				</span>
 				<div className="flex-1" />
 				<Button
@@ -216,7 +247,7 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 					variant="chrome-outline"
 				>
 					<PlusIcon className="size-3.5" />
-					New
+					{t("common.new")}
 				</Button>
 				<Button onClick={() => void refresh()} size="icon-xs" variant="ghost">
 					<RefreshCwIcon className="size-3.5" />
@@ -236,7 +267,7 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 				<div className="flex w-80 min-w-0 shrink-0 flex-col gap-1 overflow-y-auto border-r border-[color:var(--app-surface-divider)] p-1.5">
 					{automations.length === 0 ? (
 						<p className="px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-							No automations yet. Create one to run a prompt on a schedule.
+							{t("automations.empty")}
 						</p>
 					) : (
 						automations.map((automation) => (
@@ -291,18 +322,21 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 										size="xs"
 										variant="chrome-outline"
 									>
-										Edit
+										{t("common.edit")}
 									</Button>
 								</div>
 								<p className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-									{describeSchedule(selected.schedule)} · {selected.mode} · next{" "}
-									{relativeTime(selected.nextRunAt ?? undefined)} · {selected.cwd}
+									{scheduleText(selected.schedule, t)} · {selected.mode} ·{" "}
+									{t("automations.next", {
+										time: relativeTime(selected.nextRunAt ?? undefined, t),
+									})}{" "}
+									· {selected.cwd}
 								</p>
 							</div>
 
 							<div className="flex flex-col gap-1">
 								<span className={cn("text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-									Prompt
+									{t("common.prompt")}
 								</span>
 								<pre className="whitespace-pre-wrap rounded-lg border border-border p-2.5 text-[length:var(--app-font-size-ui-sm,11px)]">
 									{selected.prompt}
@@ -311,11 +345,11 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 
 							<div className="flex flex-col gap-2">
 								<span className={cn("text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-									Run history ({runs.length})
+									{t("automations.runHistory", { count: runs.length })}
 								</span>
 								{runs.length === 0 ? (
 									<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-										No runs yet.
+										{t("automations.noRuns")}
 									</p>
 								) : (
 									runs.map((run) => (
@@ -326,14 +360,14 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 											<div className="flex items-center gap-1.5">
 												<RunStatusGlyph run={run} />
 												<span className="text-[length:var(--app-font-size-ui-sm,11px)] font-medium">
-													{run.status}
+													{t(RUN_STATUS_LABEL_KEYS[run.status])}
 												</span>
 												<span className={cn("text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-													{relativeTime(run.startedAt)}
+													{relativeTime(run.startedAt, t)}
 													{run.finishedAt === undefined
 														? ""
 														: ` · ${String(Math.max(1, Math.round((run.finishedAt - run.startedAt) / 1000)))}s`}
-													{` · ${String(run.toolCalls)} tool calls`}
+													{` · ${t("automations.toolCalls", { count: run.toolCalls })}`}
 												</span>
 											</div>
 											{run.error ? (
@@ -354,7 +388,7 @@ export function AutomationsPage({ cwd, onClose }: { cwd: string | null; onClose:
 					) : !draft ? (
 						<div className="flex flex-1 items-center justify-center">
 							<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-								Select an automation, or create one.
+								{t("automations.select")}
 							</p>
 						</div>
 					) : null}

@@ -100,6 +100,37 @@
 }
 
 @layer components {
+  /* ─── Window caption strip ────────────────────────────────────────────────────
+     The window is frameless (main sets titleBarStyle: "hidden"), so this row is
+     the app's only drag handle — it spans the full width above the sidebar and
+     the content, which is what gives every view a way to move the window.
+
+     The right padding reserves the system-drawn caption buttons: Electron exposes
+     their geometry as the Window Controls Overlay env() variables, and where
+     there is no overlay (macOS, a plain Linux frame) the fallbacks collapse the
+     reservation back to the plain gutter. */
+  .app-titlebar {
+    -webkit-app-region: drag;
+    app-region: drag;
+    padding-left: 0.75rem;
+    padding-right: calc(
+      100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+    );
+  }
+
+  /* macOS keeps its traffic lights at the window's top-left (hiddenInset), so the
+     title text starts clear of them instead. */
+  .app-titlebar[data-mac] {
+    padding-left: 78px;
+  }
+
+  /* Anything interactive dropped into the strip has to leave the drag region, or
+     its clicks turn into window moves. */
+  .app-titlebar :where(a, button, input, select, [role="button"]) {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
   .sidebar-icon-button {
     @apply items-center justify-center rounded-sm p-0.5 text-muted-foreground/60 transition-colors hover:text-foreground/82 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
     background: transparent;

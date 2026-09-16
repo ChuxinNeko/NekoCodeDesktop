@@ -1,18 +1,17 @@
-import { useMemo } from "react";
-import type { ThreadSummary } from "../../../shared/agent";
+import type { SessionSummary } from "../../../shared/agent";
 import type { ThemeMode } from "../hooks/useTheme";
+import { projectLabel } from "../../../shared/paths";
+import { api } from "../api";
 import { cn } from "../lib/utils";
 import {
 	SIDEBAR_HEADER_ROW_CLASS_NAME,
-	SIDEBAR_NESTED_LIST_GAP_CLASS_NAME,
 	SIDEBAR_ROW_ACTIVE_CLASS_NAME,
 	SIDEBAR_ROW_HOVER_CLASS_NAME,
 	SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
-	SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME,
-	SIDEBAR_SECTION_LABEL_CLASS_NAME,
-	SIDEBAR_THREAD_ROW_BASE_CLASS_NAME,
 } from "../lib/sidebarRowStyles";
 import type { WorkspaceView } from "../App";
+import { useTranslation, type TranslationKey } from "../i18n";
+import { SessionList } from "./sessions/SessionList";
 import { IconButton } from "./ui/icon-button";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -31,42 +30,30 @@ import {
 /** Full-surface destinations that live below the thread list. */
 const SECONDARY_NAV: ReadonlyArray<{
 	id: Exclude<WorkspaceView, "chat">;
-	label: string;
+	labelKey: TranslationKey;
 	icon: typeof GitBranchIcon;
 }> = [
-	{ id: "review", label: "Review", icon: GitBranchIcon },
-	{ id: "pull-requests", label: "Pull requests", icon: GitPullRequestIcon },
-	{ id: "automations", label: "Automations", icon: WorkflowIcon },
+	{ id: "review", labelKey: "nav.review", icon: GitBranchIcon },
+	{ id: "pull-requests", labelKey: "nav.pullRequests", icon: GitPullRequestIcon },
+	{ id: "automations", labelKey: "nav.automations", icon: WorkflowIcon },
 ];
-
-function projectLabel(cwd: string | null): string {
-	if (!cwd) return "No project";
-	const parts = cwd.split(/[\\/]/).filter(Boolean);
-	return parts[parts.length - 1] ?? cwd;
-}
-
-function threadTime(timestamp: number): string {
-	const delta = Date.now() - timestamp;
-	const minutes = Math.round(delta / 60_000);
-	if (minutes < 1) return "now";
-	if (minutes < 60) return `${minutes}m`;
-	const hours = Math.round(minutes / 60);
-	if (hours < 24) return `${hours}h`;
-	return `${Math.round(hours / 24)}d`;
-}
 
 interface SidebarProps {
 	cwd: string | null;
-	threads: ThreadSummary[];
-	activeThreadId: string | null;
+	sessions: SessionSummary[];
+	sessionsLoading: boolean;
+	activeSessionId: string | null;
+	streaming: boolean;
 	view: WorkspaceView;
 	busy: boolean;
 	theme: ThemeMode;
 	resolvedTheme: "light" | "dark";
 	browserOpen: boolean;
 	onPickProject: () => void;
-	onNewThread: () => void;
-	onOpenThread: (thread: ThreadSummary) => void;
+	onNewSession: () => void;
+	onOpenSession: (session: SessionSummary) => void;
+	onRenameSession: (session: SessionSummary, title: string) => void;
+	onDeleteSession: (session: SessionSummary) => void;
 	onSelectView: (view: WorkspaceView) => void;
 	onToggleBrowser: () => void;
 	onToggleTheme: () => void;
@@ -75,25 +62,25 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
 	const {
 		cwd,
-		threads,
-		activeThreadId,
+		sessions,
+		sessionsLoading,
+		activeSessionId,
+		streaming,
 		view,
 		busy,
 		theme,
 		resolvedTheme,
 		browserOpen,
 		onPickProject,
-		onNewThread,
-		onOpenThread,
+		onNewSession,
+		onOpenSession,
+		onRenameSession,
+		onDeleteSession,
 		onSelectView,
 		onToggleBrowser,
 		onToggleTheme,
 	} = props;
-
-	const sortedThreads = useMemo(
-		() => [...threads].sort((a, b) => b.updatedAt - a.updatedAt),
-		[threads],
-	);
+	const { t } = useTranslation();
 
 	return (
 		<aside
@@ -118,10 +105,10 @@ export function Sidebar(props: SidebarProps) {
 						}
 					>
 						<FolderOpenIcon className="size-3.5 shrink-0 opacity-80" />
-						<span className="min-w-0 flex-1 truncate">{projectLabel(cwd)}</span>
+						<span className="min-w-0 flex-1 truncate">{projectLabel(cwd, api.homeDir)}</span>
 					</TooltipTrigger>
 					<TooltipPopup side="bottom">
-						{cwd ?? "Choose a project directory"}
+						{cwd ?? t("sidebar.projectPicker")}
 					</TooltipPopup>
 				</Tooltip>
 
@@ -129,14 +116,18 @@ export function Sidebar(props: SidebarProps) {
 					<Button
 						className="flex-1 justify-start"
 						disabled={!cwd || busy}
-						onClick={onNewThread}
+						onClick={onNewSession}
 						size="sm"
 						variant="subtle"
 					>
 						<NewThreadIcon className="size-3.5" />
-						New thread
+						{t("sidebar.newSession")}
 					</Button>
-					<IconButton label="Toggle theme" onClick={onToggleTheme} tooltip="Toggle theme">
+					<IconButton
+						label={t("sidebar.toggleTheme")}
+						onClick={onToggleTheme}
+						tooltip={t("sidebar.toggleTheme")}
+					>
 						{resolvedTheme === "dark" ? (
 							<SunIcon className="size-3.5" />
 						) : (
@@ -144,58 +135,25 @@ export function Sidebar(props: SidebarProps) {
 						)}
 					</IconButton>
 					<IconButton
-						label="Settings"
+						label={t("sidebar.settings")}
 						onClick={() => onSelectView("settings")}
-						tooltip="Settings"
+						tooltip={t("sidebar.settings")}
 					>
 						<SettingsIcon className="size-3.5" />
 					</IconButton>
 				</div>
 			</div>
 
-			<div className="flex min-h-0 flex-1 flex-col gap-1 px-2 pt-2">
-				<div className="flex items-center justify-between px-2">
-					<span className={SIDEBAR_SECTION_LABEL_CLASS_NAME}>Threads</span>
-					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
-						{threads.length}
-					</span>
-				</div>
-				<div
-					className={cn(
-						"flex min-h-0 flex-1 flex-col overflow-y-auto",
-						SIDEBAR_NESTED_LIST_GAP_CLASS_NAME,
-					)}
-				>
-					{sortedThreads.length === 0 ? (
-						<p className="px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/60">
-							{cwd ? "No threads yet." : "Choose a project to begin."}
-						</p>
-					) : (
-						sortedThreads.map((thread) => {
-							const isActive = thread.id === activeThreadId && view === "chat";
-							return (
-								<button
-									key={thread.id}
-									type="button"
-									onClick={() => onOpenThread(thread)}
-									className={cn(
-										SIDEBAR_THREAD_ROW_BASE_CLASS_NAME,
-										"flex items-center gap-1.5 pr-2",
-										isActive
-											? SIDEBAR_ROW_ACTIVE_CLASS_NAME
-											: cn(SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
-									)}
-								>
-									<span className="min-w-0 flex-1 truncate">{thread.title}</span>
-									<span className="shrink-0 text-[length:var(--app-font-size-ui-timestamp,8px)] text-muted-foreground/50">
-										{threadTime(thread.updatedAt)}
-									</span>
-								</button>
-							);
-						})
-					)}
-				</div>
-			</div>
+			<SessionList
+				activeId={view === "chat" ? activeSessionId : null}
+				hasProject={cwd !== null}
+				loading={sessionsLoading}
+				onDelete={onDeleteSession}
+				onOpen={onOpenSession}
+				onRename={onRenameSession}
+				sessions={sessions}
+				streaming={streaming}
+			/>
 
 			<div className="flex flex-col gap-1 px-2 pb-2 pt-1">
 				{SECONDARY_NAV.map((entry) => (
@@ -211,7 +169,7 @@ export function Sidebar(props: SidebarProps) {
 						)}
 					>
 						<entry.icon className="size-3.5 shrink-0 opacity-80" />
-						<span className="min-w-0 flex-1 truncate">{entry.label}</span>
+						<span className="min-w-0 flex-1 truncate">{t(entry.labelKey)}</span>
 					</button>
 				))}
 				<button
@@ -226,9 +184,9 @@ export function Sidebar(props: SidebarProps) {
 					)}
 				>
 					<GlobeIcon className="size-3.5 shrink-0 opacity-80" />
-					<span className="min-w-0 flex-1 truncate">Browser</span>
+					<span className="min-w-0 flex-1 truncate">{t("nav.browser")}</span>
 					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
-						{browserOpen ? "on" : "off"}
+						{browserOpen ? t("nav.browserOn") : t("nav.browserOff")}
 					</span>
 				</button>
 				<button
@@ -242,9 +200,9 @@ export function Sidebar(props: SidebarProps) {
 					)}
 				>
 					<SettingsIcon className="size-3.5 shrink-0 opacity-80" />
-					<span className="min-w-0 flex-1 truncate">Settings</span>
+					<span className="min-w-0 flex-1 truncate">{t("sidebar.settings")}</span>
 					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
-						{theme}
+						{t(theme === "dark" ? "theme.dark" : theme === "light" ? "theme.light" : "theme.system")}
 					</span>
 				</button>
 			</div>

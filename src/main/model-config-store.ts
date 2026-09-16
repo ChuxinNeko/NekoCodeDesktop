@@ -27,6 +27,8 @@ export interface StoredProfile {
 	api: ModelApiProtocol;
 	encryptedApiKey: string;
 	modelIds: string[];
+	/** Optional: profiles written before the flag existed count as non-reasoning. */
+	reasoning?: boolean;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -93,6 +95,9 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 		) {
 			throw new Error(SHAPE_ERROR);
 		}
+		if (p.reasoning !== undefined && typeof p.reasoning !== "boolean") {
+			throw new Error(SHAPE_ERROR);
+		}
 		if (
 			typeof p.createdAt !== "number" ||
 			!Number.isFinite(p.createdAt) ||
@@ -122,6 +127,7 @@ export function toSummary(p: StoredProfile): ModelProfileSummary {
 		route: p.route,
 		api: p.api,
 		modelIds: [...p.modelIds],
+		reasoning: p.reasoning === true,
 		hasApiKey: p.encryptedApiKey.length > 0,
 		createdAt: p.createdAt,
 		updatedAt: p.updatedAt,
