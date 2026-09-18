@@ -71,9 +71,12 @@ const dock = (
 			tabs,
 			active,
 			tasks,
+			checkpoints: [],
+			checkpointsBusy: false,
 			onSelect: () => {},
 			onCloseTab: () => {},
 			onCancelTask: () => {},
+			onRestoreCheckpoint: () => {},
 			onCloseDock: () => {},
 		}),
 	);

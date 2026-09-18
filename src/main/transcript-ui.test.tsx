@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { AgentCell } from "../shared/agent";
+import type { CheckpointSummary } from "../shared/checkpoints";
 import type { WorkflowTask } from "../shared/workflow";
 
 // Same bridge stand-in as the other renderer tests: importing a transcript
@@ -12,10 +13,21 @@ const { Transcript } = await import("../renderer/src/components/Transcript");
 const { I18nProvider } = await import("../renderer/src/i18n");
 Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
 
-const render = (cells: AgentCell[], streaming = false, tasks?: WorkflowTask[]) =>
+const render = (
+	cells: AgentCell[],
+	streaming = false,
+	tasks?: WorkflowTask[],
+	checkpoints?: CheckpointSummary[],
+) =>
 	renderToStaticMarkup(
 		createElement(I18nProvider, {
-			children: createElement(Transcript, { cells, streaming, tasks }),
+			children: createElement(Transcript, {
+				cells,
+				streaming,
+				tasks,
+				checkpoints,
+				onRestoreCheckpoint: checkpoints ? () => {} : undefined,
+			}),
 		}),
 	);
 
@@ -184,5 +196,120 @@ describe("transcript work grouping", () => {
 
 		expect(html).toContain("Thought for 4s");
 		expect(html).not.toContain("Worked for");
+	});
+});
+
+describe("transcript checkpoints", () => {
+	const checkpoint = (cellId: string | null): CheckpointSummary => ({
+		id: "cp1",
+		sessionId: "s1",
+		createdAt: now - 61_000,
+		label: "ship it",
+		cellId,
+		conversationRestorable: true,
+		codeRestorable: true,
+		fileCount: 12,
+		additions: 30,
+		deletions: 4,
+		shellRuns: 0,
+	});
+
+	test("the prompt a checkpoint guards offers the rewind", () => {
+		const html = render([cells.user, cells.answer], false, undefined, [checkpoint(cells.user.id)]);
+
+		expect(html).toContain("回退到这里");
+		expect(html).toContain("回退到「ship it」之前的检查点");
+	});
+
+	test("a checkpoint with no cell of its own stays out of the transcript", () => {
+		// Compacted away, or on a branch the conversation has moved off: still a
+		// valid restore point, but there is no row here that means "before this".
+		const html = render([cells.user, cells.answer], false, undefined, [checkpoint(null)]);
+
+		expect(html).not.toContain("回退到这里");
+	});
+
+	test("with no checkpoints the prompt renders exactly as it did before", () => {
+		expect(render([cells.user, cells.answer])).not.toContain("回退到这里");
+	});
+
+	test("the rewind is disabled while the turn is still running", () => {
+		const html = render([cells.user], true, undefined, [checkpoint(cells.user.id)]);
+
+		expect(html).toContain("回退到这里");
+		expect(html).toContain("disabled");
+	});
+});
+
+describe("transcript file edit cards", () => {
+	const editTool: AgentCell = {
+		id: "t5",
+		type: "tool",
+		toolCallId: "t5",
+		toolName: "edit",
+		args: {
+			path: "src/app.ts",
+			edits: [{ oldText: "const a = 1;", newText: "const a = 2;\nconst b = 3;" }],
+		},
+		output: "Successfully replaced 1 block(s) in src/app.ts.",
+		details: { diff: "-1 const a = 1;\n+1 const a = 2;\n+2 const b = 3;" },
+		status: "done",
+		startedAt: now - 55_000,
+		timestamp: now - 40_000,
+	};
+
+	test("an edit result renders as a file card with stats and code lines", () => {
+		const html = render([cells.user, editTool, cells.answer]);
+
+		expect(html).toContain("app.ts");
+		expect(html).toContain("+2");
+		expect(html).toContain("−1");
+		expect(html).toContain("const a = 1;");
+		expect(html).toContain("const a = 2;");
+		expect(html).toContain("const b = 3;");
+	});
+
+	test("an edit with no result details falls back to the args diff", () => {
+		const html = render([
+			cells.user,
+			{ ...editTool, id: "t6", toolCallId: "t6", details: undefined },
+		]);
+
+		expect(html).toContain("app.ts");
+		expect(html).toContain("+2");
+		expect(html).toContain("−1");
+		expect(html).toContain("const a = 1;");
+		expect(html).toContain("const a = 2;");
+	});
+
+	test("a write renders its whole content as additions", () => {
+		const writeTool: AgentCell = {
+			id: "t7",
+			type: "tool",
+			toolCallId: "t7",
+			toolName: "write",
+			args: { path: "notes/todo.md", content: "buy milk\nfeed cat\n" },
+			output: "wrote notes/todo.md",
+			status: "done",
+			startedAt: now - 55_000,
+			timestamp: now - 40_000,
+		};
+		const html = render([cells.user, writeTool]);
+
+		expect(html).toContain("todo.md");
+		expect(html).toContain("+2");
+		expect(html).not.toContain("−0");
+		expect(html).toContain("buy milk");
+		expect(html).toContain("feed cat");
+	});
+
+	test("a failed edit keeps the generic tool row", () => {
+		const html = render([
+			cells.user,
+			{ ...editTool, id: "t8", toolCallId: "t8", status: "error" as const },
+		]);
+
+		expect(html).toContain("edit");
+		expect(html).not.toContain("+2");
 	});
 });

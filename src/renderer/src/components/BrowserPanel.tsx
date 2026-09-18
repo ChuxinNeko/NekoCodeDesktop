@@ -55,6 +55,38 @@ function scrollTabIntoView(strip: HTMLElement, tab: HTMLElement): void {
 	}
 }
 
+/** The subset of a webview element this module toggles classes on. */
+interface GuestElement {
+	classList: { toggle(name: string, force: boolean): void };
+}
+
+/**
+ * Show exactly one guest: the browser's active tab, and only while the dock is
+ * showing the browser at all.
+ *
+ * The second half is the part that is easy to leave out and the reason this is
+ * a named function. The dock hides a pane it is not showing by putting
+ * `invisible` on it and relying on the pane to inherit that. `visibility` does
+ * inherit — but a descendant declaring `visibility: visible` overrides an
+ * ancestor's `hidden`, and `.visible` is exactly that declaration. A guest left
+ * marked visible therefore went on painting over whichever tool the dock had
+ * switched to, while the tab strip already said otherwise.
+ *
+ * Every other dock pane is plain DOM that never re-declares its own visibility,
+ * which is why this was the only one that leaked through.
+ */
+export function syncGuestVisibility(
+	guests: Iterable<readonly [string, GuestElement]>,
+	activeTabId: string,
+	panelVisible: boolean,
+): void {
+	for (const [tabId, element] of guests) {
+		const shown = panelVisible && tabId === activeTabId;
+		element.classList.toggle("visible", shown);
+		element.classList.toggle("invisible", !shown);
+	}
+}
+
 export function BrowserPanel({ onClose, preview, visible = true }: {
 	onClose: () => void;
 	preview?: BrowserPreviewRequest | null;
@@ -252,11 +284,8 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 	}, [tabs, attachWebviewListeners]);
 
 	useEffect(() => {
-		for (const [tabId, element] of webviews.current) {
-			element.classList.toggle("visible", tabId === activeTabId);
-			element.classList.toggle("invisible", tabId !== activeTabId);
-		}
-	}, [activeTabId, tabs]);
+		syncGuestVisibility(webviews.current, activeTabId, visible);
+	}, [activeTabId, tabs, visible]);
 
 	const navigate = (raw: string) => {
 		const url = resolveBrowserInputUrl(raw);

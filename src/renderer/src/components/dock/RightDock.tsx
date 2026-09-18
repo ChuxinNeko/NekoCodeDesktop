@@ -11,10 +11,13 @@ import {
 	FoldersIcon,
 	GitBranchIcon,
 	GlobeIcon,
+	HistoryIcon,
 	PlusIcon,
 	TerminalIcon,
 	XIcon,
 } from "../../lib/icons";
+import type { CheckpointSummary } from "../../../../shared/checkpoints";
+import { CheckpointsPanel } from "./CheckpointsPanel";
 import { IconButton } from "../ui/icon-button";
 import { BrowserPanel } from "../BrowserPanel";
 import type { BrowserPreviewRequest } from "../../../../shared/browser";
@@ -23,7 +26,7 @@ import { TaskDetailPanel } from "./TaskDetailPanel";
 import { ReviewPanel } from "../ReviewPanel";
 import { TerminalPanel } from "../TerminalPanel";
 
-export type DockTool = "review" | "terminal" | "browser" | "files";
+export type DockTool = "review" | "terminal" | "browser" | "files" | "checkpoints";
 
 /**
  * A dock tab: one of the built-in tools, or one background worker.
@@ -54,6 +57,12 @@ const DOCK_MENU: ReadonlyArray<{
 	{ id: "terminal", labelKey: "chat.terminal", icon: TerminalIcon, shortcut: "Ctrl+`" },
 	{ id: "browser", labelKey: "nav.browser", icon: GlobeIcon, shortcut: "Ctrl+T" },
 	{ id: "files", labelKey: "dock.files", icon: FoldersIcon, shortcut: "Ctrl+P" },
+	{
+		id: "checkpoints",
+		labelKey: "checkpoint.panelTitle",
+		icon: HistoryIcon,
+		shortcut: "Ctrl+Shift+H",
+	},
 ];
 
 const DOCK_TITLES: Record<DockTool, TranslationKey> = {
@@ -61,6 +70,7 @@ const DOCK_TITLES: Record<DockTool, TranslationKey> = {
 	terminal: "chat.terminal",
 	browser: "nav.browser",
 	files: "dock.files",
+	checkpoints: "checkpoint.panelTitle",
 };
 
 const DOCK_ICONS: Record<DockTool, typeof GitBranchIcon> = {
@@ -68,20 +78,28 @@ const DOCK_ICONS: Record<DockTool, typeof GitBranchIcon> = {
 	terminal: TerminalIcon,
 	browser: GlobeIcon,
 	files: FoldersIcon,
+	checkpoints: HistoryIcon,
 };
 
 interface RightDockProps {
 	browserPreview?: BrowserPreviewRequest | null;
 	visible?: boolean;
 	cwd: string | null;
+	/** A file the transcript asked the Files pane to open; nonce re-raises it. */
+	fileRequest?: { path: string; nonce: number } | null;
 	tabs: readonly DockTabId[];
 	/** The tab on screen, or null for the tool menu ("new tab"). */
 	active: DockTabId | null;
 	/** Live workers, for worker tab titles and their panels. */
 	tasks: readonly WorkflowTask[];
+	/** Restore points for the open session, newest first. */
+	checkpoints: readonly CheckpointSummary[];
+	/** A run is in flight, so restoring would race it. */
+	checkpointsBusy: boolean;
 	onSelect: (tab: DockTabId | null) => void;
 	onCloseTab: (tab: DockTabId) => void;
 	onCancelTask: (taskId: string) => void;
+	onRestoreCheckpoint: (checkpoint: CheckpointSummary) => void;
 	onCloseDock: () => void;
 }
 
@@ -102,12 +120,16 @@ export function RightDock({
 	browserPreview,
 	visible = true,
 	cwd,
+	fileRequest,
 	tabs,
 	active,
 	tasks,
+	checkpoints,
+	checkpointsBusy,
 	onSelect,
 	onCloseTab,
 	onCancelTask,
+	onRestoreCheckpoint,
 	onCloseDock,
 }: RightDockProps) {
 	const { t } = useTranslation();
@@ -231,8 +253,14 @@ export function RightDock({
 								<TerminalPanel cwd={cwd} docked onClose={() => onCloseTab(tab)} />
 							) : tab === "browser" ? (
 								<BrowserPanel preview={browserPreview} visible={visible && !hidden} onClose={() => onCloseTab(tab)} />
+							) : tab === "checkpoints" ? (
+								<CheckpointsPanel
+									checkpoints={checkpoints}
+									busy={checkpointsBusy}
+									onRestore={onRestoreCheckpoint}
+								/>
 							) : (
-								<FilesPanel cwd={cwd} />
+								<FilesPanel cwd={cwd} fileRequest={fileRequest} />
 							)}
 						</div>
 					);

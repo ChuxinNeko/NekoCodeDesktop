@@ -16,12 +16,12 @@
 
 | 模式/角色 | 行为 | 接入方式 |
 | --- | --- | --- |
-| Agent | 实现、修改、验证 | 原生文件/shell 工具，question、todo_write、switch_mode、commit_message |
+| Agent | 全自动匹配 answer / plan / execute / debug / delegate 阶段 | switch_mode 自动切阶段，不离开 Agent；工具随阶段与权限变化 |
 | Ask | 只读调查与问答 | read、grep、find、ls；可提问、请求确认切换模式 |
 | Plan | 只读研究并输出 Markdown 计划 | Ask 的能力，加 Todo；没有文件写入或 shell 权限 |
 | Debug | 根据复现与日志调查、修复、验证 | Agent 的编辑/运行能力，加 debug_log；用 question 等待复现反馈 |
 | Multitask | 协调独立后台 PI 会话 | task、task_status、task_cancel；完成/失败后将结果送回父会话并续跑 |
-| Subagent | 只读调查子会话 | task(kind="explore") 使用，仅四个只读工具 |
+| Subagent | 只读调查子会话 | task(kind="explore") 使用，read/grep/find/ls/stat |
 | Commit | 隔离的提交信息生成器 | 内部 helper，无工具，只接受暂存 diff/近期提交标题等输入 |
 | Compaction | PI 上下文摘要的补充指令 | SDK compactionInstructions，覆盖手动、自动及 split-turn 摘要 |
 
@@ -29,16 +29,17 @@
 
 - Ask、Plan 和 Subagent 无论执行权限菜单选什么，都不能修改项目或执行命令。
 - 选择“只读”会进一步收紧其他工作模式，包括阻止写入型 worker。
-- 模型调用 switch_mode 必须通过真实界面确认，不能提升执行权限；普通回复中的“批准”“切换模式”不具有控制效果。
+- Agent 中 switch_mode 自动切换内部阶段，无需用户确认，始终保留 Agent 模式；手动 Ask/Plan/Debug/Multitask 中切换模式仍需界面确认。两者都不能提升执行权限。
+- 用户已要求实施或修复时，Agent 内部规划完成后自行进入执行，不重复索要认可；用户明确只要方案或要求先确认时停在该边界。手动 Plan 保持只读与确认规则。
 - 后端每次执行工具前再次检查权限，不能只靠提示词约束，也不能通过重设工具列表绕过。
 - auto / full-access 保留桌面端原有语义：都可使用完整原生工具集，并不代表操作系统沙箱或逐次 shell 审批。
-- 运行期间切换工作模式/执行权限需先停止；模型通过 switch_mode 获得确认的切换可在当前工具轮次中生效。
+- 用户在界面切换工作模式/执行权限需先停止；switch_mode 的限制立即生效，新解锁的工具从下一步模型调用开始提供。有 worker 在运行时不能切换阶段。
 
 ### 后台任务
 
 最多四个活动 worker。探索任务只读；写入任务必须声明工作区内的 writablePaths，运行时拒绝越界、经符号链接逃逸及重叠写入范围。
 
-写入 worker 仅提供 read/grep/find/ls/edit/write，不提供 shell 或嵌套任务。父会话负责构建、测试和最终集成；有写入 worker 运行时，父会话不能写入其范围或执行 shell。完成消息是给父会话的数据，不是新的用户授权。
+普通写入 worker 提供 read/grep/find/ls/stat/edit/write，不提供 shell 或嵌套任务。Fusion 最多一个活动任务，使用用户指定的 Sidekick；kind=worker 且 writablePaths=["."] 时独占工作区并提供 shell。其他 worker 的命令验证由父会话负责。有写入 worker 运行时，父会话不能写入其范围或执行 shell。完成消息是给父会话的数据，不是新的用户授权。
 
 停止、关闭或切换会话会取消其任务。重新打开会话后，之前仍标记 running 的任务转为 cancelled，不自动重放副作用。界面保存并展示最近的任务状态/结果。
 
@@ -60,6 +61,8 @@
 
 PI 的 AGENTS.md、Skills、APPEND_SYSTEM.md 仍由资源加载器处理。桌面端会将用户 SYSTEM.md 作为模式规则后的自定义补充，而不是让它替换权限边界。隔离 helper 不加载扩展；Commit 不继承项目提示词。
 
+PI 的自定义系统提示词分支保留当前活动工具的 promptGuidelines，去重后追加，不恢复默认 persona；阶段收紧工具时，相应指导也随之移除。Fusion 保留各阶段纪律，视觉规格按任务规模填写 designSpec。
+
 ## 代码与输出格式
 
 标准 Markdown 围栏代码块可以正常显示。文件路径目前作为行内代码显示，不承诺自动跳转；Mermaid/LaTeX 没有新增图形渲染支持。代码块不会被当成工具调用执行。
@@ -74,3 +77,5 @@ PI 的 AGENTS.md、Skills、APPEND_SYSTEM.md 仍由资源加载器处理。桌�
 - 修改 PI 核心后先执行 bun run pi:build，再执行 bun run build。
 
 工作流集成测试使用本地回环模拟模型，不调用真实模型或使用用户 API 凭据。运行时本身仍使用用户选择的 PI 模型配置。
+
+验证应覆盖用户原始触发条件，并区分代码检查、单元测试、链路测试与真实界面观察。测试中的自动阶段转换验证运行时链路，不代表真实模型一定会选择正确阶段；模型的任务成功率、重复确认次数和成本需另做行为评测。

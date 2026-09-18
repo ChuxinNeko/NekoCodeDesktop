@@ -34,6 +34,13 @@ import type {
 	ThinkingLevel,
 } from "../shared/agent";
 import type { FsEntry, FsReadResult } from "../shared/files";
+import type {
+	CheckpointFileDiff,
+	CheckpointPreview,
+	CheckpointSummary,
+	RestoreCheckpointRequest,
+	RestoreCheckpointResult,
+} from "../shared/checkpoints";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
 import type {
 	TerminalCreateRequest,
@@ -145,6 +152,14 @@ const api = {
 	// Null when the open session goes away (it was deleted).
 	onAgentSnapshot: (listener: (snapshot: AgentSnapshot | null) => void) =>
 		subscribe("agent:snapshot", listener),
+
+	checkpointsList: (): Promise<CheckpointSummary[]> => ipcRenderer.invoke("checkpoints:list"),
+	checkpointFileDiff: (id: string, path: string): Promise<CheckpointFileDiff> =>
+		ipcRenderer.invoke("checkpoints:fileDiff", id, path),
+	checkpointPreview: (id: string): Promise<CheckpointPreview> =>
+		ipcRenderer.invoke("checkpoints:preview", id),
+	checkpointRestore: (req: RestoreCheckpointRequest): Promise<RestoreCheckpointResult> =>
+		ipcRenderer.invoke("checkpoints:restore", req),
 
 	pluginsCatalog: (query: PluginCatalogQuery): Promise<PluginCatalogPage> =>
 		ipcRenderer.invoke("plugins:catalog", query),

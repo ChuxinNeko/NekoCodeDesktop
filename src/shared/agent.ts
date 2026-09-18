@@ -1,4 +1,5 @@
 import type { AgentPhase, WorkMode, WorkflowSnapshot } from "./workflow";
+import type { CheckpointSummary } from "./checkpoints";
 import type { FusionConfig } from "./fusion";
 
 export type ExecutionMode = "read-only" | "auto" | "full-access";
@@ -103,7 +104,10 @@ export type AgentCell =
 			toolName: string;
 			args: unknown;
 			output: string;
+			details?: unknown;
 			status: "pending" | "running" | "done" | "error";
+			/** Tool arguments are still being generated; no file has been written yet. */
+			inputStreaming?: boolean;
 			/**
 			 * When the call was issued. `timestamp` moves to the result once one
 			 * lands — which is what orders the cell — so the start is kept apart
@@ -162,6 +166,12 @@ export interface AgentSnapshot {
 	fusion?: FusionConfig | null;
 	session: SessionSummary;
 	cells: AgentCell[];
+	/**
+	 * Points this session can be put back to, newest first. Each one carries the
+	 * `cellId` of the turn it sits in front of, which is what lets the transcript
+	 * offer the rewind on the prompt it would undo.
+	 */
+	checkpoints: CheckpointSummary[];
 	workflow: WorkflowSnapshot;
 	streaming: boolean;
 	modelKey: string | null;

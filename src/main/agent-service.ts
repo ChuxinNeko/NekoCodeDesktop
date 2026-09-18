@@ -30,6 +30,24 @@ import type {
 	PluginsSnapshot,
 	SetPluginEnabledRequest,
 } from "../shared/plugins";
+import type {
+	CheckpointFileDiff,
+	CheckpointPreview,
+	CheckpointSummary,
+	RestoreCheckpointRequest,
+	RestoreCheckpointResult,
+} from "../shared/checkpoints";
+import {
+	CHECKPOINT_ENTRY,
+	checkpointEntries,
+	planReversal,
+	turnStats,
+	type CheckpointData,
+	type ReversalPlan,
+} from "./file-journal";
+import { FileJournalRecorder } from "./file-journal-recorder";
+import { applyReversal, fileDiffSince, previewReversal } from "./file-restore";
+import { cellIdForMessage, findTurnEntry } from "./checkpoint-anchor";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import { PluginService } from "./plugin-service";
@@ -137,6 +155,28 @@ function modelKeyOf(model: { provider: string; id: string }): string {
 	return `${model.provider}/${model.id}`;
 }
 
+/** The transcript line a finished restore leaves behind. */
+function describeRestore(outcome: {
+	scope: RestoreCheckpointRequest["scope"];
+	label: string;
+	restored: number;
+	deleted: number;
+	conversationRewound: boolean;
+}): string {
+	const parts: string[] = [];
+	if (outcome.scope !== "conversation") {
+		parts.push(
+			outcome.restored || outcome.deleted
+				? `恢复 ${outcome.restored} 个文件，删除 ${outcome.deleted} 个新增文件`
+				: "代码无需改动",
+		);
+	}
+	if (outcome.scope !== "code") {
+		parts.push(outcome.conversationRewound ? "对话已回退到这一轮之前" : "对话未回退");
+	}
+	return `已回退到检查点「${outcome.label}」：${parts.join("；")}`;
+}
+
 /** What an assistant message said, with thinking and tool calls left out. */
 function assistantText(message: AssistantMessage): string {
 	if (!Array.isArray(message.content)) return "";
@@ -184,6 +224,8 @@ export class AgentService {
 	private cwd: string | null = null;
 	private readonly preferencesPath: string;
 	readonly plugins: PluginService;
+	/** Records pre-images for the open session's file-changing tool calls. */
+	private journal: FileJournalRecorder | null = null;
 	/** What the open session's extensions registered; replaced on every reload. */
 	private extensions: LoadExtensionsResult | undefined;
 	private resourceLoader: ResourceLoader | undefined;
@@ -594,6 +636,8 @@ export class AgentService {
 		const sessionFile = this.resolveSessionFile(req.sessionFile);
 		const closedActive = this.session?.sessionManager.getSessionFile() === sessionFile;
 		if (closedActive) this.close();
+		// Checkpoints live in the transcript, so they go with it. Nothing to clean
+		// up elsewhere: there is no elsewhere.
 		rmSync(sessionFile, { force: true });
 		this.emitSessionsChanged();
 		if (closedActive) this.emit();
@@ -664,6 +708,11 @@ export class AgentService {
 		const firstPrompt = !session.messages.some((m) => m.role === "user");
 		if (firstPrompt) this.startTitleGeneration(session, text);
 
+		// Before the agent can touch anything, so everything the turn changes is
+		// recorded after the marker. Steering joins the turn already running, and
+		// that turn has a marker already.
+		if (!session.isStreaming) this.markCheckpoint(session, text);
+
 		try {
 			if (session.isStreaming) {
 				await session.prompt(text, { streamingBehavior: "steer" });
@@ -688,6 +737,170 @@ export class AgentService {
 		await this.session?.abort();
 		await this.workflow?.state.whenSettled();
 		this.emit();
+	}
+
+	// =========================================================================
+	// Checkpoints
+	// =========================================================================
+
+	/**
+	 * Mark the point a turn starts from.
+	 *
+	 * A marker entry in the session tree, nothing more: what the turn goes on to
+	 * change is recorded beside it by the journal as each tool runs. There is no
+	 * work to do here and nothing to copy, which is the whole reason this can run
+	 * in front of every prompt without anyone noticing.
+	 */
+	private markCheckpoint(session: AgentSession, prompt: string): void {
+		try {
+			const data: CheckpointData = { label: normalizeLine(prompt, 120) };
+			session.sessionManager.appendCustomEntry(CHECKPOINT_ENTRY, data);
+			this.emit();
+		} catch (error) {
+			// Never block a prompt on the safety net failing to deploy.
+			console.error("Could not mark a checkpoint:", error);
+		}
+	}
+
+	/**
+	 * Every checkpoint for the open session, newest first.
+	 *
+	 * Read straight off the session tree, so there is no index to keep in step
+	 * and nothing to invalidate: a checkpoint that is on the active branch is one
+	 * you can go back to, and one that is not, is not. The branch is walked once
+	 * for all of them rather than once each.
+	 */
+	listCheckpoints(): CheckpointSummary[] {
+		const session = this.session;
+		if (!session) return [];
+		const sessionId = session.sessionManager.getSessionId();
+		const branch = session.sessionManager.getBranch();
+		const messages = session.messages;
+		const summaries = checkpointEntries(branch).map((marker) => {
+			const turn = findTurnEntry(branch, marker.id);
+			const plan = planReversal(branch, marker.id);
+			const stats = turnStats(branch, marker.id);
+			return {
+				id: marker.id,
+				sessionId,
+				createdAt: marker.timestamp,
+				label: marker.label,
+				cellId: cellIdForMessage(messages, turn?.message ?? undefined),
+				conversationRestorable: turn !== null,
+				codeRestorable: plan.steps.length > 0,
+				fileCount: stats.files,
+				additions: stats.additions,
+				deletions: stats.deletions,
+				shellRuns: plan.opaqueRuns,
+			} satisfies CheckpointSummary;
+		});
+		return summaries.reverse();
+	}
+
+	/** The reversal plan for one checkpoint, or null when it is off the branch. */
+	private reversalFor(id: string): { plan: ReversalPlan; label: string } | null {
+		const session = this.session;
+		if (!session) return null;
+		const branch = session.sessionManager.getBranch();
+		const marker = checkpointEntries(branch).find((entry) => entry.id === id);
+		if (!marker) return null;
+		return { plan: planReversal(branch, id), label: marker.label };
+	}
+
+	/**
+	 * One file's changes since a checkpoint, as a patch.
+	 *
+	 * Computed on demand rather than carried on every snapshot: a patch is the
+	 * thing you open one of at a time, and putting all of them on the snapshot
+	 * would send the contents of every changed file to the renderer on every
+	 * streaming event.
+	 */
+	async checkpointFileDiff(id: string, path: string): Promise<CheckpointFileDiff> {
+		const session = this.session;
+		if (!session) throw new Error("没有打开的会话");
+		const found = this.reversalFor(id);
+		const step = found?.plan.steps.find((candidate) => candidate.path === path);
+		if (!step) throw new Error("该检查点没有记录这个文件的改动");
+		return fileDiffSince(step, session.sessionManager.getCwd());
+	}
+
+	/** What restoring this checkpoint's code would change, for the confirmation. */
+	async previewCheckpoint(id: string): Promise<CheckpointPreview> {
+		const session = this.session;
+		if (!session) throw new Error("没有打开的会话");
+		const found = this.reversalFor(id);
+		const checkpoint = this.listCheckpoints().find((summary) => summary.id === id);
+		if (!found || !checkpoint) throw new Error("检查点不存在或已不在当前对话分支上");
+		return { checkpoint, diff: await previewReversal(found.plan, session.sessionManager.getCwd()) };
+	}
+
+	/**
+	 * Put the project back to a checkpoint.
+	 *
+	 * Refuses while anything is running: rewinding the session tree under a live
+	 * turn would leave the agent appending to a branch that no longer exists, and
+	 * restoring files under a running tool would race its writes. The caller has
+	 * already confirmed with the user by the time this is reached — the guard
+	 * here is about the machine's state, not the user's intent.
+	 */
+	async restoreCheckpoint(request: RestoreCheckpointRequest): Promise<RestoreCheckpointResult> {
+		const session = this.session;
+		if (!session) throw new Error("没有打开的会话");
+		if (
+			session.isStreaming ||
+			session.isCompacting ||
+			this.helperAbort ||
+			this.workflow?.state.hasRunningTasks
+		) {
+			throw new Error("请先停止当前运行及后台任务，再回退到检查点");
+		}
+		const found = this.reversalFor(request.id);
+		if (!found) throw new Error("检查点不存在或已不在当前对话分支上");
+		const warnings: string[] = [];
+		let restored = 0;
+		let deleted = 0;
+		let conversationRewound = false;
+		let editorText: string | undefined;
+
+		// Files first, and from the plan read before anything moved: rewinding the
+		// tree first would take the very entries the plan is built from off the
+		// active branch, leaving nothing to put back.
+		if (request.scope === "code" || request.scope === "both") {
+			const result = await applyReversal(found.plan, session.sessionManager.getCwd());
+			restored = result.restored;
+			deleted = result.deleted;
+			warnings.push(...result.warnings);
+		}
+
+		if (request.scope === "conversation" || request.scope === "both") {
+			const entry = findTurnEntry(session.sessionManager.getBranch(), request.id);
+			if (!entry) {
+				warnings.push("这个检查点后面没有可回退的对话");
+			} else {
+				const result = await session.navigateTree(entry.id);
+				if (result.cancelled) {
+					warnings.push("对话回退被取消");
+				} else {
+					conversationRewound = true;
+					editorText = result.editorText ?? found.label;
+				}
+			}
+		}
+
+		if (conversationRewound) {
+			// Reset, not just rebuild: the overlay still holds the live cells of the
+			// turn that was just undone, and they have no persisted message left to
+			// be reconciled against.
+			this.projector.reset();
+			this.projector.rebuild(session.messages, session.isStreaming);
+			this.emitSessionsChanged();
+		}
+		this.projector.notice(
+			warnings.length ? "warning" : "info",
+			describeRestore({ scope: request.scope, label: found.label, restored, deleted, conversationRewound }),
+		);
+		this.emit();
+		return { restored, deleted, conversationRewound, editorText, warnings };
 	}
 
 	/**
@@ -895,6 +1108,8 @@ export class AgentService {
 		this.wasStreaming = false;
 		this.projector.reset();
 		this.pendingError = undefined;
+		this.journal?.reset();
+		this.journal = null;
 	}
 
 	private async startSession(
@@ -924,6 +1139,8 @@ export class AgentService {
 		this.session = null;
 		this.projector.reset();
 		this.pendingError = undefined;
+		this.journal?.reset();
+		this.journal = null;
 
 		await previousWorkflow?.state.whenSettled();
 		if (generation !== this.generation) throw new Error("Session superseded");
@@ -987,6 +1204,11 @@ export class AgentService {
 		if (fusionError) this.pendingError = fusionError;
 		this.projector.rebuild(session.messages, session.isStreaming);
 		this.wasStreaming = session.isStreaming;
+		// After the workflow gate, so a tool it blocks is never recorded as having
+		// changed anything. Nothing is scanned or copied here — the recorder only
+		// wakes up when a tool call names a file.
+		this.journal = new FileJournalRecorder(sessionManager.getCwd());
+		this.journal.attach(session);
 		this.unsubscribe = session.subscribe((event: AgentSessionEvent) => {
 			this.onSessionEvent(event);
 		});
@@ -1164,6 +1386,7 @@ export class AgentService {
 				messageCount: messages.length,
 			},
 			cells: this.projector.cells(),
+			checkpoints: this.listCheckpoints(),
 			fusion: this.workflow?.fusion ?? null,
 			workflow: this.workflow?.state.snapshot() ?? { request: null, todos: [], tasks: [] },
 			streaming: session.isStreaming || this.helperAbort !== null,

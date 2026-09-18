@@ -113,6 +113,26 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("prompt guidelines", () => {
+		test("retains active tool guidelines with a custom prompt without restoring the default persona", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "NekoCode custom prompt",
+				selectedTools: ["edit"],
+				promptGuidelines: [" Match original text. ", "Match original text.", " "],
+				appendSystemPrompt: "User supplement",
+				cwd: process.cwd(),
+			});
+			expect(prompt).toContain("NekoCode custom prompt");
+			expect(prompt).toContain("Tool usage guidelines:\n- Match original text.");
+			expect(prompt.match(/- Match original text\./g)).toHaveLength(1);
+			expect(prompt).toContain("User supplement");
+			expect(prompt).not.toContain("You are an expert coding assistant operating inside pi");
+		});
+
+		test("does not add an empty tool section to isolated custom prompts", () => {
+			const prompt = buildSystemPrompt({ customPrompt: "Commit helper", selectedTools: [], cwd: process.cwd() });
+			expect(prompt).not.toContain("Tool usage guidelines:");
+		});
+
 		test("appends promptGuidelines to default guidelines", () => {
 			const prompt = buildSystemPrompt({
 				selectedTools: ["read", "dynamic_tool"],

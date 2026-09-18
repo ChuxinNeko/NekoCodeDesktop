@@ -39,6 +39,7 @@ import type {
 	ThinkingLevel,
 } from "../shared/agent";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
+import type { RestoreCheckpointRequest } from "../shared/checkpoints";
 import type {
 	TerminalCreateRequest,
 	TerminalInputRequest,
@@ -374,6 +375,24 @@ function registerIpc(): void {
 		agentService?.setThinkingLevel(level),
 	);
 	ipcMain.handle("agent:setWorkMode", (_e, mode: WorkMode) => agentService?.setWorkMode(mode));
+
+	ipcMain.handle("checkpoints:list", () => agentService?.listCheckpoints() ?? []);
+	ipcMain.handle("checkpoints:fileDiff", (_e, id: string, path: string) => {
+		if (!agentService) throw new Error("Agent service unavailable");
+		return agentService.checkpointFileDiff(id, path);
+	});
+	ipcMain.handle("checkpoints:preview", (_e, id: string) => {
+		if (!agentService) throw new Error("Agent service unavailable");
+		return agentService.previewCheckpoint(id);
+	});
+	ipcMain.handle("checkpoints:restore", (_e, req: RestoreCheckpointRequest) => {
+		if (!agentService) throw new Error("Agent service unavailable");
+		if (req?.scope !== "code" && req?.scope !== "conversation" && req?.scope !== "both") {
+			throw new Error(`Unknown checkpoint scope: ${String(req?.scope)}`);
+		}
+		return agentService.restoreCheckpoint(req);
+	});
+
 	ipcMain.handle("agent:answerWorkflow", (_e, answer: WorkflowAnswer) => agentService?.answerWorkflow(answer));
 	ipcMain.handle("agent:cancelTask", (_e, id: string) => agentService?.cancelTask(id));
 	const pluginCatalog = new PluginCatalogService();

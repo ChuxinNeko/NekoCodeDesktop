@@ -43,6 +43,7 @@ export interface ProjectableMessage {
 	command?: string;
 	output?: string;
 	exitCode?: number;
+	details?: unknown;
 	display?: boolean;
 	summary?: string;
 	customType?: string;
@@ -184,6 +185,11 @@ export function toolOutputText(result: unknown): string {
 		if (text) return text;
 	}
 	return "";
+}
+
+function toolResultDetails(result: unknown): unknown {
+	if (typeof result !== "object" || result === null) return undefined;
+	return (result as { details?: unknown }).details;
 }
 
 function ts(message: ProjectableMessage): number {
@@ -413,8 +419,8 @@ export function projectMessages(
 							toolCallId: block.id,
 							toolName: block.name,
 							args: toolCallArgs(block),
-							output: "",
-							status: "pending",
+							output: error ?? "",
+							status: error ? "error" : "pending",
 							// The message that asked for the call is where the work began.
 							startedAt: t || Date.now(),
 							timestamp: t || Date.now(),
@@ -434,6 +440,7 @@ export function projectMessages(
 					// Update in place: keep original position and args.
 					existing.toolName = message.toolName ?? existing.toolName;
 					existing.output = output;
+					existing.details = message.details;
 					existing.status = status;
 					existing.timestamp = ts(message) || existing.timestamp;
 				} else {
@@ -444,6 +451,7 @@ export function projectMessages(
 						toolName: message.toolName ?? "tool",
 						args: undefined,
 						output,
+						details: message.details,
 						status,
 						timestamp: t || Date.now(),
 					};
@@ -542,6 +550,7 @@ export class CellProjector {
 					const t = ts(event.message);
 					if (!this.callTiming.has(t)) this.callTiming.set(t, { startedAt: Date.now() });
 					this.upsertStreamCell(event.message);
+					this.updateStreamTools(event.message);
 				}
 				break;
 			}
@@ -562,6 +571,7 @@ export class CellProjector {
 				const existing = this.findTool(event.toolCallId);
 				if (existing) {
 					existing.status = "running";
+					existing.inputStreaming = undefined;
 					existing.toolName = event.toolName;
 					if (event.args !== undefined) existing.args = event.args;
 				} else {
@@ -584,6 +594,8 @@ export class CellProjector {
 				if (cell) {
 					cell.output = toolOutputText(event.partialResult) || cell.output;
 					if (event.args !== undefined) cell.args = event.args;
+					const details = toolResultDetails(event.partialResult);
+					if (details !== undefined) cell.details = details;
 				}
 				break;
 			}
@@ -591,6 +603,8 @@ export class CellProjector {
 				const cell = this.findTool(event.toolCallId);
 				if (cell) {
 					cell.output = toolOutputText(event.result) || cell.output;
+					const details = toolResultDetails(event.result);
+					if (details !== undefined) cell.details = details;
 					cell.status = event.isError ? "error" : "done";
 				}
 				break;
@@ -607,7 +621,7 @@ export class CellProjector {
 					call.endedAt ??= now;
 				}
 				this.overlay = this.overlay.filter(
-					(c) => !(c.type === "assistant" && c.streaming),
+					(c) => !(c.type === "assistant" && c.streaming) && !(c.type === "tool" && c.inputStreaming),
 				);
 				break;
 			}
@@ -671,7 +685,9 @@ export class CellProjector {
 				...c,
 				args: o.args ?? c.args,
 				output: o.output || c.output,
+				details: o.details ?? c.details,
 				status: o.status,
+				inputStreaming: o.inputStreaming,
 			};
 		});
 		const extra = this.overlay.filter(
@@ -734,7 +750,32 @@ export class CellProjector {
 
 	private dropStreamCell(message: ProjectableMessage): void {
 		const id = `assistant-stream-${ts(message)}`;
-		this.overlay = this.overlay.filter((c) => c.id !== id);
+		this.overlay = this.overlay.filter((c) => c.id !== id && !(c.type === "tool" && c.inputStreaming));
+	}
+
+	private updateStreamTools(message: ProjectableMessage): void {
+		// PI already parses incomplete tool JSON on each provider delta. Project
+		// that partial input immediately, before tool_execution_start can fire.
+		// Replace only input previews: execution events own running/result cells.
+		this.overlay = this.overlay.filter((c) => !(c.type === "tool" && c.inputStreaming));
+		if (!Array.isArray(message.content)) return;
+		for (const block of message.content) {
+			if (!isToolCallBlock(block) || !block.id) continue;
+			if (block.name !== "edit" && block.name !== "write") continue;
+			if (this.findTool(block.id)) continue;
+			this.overlay.push({
+				id: `tool-${block.id}`,
+				type: "tool",
+				toolCallId: block.id,
+				toolName: block.name,
+				args: toolCallArgs(block),
+				output: "",
+				status: "pending",
+				inputStreaming: true,
+				startedAt: ts(message) || Date.now(),
+				timestamp: ts(message) || Date.now(),
+			});
+		}
 	}
 
 	private findTool(toolCallId: string): ToolCell | undefined {

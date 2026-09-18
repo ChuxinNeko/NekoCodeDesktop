@@ -44,12 +44,14 @@ const toolResultMsg = (
 	output: string,
 	isError = false,
 	timestamp = 3000,
+	details?: unknown,
 ): ProjectableMessage => ({
 	role: "toolResult",
 	toolCallId,
 	toolName: "bash",
 	content: [{ type: "text", text: output }],
 	isError,
+	details,
 	timestamp,
 });
 
@@ -143,6 +145,25 @@ describe("projectMessages", () => {
 			args: {},
 			status: "pending",
 		});
+	});
+
+	test("a persisted toolResult carries its details onto the tool cell", () => {
+		const details = { diff: "-1 old line\n+1 new line" };
+		const cells = projectMessages([
+			userMsg("edit it"),
+			assistantWithToolCall("tc1", "edit", { path: "a.ts" }),
+			toolResultMsg("tc1", "replaced", false, 3000, details),
+		]);
+		expect(cells[1]).toMatchObject({ type: "tool", status: "done", details });
+	});
+
+	test("a standalone persisted toolResult keeps its details too", () => {
+		const details = { diff: "+1 written" };
+		const cells = projectMessages([
+			userMsg("go"),
+			toolResultMsg("tc9", "done", false, 3000, details),
+		]);
+		expect(cells[1]).toMatchObject({ type: "tool", toolCallId: "tc9", details });
 	});
 
 	test("projects bashExecution as tool cell and custom as notice", () => {
@@ -373,6 +394,60 @@ describe("CellProjector streaming", () => {
 			output: "a\nb",
 			args: { command: "ls" },
 		});
+	});
+
+	test("tool_execution_update and end keep result details on the live cell", () => {
+		const p = new CellProjector();
+		p.handleEvent({
+			type: "tool_execution_start",
+			toolCallId: "tc1",
+			toolName: "edit",
+			args: { path: "a.ts" },
+		});
+		p.handleEvent({
+			type: "tool_execution_update",
+			toolCallId: "tc1",
+			toolName: "edit",
+			args: { path: "a.ts" },
+			partialResult: {
+				content: [{ type: "text", text: "working" }],
+				details: { diff: "+1 partial" },
+			},
+		});
+		expect(p.cells()[0]).toMatchObject({ details: { diff: "+1 partial" } });
+		p.handleEvent({
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "edit",
+			result: {
+				content: [{ type: "text", text: "replaced" }],
+				details: { diff: "-1 a\n+1 b" },
+			},
+			isError: false,
+		});
+		expect(p.cells()[0]).toMatchObject({ status: "done", details: { diff: "-1 a\n+1 b" } });
+	});
+
+	test("overlay details merge onto a persisted pending tool cell", () => {
+		const p = new CellProjector();
+		p.rebuild([userMsg("go"), assistantWithToolCall("tc1", "edit", { path: "a.ts" })]);
+		p.handleEvent({
+			type: "tool_execution_start",
+			toolCallId: "tc1",
+			toolName: "edit",
+			args: { path: "a.ts" },
+		});
+		p.handleEvent({
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "edit",
+			result: {
+				content: [{ type: "text", text: "replaced" }],
+				details: { diff: "+1 merged" },
+			},
+			isError: false,
+		});
+		expect(p.cells()[1]).toMatchObject({ status: "done", details: { diff: "+1 merged" } });
 	});
 
 	test("tool_execution_start upserts rather than duplicating", () => {

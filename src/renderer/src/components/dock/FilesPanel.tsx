@@ -23,7 +23,14 @@ import { Spinner } from "../ui/spinner";
  * paths (round-tripped through main, which guards against escaping the root),
  * so "up" is a pop rather than string manipulation on separators.
  */
-export function FilesPanel({ cwd }: { cwd: string | null }) {
+export function FilesPanel({
+	cwd,
+	fileRequest,
+}: {
+	cwd: string | null;
+	/** A file the transcript asked this pane to open; the nonce re-raises it. */
+	fileRequest?: { path: string; nonce: number } | null;
+}) {
 	const { t } = useTranslation();
 	const [stack, setStack] = useState<string[]>([]);
 	const [entries, setEntries] = useState<FsEntry[] | null>(null);
@@ -39,6 +46,36 @@ export function FilesPanel({ cwd }: { cwd: string | null }) {
 		setPreview(null);
 		setError(null);
 	}, [cwd]);
+
+	// A transcript "Read file" row lands here through App: open the file straight
+	// into the preview, and park the browser on its directory so Back lands
+	// somewhere sensible. Tool paths may be absolute or relative to the root —
+	// the pane displays and navigates in root-relative form.
+	useEffect(() => {
+		if (!cwd || !fileRequest) return;
+		const norm = (p: string) => p.replace(/\\/g, "/");
+		const root = norm(cwd).replace(/\/+$/, "");
+		let rel = norm(fileRequest.path).replace(/^\.\//, "");
+		if (rel.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
+			rel = rel.slice(root.length + 1);
+		}
+		let cancelled = false;
+		api
+			.fsReadFile(cwd, rel)
+			.then((result) => {
+				if (cancelled) return;
+				setPreview({ path: rel, ...result });
+				setError(null);
+				const segments = rel.split("/").slice(0, -1).filter(Boolean);
+				setStack(segments.map((_, index) => segments.slice(0, index + 1).join("/")));
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) setError(errorMessage(cause));
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [cwd, fileRequest]);
 
 	useEffect(() => {
 		if (!cwd) return;

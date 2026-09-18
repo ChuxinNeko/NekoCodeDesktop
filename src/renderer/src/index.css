@@ -644,6 +644,11 @@ body {
   font-family: var(--font-chat-code-family);
 }
 
+/* Model reasoning stream: Microsoft YaHei over the UI stack. */
+.font-thinking {
+  font-family: "Microsoft YaHei", var(--font-ui-family);
+}
+
 html,
 body,
 #root {

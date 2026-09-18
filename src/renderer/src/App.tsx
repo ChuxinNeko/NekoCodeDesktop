@@ -9,11 +9,13 @@ import type {
 	ThinkingLevel,
 } from "../../shared/agent";
 import type { WorkMode } from "../../shared/workflow";
+import type { CheckpointSummary } from "../../shared/checkpoints";
 import { projectLabel } from "../../shared/paths";
 import { mergeActiveSession, workspaceKey } from "../../shared/sessions";
 import { api, errorMessage } from "./api";
 import { AutomationsPage } from "./components/automations/AutomationsPage";
 import { ChatView } from "./components/ChatView";
+import { CheckpointRestoreDialog } from "./components/chat/CheckpointRestoreDialog";
 import {
 	RightDock,
 	taskTabId,
@@ -117,6 +119,14 @@ export default function App() {
 	const [busy, setBusy] = useState(false);
 	const sessionTransition = useRef(false);
 	const [error, setError] = useState<string | null>(null);
+	/**
+	 * The checkpoint a confirmation is open for.
+	 *
+	 * Held here rather than in the transcript or the dock because both of them
+	 * can raise it and there must only ever be one dialog — a modal opened twice
+	 * over the same restore is how a double-click turns into two rewinds.
+	 */
+	const [restoreTarget, setRestoreTarget] = useState<CheckpointSummary | null>(null);
 	const [terminalOpen, setTerminalOpen] = useState(false);
 	const [sidebarOpen, setSidebarOpen] = useState(
 		() => readStored(SIDEBAR_OPEN_STORAGE_KEY) !== "0",
@@ -126,6 +136,13 @@ export default function App() {
 	);
 	const [dockTabs, setDockTabs] = useState<DockTabId[]>([]);
 	const [dockActive, setDockActive] = useState<DockTabId | null>(null);
+	/**
+	 * The file a transcript tool row asked the Files pane to open.
+	 *
+	 * A nonce rather than the path alone, because clicking the same "Read file"
+	 * row twice must re-raise the preview even when nothing else changed.
+	 */
+	const [dockFile, setDockFile] = useState<{ path: string; nonce: number } | null>(null);
 	const [dockWidth, setDockWidth] = useState(() => {
 		const stored = Number(readStored(DOCK_WIDTH_STORAGE_KEY));
 		return Number.isFinite(stored) && stored >= MIN_DOCK_WIDTH
@@ -145,6 +162,17 @@ export default function App() {
 		setDockActive(tab);
 		setDockOpenStored(true);
 	};
+
+	/** Open a file in the dock's Files pane — the "Read file" tool row's click. */
+	const openDockFile = (path: string) => {
+		setDockFile({ path, nonce: Date.now() });
+		openDockTab("files");
+	};
+
+	// A file request names a path inside one project; a project switch retires it.
+	useEffect(() => {
+		setDockFile(null);
+	}, [cwd]);
 
 	/**
 	 * Close a tab and hand focus to a neighbour.
@@ -198,7 +226,9 @@ export default function App() {
 							? "files"
 							: event.code === "KeyG" && event.shiftKey
 								? "review"
-								: null;
+								: event.code === "KeyH" && event.shiftKey
+									? "checkpoints"
+									: null;
 			if (!tool) return;
 			event.preventDefault();
 			toggleDockTool(tool);
@@ -387,6 +417,21 @@ export default function App() {
 		}
 	};
 
+	/**
+	 * A rewind has happened. The prompt that started the undone turn goes back to
+	 * the composer, because rewinding is nearly always a prelude to asking again
+	 * differently and retyping it is the part nobody wants; warnings are surfaced
+	 * rather than swallowed, since "restored" with a file it could not write is
+	 * not the same outcome as "restored".
+	 */
+	const checkpointRestored = (result: { editorText?: string; warnings: string[] }) => {
+		if (result.editorText) {
+			setView("chat");
+			setComposerInsertion({ id: crypto.randomUUID(), text: result.editorText });
+		}
+		setError(result.warnings.length ? result.warnings.join("；") : null);
+	};
+
 	const startDockDrag = (event: React.MouseEvent) => {
 		event.preventDefault();
 		dockDragRef.current = { startX: event.clientX, startWidth: dockWidth };
@@ -493,8 +538,11 @@ export default function App() {
 							onToggleTerminal={() => setTerminalOpen((open) => !open)}
 							onToggleBrowser={() => toggleDockTool("browser")}
 							onOpenTask={(taskId) => openDockTab(taskTabId(taskId))}
+							onOpenFile={openDockFile}
 							onDismissError={() => setError(null)}
 							onStartSession={startSession}
+							onRestoreCheckpoint={setRestoreTarget}
+							onOpenCheckpoints={() => openDockTab("checkpoints")}
 						/>
 					)}
 					{terminalOpen ? (
@@ -527,17 +575,29 @@ export default function App() {
 							browserPreview={browserPreview}
 							visible={dockOpen}
 							cwd={cwd}
+							fileRequest={dockFile}
 							tabs={dockTabs}
 							active={dockActive}
 							tasks={liveTasks}
+							checkpoints={snapshot?.checkpoints ?? []}
+							checkpointsBusy={busy || (snapshot?.streaming ?? false)}
 							onSelect={setDockActive}
 							onCloseTab={closeDockTab}
 							onCancelTask={(id) => void api.agentCancelTask(id)}
+							onRestoreCheckpoint={setRestoreTarget}
 							onCloseDock={() => setDockOpenStored(false)}
 						/>
 					</div>
 				</aside>
 			</div>
+			{/* Outside the chrome row: a modal belongs to the window, not to the pane
+			    that raised it, and both the transcript and the dock raise this one. */}
+			<CheckpointRestoreDialog
+				checkpoint={restoreTarget}
+				onClose={() => setRestoreTarget(null)}
+				onRestored={checkpointRestored}
+				onError={setError}
+			/>
 		</div>
 	);
 }

@@ -547,6 +547,34 @@ describe("PI workflow end-to-end (loopback model)", () => {
 			await f.cleanup();
 		}
 	}, 15000);
+	test("automatic routing traverses phases and implements without mode approval; tool guidance follows the phase", async () => {
+		const modes = ["ask", "plan", "debug", "multitask", "agent"];
+		const f = await fixture("agent", (_, index) => {
+			if (index < modes.length) return { calls: [{ name: "switch_mode", args: { mode: modes[index], reason: "Next task phase" } }] };
+			if (index === modes.length) return { calls: [{ name: "write", args: { path: "automatic.txt", content: "Implemented" } }] };
+			return { text: "DELIVERED" };
+		});
+		try {
+			await f.session.prompt("Implement the feature, choosing the necessary phases yourself");
+			expect(f.workflow.workMode).toBe("agent");
+			expect(f.workflow.agentPhase).toBe("execute");
+			expect(f.workflow.state.hasPendingQuestion).toBe(false);
+			expect(readFileSync(join(f.cwd, "automatic.txt"), "utf8")).toBe("Implemented");
+			const phases = ["execute", "answer", "plan", "debug", "delegate", "execute"];
+			for (const [index, phase] of phases.entries()) {
+				const request = f.requests[index];
+				const system = String(request.messages.find((m) => m.role === "system")?.content);
+				expect(system).toContain("### 当前阶段：" + phase);
+				expect(system).toContain("Agent 全自动工作模式");
+				const canEdit = request.tools?.some((tool) => tool.function.name === "edit");
+				// This guideline comes from the actual edit definition through PI's
+				// custom prompt branch, not a duplicate in our mode prompt.
+				expect(system.includes("Keep edits[].oldText as small as possible")).toBe(canEdit);
+			}
+			expect(f.requests).toHaveLength(7);
+		} finally { await f.cleanup(); }
+	}, 15000);
+
 	test("the automatic mode changes phase with no confirmation card and stays in Agent", async () => {
 		const f = await fixture("agent", (_, index) =>
 			index === 0

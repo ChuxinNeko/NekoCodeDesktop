@@ -122,4 +122,44 @@ describe("PI prompt library", () => {
 		for (const heading of ["Goal", "Progress", "Next Steps", "Critical Context"])
 			expect(COMPACTION_INSTRUCTIONS).toContain(heading);
 	});
+
+	test("automatic planning carries implementation authority while manual Plan stays gated", () => {
+		const automatic = buildModePrompt({ mode: "agent", phase: "plan", permission: "auto" });
+		expect(automatic).toContain("自动匹配最合适的工作阶段");
+		expect(automatic).toContain("不重复索要认可");
+		expect(automatic).toContain("用户明确只要方案、暂不修改或要求先确认");
+		expect(automatic).not.toContain("向用户展示计划并取得认可后");
+		const manual = buildModePrompt({ mode: "plan", permission: "auto" });
+		expect(manual).toContain("必须由界面取得用户确认");
+		expect(manual).toContain("计划完成不意味着获得实施授权");
+		expect(manual).not.toContain("Agent 全自动工作模式");
+	});
+
+	for (const phase of AGENT_PHASES) {
+		test("Fusion keeps " + phase + " discipline and describes its actual delegation tools", () => {
+			const context = { mode: "agent" as const, phase, fusionRole: "lead" as const, permission: "auto" as const };
+			const prompt = buildModePrompt(context);
+			expect(prompt).toContain("### 当前阶段：" + phase);
+			expect(prompt).toContain("Agent 全自动工作模式");
+			expect(prompt).not.toContain("只有 Multitask 模式");
+			expect(prompt).not.toContain("最多四个活动 worker");
+			if (toolsForMode(context).includes("task")) {
+				expect(prompt).toContain("本阶段可用 task：Fusion");
+				expect(prompt).toContain("最多一个活动任务");
+			} else {
+				expect(prompt).toContain("本阶段没有 task");
+				expect(prompt).not.toContain("本阶段可用 task");
+			}
+		});
+	}
+
+	test("unattended sessions receive no instructions to ask the user to switch modes", () => {
+		for (const flags of [{ headless: true }, { child: true }]) {
+			const prompt = buildModePrompt({ mode: "agent", permission: "auto", ...flags });
+			expect(prompt).toContain("本会话没有 switch_mode");
+			expect(prompt).toContain("本会话不能等待用户交互");
+			expect(prompt).not.toContain("必须由界面取得用户确认");
+			expect(prompt).not.toContain("通过 question 界面卡片");
+		}
+	});
 });

@@ -12,7 +12,7 @@ export interface BuildSystemPromptOptions {
 	selectedTools?: string[];
 	/** Optional one-line tool snippets keyed by tool name. */
 	toolSnippets?: Record<string, string>;
-	/** Additional guideline bullets appended to the default system prompt guidelines. */
+	/** Active tools' guideline bullets, included with default and custom prompts. */
 	promptGuidelines?: string[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
@@ -47,6 +47,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	if (customPrompt) {
 		let prompt = customPrompt;
+		// Replacing the assistant's persona must not silently drop the active
+		// tools' usage contract. AgentSession filters these by selected tools.
+		const toolGuidelines = [...new Set((promptGuidelines ?? []).map((line) => line.trim()).filter(Boolean))];
+		if (toolGuidelines.length > 0) {
+			prompt += "\n\nTool usage guidelines:\n" + toolGuidelines.map((line) => `- ${line}`).join("\n");
+		}
 
 		if (appendSection) {
 			prompt += appendSection;

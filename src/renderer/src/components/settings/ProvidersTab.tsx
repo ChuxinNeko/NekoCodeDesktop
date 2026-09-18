@@ -1,3 +1,4 @@
+import { Dialog } from "@base-ui/react/dialog";
 import { useState } from "react";
 import type {
 	ModelApiProtocol,
@@ -13,6 +14,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
 import { ExternalLinkIcon, PencilIcon, PlusIcon, TrashCanIcon } from "../../lib/icons";
+import { RAISED_SURFACE_BORDER_CLASS_NAME } from "../chat/composerPickerStyles";
 import type { OAuthLoginState } from "./ProviderModelSettings";
 
 export const PROTOCOL_DEFAULT_ROUTE: Record<ModelApiProtocol, string> = {
@@ -366,11 +368,15 @@ export function ProvidersTab({
 }
 
 /**
- * The add/edit form.
+ * The add/edit form, as a modal dialog.
  *
  * The type dropdown swaps its whole body: a custom API is an endpoint to
  * describe, a subscription is an account to sign into, and below the type the
  * two share nothing — not even a save button, since signing in is the save.
+ *
+ * A dialog rather than an inline card: the form pauses the list underneath
+ * until it is answered, and dismissing it — Escape, the backdrop, or Cancel —
+ * is the same action, discarding the draft.
  */
 function ProviderForm({
 	draft,
@@ -392,173 +398,198 @@ function ProviderForm({
 	const { t } = useTranslation();
 
 	return (
-		<div className="flex flex-col gap-3 rounded-xl border border-border p-3">
-			<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
-				{t(draft.id ? "providers.editTitle" : "providers.addTitle")}
-			</span>
-			<div className="flex flex-col gap-1">
-				<Label>{t("providers.kind")}</Label>
-				<select
-					value={draft.kind}
-					onChange={(event) => onDraftChange({ ...draft, kind: event.target.value as ProviderKind })}
-					className={SELECT_CLASS_NAME}
-					// An existing endpoint cannot turn into a subscription; the two keep
-					// entirely different things on disk.
-					disabled={draft.id !== undefined}
+		<Dialog.Root open onOpenChange={(open) => { if (!open) onDraftChange(null); }}>
+			<Dialog.Portal>
+				<Dialog.Backdrop
+					className={cn(
+						"fixed inset-0 z-50 min-h-dvh bg-black/35 backdrop-blur-[1px]",
+						"transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0",
+					)}
+				/>
+				<Dialog.Popup
+					className={cn(
+						"fixed left-1/2 top-1/2 z-50 flex max-h-[min(34rem,calc(100dvh-4rem))] -translate-x-1/2 -translate-y-1/2",
+						"flex-col gap-3 overflow-hidden rounded-2xl border p-4",
+						RAISED_SURFACE_BORDER_CLASS_NAME,
+						"bg-popover text-popover-foreground shadow-2xl outline-none",
+						"w-[32rem] max-w-[calc(100vw-3rem)]",
+						"transition-[scale,opacity] duration-100 ease-out",
+						"data-ending-style:scale-[0.98] data-ending-style:opacity-0",
+						"data-starting-style:scale-[0.98] data-starting-style:opacity-0",
+					)}
 				>
-					<option value="custom-api">{t("providers.kind.customApi")}</option>
-					<option value="oauth">{t("providers.kind.oauth")}</option>
-				</select>
-				<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-					{t(draft.kind === "oauth" ? "providers.kindHintOauth" : "providers.kindHint")}
-				</span>
-			</div>
-
-			{draft.kind === "oauth" ? (
-				<>
-					<div className="flex flex-col gap-1">
-						<Label>{t("oauth.provider")}</Label>
-						<select
-							value={draft.oauthProvider}
-							onChange={(event) =>
-								onDraftChange({ ...draft, oauthProvider: event.target.value as OAuthProviderId })
-							}
-							className={SELECT_CLASS_NAME}
-						>
-							{accounts.map((account) => (
-								<option key={account.id} value={account.id}>
-									{account.name}
-								</option>
-							))}
-						</select>
-						<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-							{t(draft.oauthProvider === "antigravity" ? "oauth.antigravityHint" : "oauth.formHint")}
-						</span>
-					</div>
-					<div className="flex items-center gap-2">
-						<div className="flex-1" />
-						<Button onClick={() => onDraftChange(null)} size="sm" variant="ghost">
-							{t("common.cancel")}
-						</Button>
-						<Button
-							onClick={() => onLogin(draft.oauthProvider)}
-							size="sm"
-							variant="subtle"
-							disabled={busy || loginInFlight}
-						>
-							{t("oauth.login")}
-						</Button>
-					</div>
-				</>
-			) : (
-				<>
-					<div className="grid grid-cols-2 gap-3">
+					<Dialog.Title className="shrink-0 text-[length:var(--app-font-size-ui-lg,13px)] font-semibold">
+						{t(draft.id ? "providers.editTitle" : "providers.addTitle")}
+					</Dialog.Title>
+					<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
 						<div className="flex flex-col gap-1">
-							<Label>{t("common.name")}</Label>
-							<Input
-								placeholder={t("providers.namePlaceholder")}
-								value={draft.name}
-								onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
-							/>
-						</div>
-						<div className="flex flex-col gap-1">
-							<Label>{t("providers.protocol")}</Label>
+							<Label>{t("providers.kind")}</Label>
 							<select
-								value={draft.api}
-								onChange={(event) => {
-									const nextApi = event.target.value as ModelApiProtocol;
-									onDraftChange({
-										...draft,
-										api: nextApi,
-										// The route carries a protocol-specific suffix the backend
-										// enforces, so switching protocol resets it.
-										route: PROTOCOL_DEFAULT_ROUTE[nextApi],
-									});
-								}}
+								value={draft.kind}
+								onChange={(event) => onDraftChange({ ...draft, kind: event.target.value as ProviderKind })}
 								className={SELECT_CLASS_NAME}
+								// An existing endpoint cannot turn into a subscription; the two keep
+								// entirely different things on disk.
+								disabled={draft.id !== undefined}
 							>
-								{Object.entries(PROTOCOL_LABELS).map(([value, label]) => (
-									<option key={value} value={value}>
-										{label}
-									</option>
-								))}
+								<option value="custom-api">{t("providers.kind.customApi")}</option>
+								<option value="oauth">{t("providers.kind.oauth")}</option>
 							</select>
-						</div>
-					</div>
-					<div className="flex flex-col gap-1">
-						<Label>{t("providers.baseUrl")}</Label>
-						<Input
-							placeholder="https://api.example.com"
-							value={draft.baseUrl}
-							onChange={(event) => onDraftChange({ ...draft, baseUrl: event.target.value })}
-						/>
-						{draft.baseUrl.trim() ? (
-							<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-								{t("providers.endpointPreview", {
-									url: `${draft.baseUrl.trim().replace(/\/+$/, "")}${draft.route}`,
-								})}
-							</span>
-						) : null}
-					</div>
-					<div className="flex flex-col gap-1">
-						<Label>
-							{t("providers.apiKey")} {draft.id ? t("providers.apiKeyKeep") : ""}
-						</Label>
-						<Input
-							type="password"
-							placeholder={draft.id ? "••••••••" : ""}
-							value={draft.apiKey}
-							onChange={(event) => onDraftChange({ ...draft, apiKey: event.target.value })}
-						/>
-					</div>
-
-					<button
-						type="button"
-						onClick={() => onDraftChange({ ...draft, advanced: !draft.advanced })}
-						className="self-start text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground transition-colors hover:text-foreground"
-					>
-						{draft.advanced ? t("providers.hideAdvanced") : t("providers.showAdvanced")}
-					</button>
-					{draft.advanced ? (
-						<div className="flex flex-col gap-1">
-							<Label>{t("providers.route")}</Label>
-							<Input
-								value={draft.route}
-								onChange={(event) => onDraftChange({ ...draft, route: event.target.value })}
-							/>
-						</div>
-					) : null}
-
-					{/* PI clamps every thinking level to "off" unless the model is flagged
-					    as reasoning-capable, and an OpenAI-compatible endpoint does not
-					    advertise that — so it has to be declared here. */}
-					<div className="flex items-start gap-3">
-						<div className="flex min-w-0 flex-1 flex-col">
-							<Label>{t("providers.reasoning")}</Label>
-							<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-								{t("providers.reasoningHint")}
+							<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+								{t(draft.kind === "oauth" ? "providers.kindHintOauth" : "providers.kindHint")}
 							</span>
 						</div>
-						<Button
-							onClick={() => onDraftChange({ ...draft, reasoning: !draft.reasoning })}
-							size="sm"
-							variant={draft.reasoning ? "subtle" : "chrome-outline"}
-						>
-							{draft.reasoning ? t("common.on") : t("common.off")}
-						</Button>
-					</div>
 
-					<div className="flex items-center gap-2">
-						<div className="flex-1" />
+						{draft.kind === "oauth" ? (
+							<>
+								<div className="flex flex-col gap-1">
+									<Label>{t("oauth.provider")}</Label>
+									<select
+										value={draft.oauthProvider}
+										onChange={(event) =>
+											onDraftChange({ ...draft, oauthProvider: event.target.value as OAuthProviderId })
+										}
+										className={SELECT_CLASS_NAME}
+									>
+										{accounts.map((account) => (
+											<option key={account.id} value={account.id}>
+												{account.name}
+											</option>
+										))}
+									</select>
+									<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+										{t(draft.oauthProvider === "antigravity" ? "oauth.antigravityHint" : "oauth.formHint")}
+									</span>
+								</div>
+							</>
+						) : (
+							<>
+								<div className="grid grid-cols-2 gap-3">
+									<div className="flex flex-col gap-1">
+										<Label>{t("common.name")}</Label>
+										<Input
+											placeholder={t("providers.namePlaceholder")}
+											value={draft.name}
+											onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
+										/>
+									</div>
+									<div className="flex flex-col gap-1">
+										<Label>{t("providers.protocol")}</Label>
+										<select
+											value={draft.api}
+											onChange={(event) => {
+												const nextApi = event.target.value as ModelApiProtocol;
+												onDraftChange({
+													...draft,
+													api: nextApi,
+													// The route carries a protocol-specific suffix the backend
+													// enforces, so switching protocol resets it.
+													route: PROTOCOL_DEFAULT_ROUTE[nextApi],
+												});
+											}}
+											className={SELECT_CLASS_NAME}
+										>
+											{Object.entries(PROTOCOL_LABELS).map(([value, label]) => (
+												<option key={value} value={value}>
+													{label}
+												</option>
+											))}
+										</select>
+									</div>
+								</div>
+								<div className="flex flex-col gap-1">
+									<Label>{t("providers.baseUrl")}</Label>
+									<Input
+										placeholder="https://api.example.com"
+										value={draft.baseUrl}
+										onChange={(event) => onDraftChange({ ...draft, baseUrl: event.target.value })}
+									/>
+									{draft.baseUrl.trim() ? (
+										<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+											{t("providers.endpointPreview", {
+												url: `${draft.baseUrl.trim().replace(/\/+$/, "")}${draft.route}`,
+											})}
+										</span>
+									) : null}
+								</div>
+								<div className="flex flex-col gap-1">
+									<Label>
+										{t("providers.apiKey")} {draft.id ? t("providers.apiKeyKeep") : ""}
+									</Label>
+									<Input
+										type="password"
+										placeholder={draft.id ? "••••••••" : ""}
+										value={draft.apiKey}
+										onChange={(event) => onDraftChange({ ...draft, apiKey: event.target.value })}
+									/>
+								</div>
+
+								<button
+									type="button"
+									onClick={() => onDraftChange({ ...draft, advanced: !draft.advanced })}
+									className="self-start text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground transition-colors hover:text-foreground"
+								>
+									{draft.advanced ? t("providers.hideAdvanced") : t("providers.showAdvanced")}
+								</button>
+								{draft.advanced ? (
+									<div className="flex flex-col gap-1">
+										<Label>{t("providers.route")}</Label>
+										<Input
+											value={draft.route}
+											onChange={(event) => onDraftChange({ ...draft, route: event.target.value })}
+										/>
+									</div>
+								) : null}
+
+								{/* PI clamps every thinking level to "off" unless the model is flagged
+								    as reasoning-capable, and an OpenAI-compatible endpoint does not
+								    advertise that — so it has to be declared here. */}
+								<div className="flex items-start gap-3">
+									<div className="flex min-w-0 flex-1 flex-col">
+										<Label>{t("providers.reasoning")}</Label>
+										<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+											{t("providers.reasoningHint")}
+										</span>
+									</div>
+									<Button
+										onClick={() => onDraftChange({ ...draft, reasoning: !draft.reasoning })}
+										size="sm"
+										variant={draft.reasoning ? "subtle" : "chrome-outline"}
+									>
+										{draft.reasoning ? t("common.on") : t("common.off")}
+									</Button>
+								</div>
+							</>
+						)}
+					</div>
+					{/* One footer for both kinds: cancel discards the draft; the action is
+					    the kind's own save — writing the endpoint, or signing in. */}
+					<div className="flex shrink-0 items-center justify-end gap-2">
 						<Button onClick={() => onDraftChange(null)} size="sm" variant="ghost">
 							{t("common.cancel")}
 						</Button>
-						<Button onClick={onSave} size="sm" variant="subtle" disabled={busy || !isDraftComplete(draft)}>
-							{t("common.save")}
-						</Button>
+						{draft.kind === "oauth" ? (
+							<Button
+								onClick={() => onLogin(draft.oauthProvider)}
+								size="sm"
+								variant="subtle"
+								disabled={busy || loginInFlight}
+							>
+								{t("oauth.login")}
+							</Button>
+						) : (
+							<Button
+								onClick={onSave}
+								size="sm"
+								variant="subtle"
+								disabled={busy || !isDraftComplete(draft)}
+							>
+								{t("common.save")}
+							</Button>
+						)}
 					</div>
-				</>
-			)}
-		</div>
+				</Dialog.Popup>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }

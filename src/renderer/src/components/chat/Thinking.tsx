@@ -47,7 +47,7 @@ export function ThinkingStream({ text }: { text: string }) {
 				// hand the wheel to the transcript and throw the reader's place away.
 				"max-h-[7.5em] overflow-y-auto overscroll-contain leading-[1.5]",
 				"whitespace-pre-wrap break-words border-l border-border/60 pl-3",
-				"text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70",
+				"font-thinking text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70",
 			)}
 		>
 			{text}
@@ -107,7 +107,7 @@ export function ThinkingBlock({
 			{open ? (
 				<ThinkingStream text={text} />
 			) : active && preview ? (
-				<div className="truncate border-l border-border/60 pl-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70">
+				<div className="font-thinking truncate border-l border-border/60 pl-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70">
 					{preview}
 				</div>
 			) : null}

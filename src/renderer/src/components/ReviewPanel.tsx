@@ -5,6 +5,7 @@ import { useTranslation, type TranslationKey } from "../i18n";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { DiffStat } from "./ui/diff-stat";
+import { DiffView } from "./ui/diff-view";
 import { Spinner } from "./ui/spinner";
 import { XIcon } from "../lib/icons";
 
@@ -13,42 +14,6 @@ const SCOPES: { id: ReviewScope; labelKey: TranslationKey }[] = [
 	{ id: "staged", labelKey: "review.scope.staged" },
 	{ id: "branch", labelKey: "review.scope.branch" },
 ];
-
-/** Minimal unified-diff renderer: colors +/- lines without a diff library. */
-function DiffView({ patch }: { patch: string }) {
-	const { t } = useTranslation();
-	if (!patch.trim()) {
-		return (
-			<p className="px-3 py-4 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-				{t("review.noChanges")}
-			</p>
-		);
-	}
-	const lines = patch.split("\n");
-	return (
-		<pre className="overflow-auto p-3 font-mono text-[length:var(--app-font-size-chat-code,11px)] leading-5">
-			{lines.map((line, index) => {
-				const key = `${String(index)}:${line.slice(0, 24)}`;
-				const isAdd = line.startsWith("+") && !line.startsWith("+++");
-				const isRemove = line.startsWith("-") && !line.startsWith("---");
-				const isMeta = line.startsWith("@@") || line.startsWith("diff ") || line.startsWith("index ");
-				return (
-					<div
-						key={key}
-						className={cn(
-							"whitespace-pre",
-							isAdd && "bg-[color-mix(in_srgb,var(--success)_16%,transparent)]",
-							isRemove && "bg-[color-mix(in_srgb,var(--destructive)_16%,transparent)]",
-							isMeta && "text-muted-foreground",
-						)}
-					>
-						{line || " "}
-					</div>
-				);
-			})}
-		</pre>
-	);
-}
 
 export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
 	const { t } = useTranslation();
@@ -258,7 +223,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 							</div>
 						) : null}
 						<div className="min-h-0 flex-1 overflow-auto">
-							<DiffView patch={patch} />
+							<DiffView patch={patch} empty={t("review.noChanges")} />
 						</div>
 					</div>
 				</div>

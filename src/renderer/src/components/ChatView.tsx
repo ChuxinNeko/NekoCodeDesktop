@@ -20,7 +20,8 @@ import {
 	CHAT_COLUMN_FRAME_CLASS_NAME,
 	CHAT_COLUMN_GUTTER_CLASS_NAME,
 } from "./chat/composerPickerStyles";
-import { ArrowDownIcon, GitBranchIcon, GlobeIcon, TerminalIcon, XIcon } from "../lib/icons";
+import { ArrowDownIcon, GitBranchIcon, GlobeIcon, HistoryIcon, TerminalIcon, XIcon } from "../lib/icons";
+import type { CheckpointSummary } from "../../../shared/checkpoints";
 
 /**
  * How far above the composer the newest line is parked while an answer streams,
@@ -71,9 +72,15 @@ interface ChatViewProps {
 	onToggleBrowser: () => void;
 	/** Show one background worker's full run in the right dock. */
 	onOpenTask: (taskId: string) => void;
+	/** Show a file a tool row references in the dock's Files pane. */
+	onOpenFile: (path: string) => void;
 	onDismissError: () => void;
 	/** Opens a session in `cwd` and sends this as its first prompt. */
 	onStartSession: (text: string) => void;
+	/** Ask to rewind to a checkpoint; the confirmation is App's to show. */
+	onRestoreCheckpoint: (checkpoint: CheckpointSummary) => void;
+	/** Show the list of every restore point in the right dock. */
+	onOpenCheckpoints: () => void;
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -230,6 +237,10 @@ export function ChatView(props: ChatViewProps) {
 						{t("chat.cells", { count: snapshot.cells.length })}
 					</span>
 				</div>
+				<Button onClick={props.onOpenCheckpoints} size="xs" variant="chrome-outline">
+					<HistoryIcon className="size-3.5" />
+					{t("checkpoint.panelTitle")}
+				</Button>
 				<Button onClick={props.onOpenReview} size="xs" variant="chrome-outline">
 					<GitBranchIcon className="size-3.5" />
 					{t("nav.review")}
@@ -283,6 +294,9 @@ export function ChatView(props: ChatViewProps) {
 							streaming={snapshot.streaming}
 							tasks={snapshot.workflow.tasks}
 							onOpenTask={props.onOpenTask}
+							onOpenFile={props.onOpenFile}
+							checkpoints={snapshot.checkpoints}
+							onRestoreCheckpoint={props.onRestoreCheckpoint}
 						/>
 						)}
 					</div>

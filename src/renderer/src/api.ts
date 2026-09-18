@@ -36,6 +36,13 @@ import type {
 	PullRequestSummary,
 	RepositoryBranch,
 } from "../../shared/pullRequests";
+import type {
+	CheckpointFileDiff,
+	CheckpointPreview,
+	CheckpointSummary,
+	RestoreCheckpointRequest,
+	RestoreCheckpointResult,
+} from "../../shared/checkpoints";
 import type { FsEntry, FsReadResult } from "../../shared/files";
 import type { GitActionRequest, GitDiffRequest, RepoStatus, ReviewScope } from "../../shared/git";
 import type {
@@ -112,6 +119,14 @@ export interface AgentApi {
 	agentAnswerWorkflow(answer: WorkflowAnswer): Promise<AgentSnapshot>;
 	agentCancelTask(id: string): Promise<AgentSnapshot>;
 	onAgentSnapshot(listener: (snapshot: AgentSnapshot | null) => void): () => void;
+
+	/** Checkpoints for the open session, newest first. Also carried on every snapshot. */
+	checkpointsList(): Promise<CheckpointSummary[]>;
+	/** One file's changes since a checkpoint, as a unified diff. */
+	checkpointFileDiff(id: string, path: string): Promise<CheckpointFileDiff>;
+	/** What restoring this checkpoint's code would change, for the confirmation. */
+	checkpointPreview(id: string): Promise<CheckpointPreview>;
+	checkpointRestore(req: RestoreCheckpointRequest): Promise<RestoreCheckpointResult>;
 
 	pluginsCatalog(query: PluginCatalogQuery): Promise<PluginCatalogPage>;
 	pluginsList(): Promise<PluginsSnapshot>;
