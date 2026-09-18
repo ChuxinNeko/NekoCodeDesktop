@@ -172,6 +172,129 @@ describe("projectMessages", () => {
 	});
 });
 
+describe("turn usage", () => {
+	const usage = (input: number, output: number) => ({
+		input,
+		output,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: input + output,
+		cost: { total: 0.001 },
+	});
+
+	const call = (
+		text: string,
+		tokens: { input: number; output: number },
+		timestamp: number,
+	): ProjectableMessage => ({
+		...assistantMsg(text, "", timestamp),
+		provider: "anthropic",
+		model: "claude-opus-4-8",
+		usage: usage(tokens.input, tokens.output),
+	});
+
+	/** An assistant message that only calls a tool renders no cell of its own. */
+	const toolCall = (id: string, tokens: { input: number; output: number }, timestamp: number) => ({
+		...assistantWithToolCall(id, "bash", { command: "ls" }, timestamp),
+		provider: "anthropic",
+		model: "claude-opus-4-8",
+		usage: usage(tokens.input, tokens.output),
+	});
+
+	test("sums the whole turn onto its last visible message", () => {
+		const cells = projectMessages([
+			userMsg("go"),
+			toolCall("tc1", { input: 100, output: 20 }, 2000),
+			toolResultMsg("tc1", "ok"),
+			call("done", { input: 300, output: 80 }, 4000),
+		]);
+		const assistants = cells.filter((c) => c.type === "assistant");
+		expect(assistants).toHaveLength(1);
+		expect(assistants[0].type === "assistant" && assistants[0].usage).toMatchObject({
+			calls: 2,
+			input: 400,
+			output: 100,
+			totalTokens: 500,
+			costUsd: 0.002,
+		});
+	});
+
+	test("leaves every earlier message in the turn without a panel", () => {
+		const cells = projectMessages([
+			userMsg("go"),
+			call("thinking out loud", { input: 100, output: 20 }, 2000),
+			call("done", { input: 300, output: 80 }, 4000),
+		]);
+		const usages = cells
+			.filter((c) => c.type === "assistant")
+			.map((c) => (c.type === "assistant" ? c.usage : undefined));
+		expect(usages).toHaveLength(2);
+		expect(usages[0]).toBeUndefined();
+		expect(usages[1]).toMatchObject({ calls: 2, totalTokens: 500 });
+	});
+
+	test("keeps turns apart", () => {
+		const cells = projectMessages([
+			userMsg("first", 1000),
+			call("a", { input: 100, output: 10 }, 2000),
+			userMsg("second", 3000),
+			call("b", { input: 200, output: 20 }, 4000),
+		]);
+		const usages = cells
+			.filter((c) => c.type === "assistant")
+			.map((c) => (c.type === "assistant" ? c.usage?.totalTokens : undefined));
+		expect(usages).toEqual([110, 220]);
+	});
+
+	test("withholds the running turn's total until the agent stops", () => {
+		const messages = [userMsg("go"), call("working", { input: 100, output: 10 }, 2000)];
+		const running = projectMessages(messages, undefined, undefined, true);
+		expect(running[1].type === "assistant" && running[1].usage).toBeUndefined();
+		const settled = projectMessages(messages, undefined, undefined, false);
+		expect(settled[1].type === "assistant" && settled[1].usage).toMatchObject({ calls: 1 });
+	});
+
+	test("reports nothing rather than a turn of zeroes", () => {
+		const [, plain] = projectMessages([userMsg("go"), assistantMsg("done")]);
+		expect(plain.type === "assistant" && plain.usage).toBeUndefined();
+	});
+
+	test("only names a response model when it is not the one requested", () => {
+		const served = { ...call("done", { input: 1, output: 1 }, 2000), responseModel: "opus-4-8-x" };
+		const [, cell] = projectMessages([userMsg("go"), served]);
+		expect(cell.type === "assistant" && cell.usage?.responseModel).toBe("opus-4-8-x");
+		const same = { ...call("done", { input: 1, output: 1 }, 2000), responseModel: "claude-opus-4-8" };
+		const [, plain] = projectMessages([userMsg("go"), same]);
+		expect(plain.type === "assistant" && plain.usage?.responseModel).toBeUndefined();
+	});
+
+	test("times the turn end to end, and the calls inside it separately", () => {
+		const projector = new CellProjector();
+		const first = toolCall("tc1", { input: 100, output: 20 }, 2000);
+		const second = call("done", { input: 300, output: 80 }, 4000);
+		for (const message of [first, second]) {
+			projector.handleEvent({ type: "message_start", message });
+			projector.handleEvent({ type: "message_end", message });
+		}
+		projector.rebuild([userMsg("go"), first, toolResultMsg("tc1", "ok"), second], false);
+		const cell = projector.cells().find((c) => c.type === "assistant");
+		const turnUsage = cell?.type === "assistant" ? cell.usage : undefined;
+		expect(turnUsage?.calls).toBe(2);
+		expect(turnUsage?.durationMs).toBeGreaterThanOrEqual(0);
+		expect(turnUsage?.modelMs).toBeLessThanOrEqual(turnUsage?.durationMs ?? 0);
+	});
+
+	test("closes an aborted turn's timing so it still reports a duration", () => {
+		const projector = new CellProjector();
+		const message = call("done", { input: 100, output: 20 }, 2000);
+		projector.handleEvent({ type: "message_start", message });
+		projector.handleEvent({ type: "agent_end" });
+		projector.rebuild([userMsg("go"), message], false);
+		const cell = projector.cells().find((c) => c.type === "assistant");
+		expect(cell?.type === "assistant" && cell.usage?.durationMs).toBeGreaterThanOrEqual(0);
+	});
+});
+
 describe("CellProjector streaming", () => {
 	test("streaming assistant updates in place without new cells", () => {
 		const p = new CellProjector();

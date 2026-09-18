@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "mode": "debug",
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "stat",
+    "bash",
+    "powershell",
+    "edit",
+    "write",
+    "question",
+    "todo_write",
+    "switch_mode",
+    "debug_log"
+  ]
+}

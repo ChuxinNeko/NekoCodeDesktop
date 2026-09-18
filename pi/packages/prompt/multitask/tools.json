@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "mode": "multitask",
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "stat",
+    "bash",
+    "powershell",
+    "edit",
+    "write",
+    "question",
+    "todo_write",
+    "switch_mode",
+    "task",
+    "task_status",
+    "task_cancel",
+    "commit_message"
+  ]
+}

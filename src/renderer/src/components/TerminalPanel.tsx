@@ -8,7 +8,16 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { XIcon } from "../lib/icons";
 
-export function TerminalPanel({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
+export function TerminalPanel({
+	cwd,
+	onClose,
+	docked = false,
+}: {
+	cwd: string | null;
+	onClose: () => void;
+	/** Rendered inside the right dock: fill the pane instead of the bottom-drawer chrome. */
+	docked?: boolean;
+}) {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const terminalRef = useRef<Terminal | null>(null);
@@ -85,8 +94,13 @@ export function TerminalPanel({ cwd, onClose }: { cwd: string | null; onClose: (
 
 	return (
 		<div
-			className="thread-terminal-drawer flex shrink-0 flex-col border-t border-[color:var(--app-surface-divider)] bg-[var(--color-token-terminal-background)]"
-			style={{ height }}
+			className={cn(
+				"flex min-h-0 flex-col bg-[var(--color-token-terminal-background)]",
+				docked
+					? "flex-1"
+					: "thread-terminal-drawer shrink-0 border-t border-[color:var(--app-surface-divider)]",
+			)}
+			style={docked ? undefined : { height }}
 		>
 			<div className="flex h-8 shrink-0 items-center gap-2 px-2">
 				<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">

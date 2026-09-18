@@ -1,21 +1,16 @@
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { app, type BrowserWindow } from "electron";
 import type {
 	AgentSession,
 	AgentSessionEvent,
+	LoadExtensionsResult,
 	ModelRuntime,
+	ResourceLoader,
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type {
 	AgentDefaults,
 	AgentSnapshot,
@@ -29,19 +24,34 @@ import type {
 	SessionSummary,
 	ThinkingLevel,
 } from "../shared/agent";
+import type {
+	InstallPluginRequest,
+	PluginActionRequest,
+	PluginsSnapshot,
+	SetPluginEnabledRequest,
+} from "../shared/plugins";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
-import {
-	CellProjector,
-	parseSlashCommand,
-	type ProjectionEvent,
-} from "./agent-projection";
+import { PluginService } from "./plugin-service";
+import { CellProjector, parseSlashCommand, type ProjectionEvent } from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
 import { decideModelAfterReload } from "./model-refresh";
+import { registerOAuthClientIdentity } from "./oauth-service";
+import type { AntigravityOAuthService } from "./antigravity-oauth-service";
+import { registerAntigravityProvider } from "./antigravity-provider";
 import { pi, piAi } from "./pi";
+import { buildTitleRequest, sanitizeGeneratedTitle, TITLE_TIMEOUT_MS } from "./session-title";
+import {
+	DEFAULT_AGENT_PHASE,
+	isWorkMode,
+	type WorkMode,
+	type WorkflowAnswer,
+} from "../shared/workflow";
+import { createWorkflowSession, type WorkflowRuntime } from "./workflow-runtime";
+import { isFusionConfig, type FusionConfig } from "../shared/fusion";
+import { resolveFusion } from "./fusion-config";
+import { BrowserPreview } from "./browser-preview";
 
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
-const FULL_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const THINKING_LEVELS: ThinkingLevel[] = [
 	"off",
 	"minimal",
@@ -56,14 +66,16 @@ const HELP_TEXT = [
 	"/help — list commands",
 	"/new, /clear — start a new session",
 	"/abort — stop the current run",
-	"/compact — compact context",
+	"/compact [focus] — compact context",
+	"/mode <agent|ask|plan|debug|multitask> — change work mode",
+	"/commit-message [instructions] — propose a message for staged changes (no commit)",
 	"/model [provider/id] — list or select a model",
 	"/thinking <level> — set thinking level",
 	"/terminal — open the terminal drawer",
 ].join("\n");
 
 const NO_MODEL_ERROR =
-	"No model configured. Add credentials to ~/.pi/agent/auth.json or set a provider API key environment variable, then restart.";
+	"No model configured. Add credentials to ~/.nekocode/agent/auth.json or set a provider API key environment variable, then restart.";
 
 const MODES: ExecutionMode[] = ["read-only", "auto", "full-access"];
 
@@ -125,11 +137,31 @@ function modelKeyOf(model: { provider: string; id: string }): string {
 	return `${model.provider}/${model.id}`;
 }
 
+/** What an assistant message said, with thinking and tool calls left out. */
+function assistantText(message: AssistantMessage): string {
+	if (!Array.isArray(message.content)) return "";
+	return message.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("")
+		.trim();
+}
+
 export class AgentService {
 	private session: AgentSession | null = null;
 	private unsubscribe: (() => void) | null = null;
 	private projector = new CellProjector();
 	private mode: ExecutionMode = "auto";
+	private workMode: WorkMode = "agent";
+	private workflow: WorkflowRuntime | null = null;
+	private helperAbort: AbortController | null = null;
+	/**
+	 * The in-flight title generation, and the session file it names. Kept apart
+	 * from `helperAbort` because naming a session must never gate the composer:
+	 * it runs alongside the very prompt that triggered it.
+	 */
+	private titleAbort: AbortController | null = null;
+	private titlePendingFile: string | null = null;
 	private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 	private runtime: ModelRuntime | null = null;
 	private sessionDir: string;
@@ -144,30 +176,114 @@ export class AgentService {
 	 * picks feed back here too, so the choice is one global "last selected".
 	 */
 	private pendingModelKey: string | null = null;
+	private pendingFusion: FusionConfig | null = null;
+	private preview: BrowserPreview | null = null;
+	private supportedThinking: typeof import("@earendil-works/pi-ai").getSupportedThinkingLevels | undefined;
 	private pendingThinkingLevel: ThinkingLevel | null = null;
 	/** Last directory the renderer asked about — where pushed defaults apply. */
 	private cwd: string | null = null;
 	private readonly preferencesPath: string;
+	readonly plugins: PluginService;
+	/** What the open session's extensions registered; replaced on every reload. */
+	private extensions: LoadExtensionsResult | undefined;
+	private resourceLoader: ResourceLoader | undefined;
 
 	constructor(
 		private readonly win: BrowserWindow,
 		private readonly modelConfig: ModelConfigService,
+		private readonly antigravity?: AntigravityOAuthService,
 	) {
 		this.sessionDir = join(app.getPath("userData"), "sessions");
 		mkdirSync(this.sessionDir, { recursive: true });
 		this.preferencesPath = join(app.getPath("userData"), "preferences.json");
+		this.plugins = new PluginService({
+			statePath: join(app.getPath("userData"), "plugins.json"),
+			onChange: () => this.emitPlugins(),
+		});
 		this.loadPreferences();
 	}
 
+	/** Tool names the enabled plugins contribute to the open session. */
+	private pluginTools(): string[] {
+		return this.plugins.enabledTools(this.extensions);
+	}
+
+	private emitPlugins(): void {
+		void this.pluginsSnapshot()
+			.then((snapshot) => this.win.webContents.send("plugins:changed", snapshot))
+			.catch(() => undefined);
+	}
+
+	pluginsSnapshot(): Promise<PluginsSnapshot> {
+		return this.plugins.list(this.cwd, this.extensions);
+	}
+
 	/**
-	 * App-level prefs that are not pi settings — currently just the execution
-	 * mode. Missing or corrupt files fall back to "auto".
+	 * Apply a plugin change to the running session without restarting it.
+	 *
+	 * `AgentSession.reload()` shuts the old extension runtime down, reloads
+	 * settings and resources, and rebuilds the tool set — so a package installed
+	 * a second ago is live. The workflow's own gate is refreshed afterwards
+	 * because the newly registered tools are not in any mode manifest and only
+	 * pass by way of the plugin list.
+	 */
+	private async reloadPlugins(): Promise<void> {
+		const session = this.session;
+		if (!session) {
+			this.emitPlugins();
+			return;
+		}
+		await session.reload();
+		this.extensions = this.resourceLoader?.getExtensions();
+		this.workflow?.refresh();
+		this.emitPlugins();
+		this.emit();
+	}
+
+	async installPlugin(request: InstallPluginRequest): Promise<PluginsSnapshot> {
+		if (!this.cwd) throw new Error("请先打开一个项目");
+		await this.plugins.install(this.cwd, request);
+		await this.reloadPlugins();
+		return this.pluginsSnapshot();
+	}
+
+	async removePlugin(request: PluginActionRequest): Promise<PluginsSnapshot> {
+		if (!this.cwd) throw new Error("请先打开一个项目");
+		await this.plugins.remove(this.cwd, request);
+		await this.reloadPlugins();
+		return this.pluginsSnapshot();
+	}
+
+	async updatePlugin(source?: string): Promise<PluginsSnapshot> {
+		if (!this.cwd) throw new Error("请先打开一个项目");
+		await this.plugins.update(this.cwd, source);
+		await this.reloadPlugins();
+		return this.pluginsSnapshot();
+	}
+
+	/**
+	 * Enabling changes no files, so no reload is needed — the gate reads the
+	 * plugin list on every tool call. The tool list the model sees does have to
+	 * be refreshed, or it would not know the tools appeared.
+	 */
+	async setPluginEnabled(request: SetPluginEnabledRequest): Promise<PluginsSnapshot> {
+		this.plugins.setEnabled(request);
+		this.workflow?.refresh();
+		this.emit();
+		return this.pluginsSnapshot();
+	}
+
+	/**
+	 * App-level preferences for execution permission and the next session's work
+	 * mode. Missing or corrupt files retain the auto / Agent defaults.
 	 */
 	private loadPreferences(): void {
 		try {
-			const raw: unknown = JSON.parse(
-				readFileSync(this.preferencesPath, "utf8"),
-			);
+			const raw: unknown = JSON.parse(readFileSync(this.preferencesPath, "utf8"));
+			const workMode = (raw as { workMode?: unknown }).workMode;
+			const fusion = (raw as { fusion?: unknown }).fusion;
+			if (isFusionConfig(fusion)) this.pendingFusion = fusion;
+			if (isWorkMode(workMode)) this.workMode = workMode;
 			const mode = (raw as { mode?: unknown }).mode;
 			if (MODES.includes(mode as ExecutionMode)) {
 				this.mode = mode as ExecutionMode;
@@ -179,7 +295,10 @@ export class AgentService {
 
 	private savePreferences(): void {
 		try {
-			writeFileSync(this.preferencesPath, `${JSON.stringify({ mode: this.mode })}\n`);
+			writeFileSync(
+				this.preferencesPath,
+				`${JSON.stringify({ mode: this.mode, workMode: this.workMode, fusion: this.pendingFusion })}\n`,
+			);
 		} catch {
 			// Best-effort — the pick still applies for this run.
 		}
@@ -194,8 +313,14 @@ export class AgentService {
 		if (!this.modelRuntimePromise) {
 			this.modelRuntimePromise = pi()
 				.then((m) => m.ModelRuntime.create())
-				.then((runtime) => {
+				.then(async (runtime) => {
+					this.supportedThinking = (await piAi()).getSupportedThinkingLevels;
 					this.runtime = runtime;
+					// Before anything can be sent: a subscription provider that goes
+					// out under the wrong client identity is the request that gets an
+					// account flagged.
+					registerOAuthClientIdentity(runtime);
+					if (this.antigravity) await registerAntigravityProvider(runtime, this.antigravity);
 					this.registerProfiles();
 					return runtime;
 				});
@@ -216,9 +341,7 @@ export class AgentService {
 				baseUrl: profile.sdkBaseUrl,
 				apiKey: profile.apiKey,
 				api: profile.api,
-				authHeader:
-					profile.api === "openai-completions" ||
-					profile.api === "openai-responses",
+				authHeader: profile.api === "openai-completions" || profile.api === "openai-responses",
 				models: profile.modelIds.map((id) => ({
 					id,
 					name: id,
@@ -242,6 +365,7 @@ export class AgentService {
 		const current = session?.model ?? null;
 		await this.getModelRuntime();
 		this.registerProfiles();
+		await this.runtime?.refresh({ allowNetwork: false });
 		if (session && this.runtime) {
 			const runtime = this.runtime;
 			const firstCustom =
@@ -250,18 +374,13 @@ export class AgentService {
 					.filter((m) => this.customProviderIds.has(m.provider))
 					.map((m) => ({ provider: m.provider, id: m.id }))[0] ?? null;
 			const decision = decideModelAfterReload({
-				current: current
-					? { provider: current.provider, id: current.id }
-					: null,
+				current: current ? { provider: current.provider, id: current.id } : null,
 				isRegistered: (p, id) => runtime.getModel(p, id) !== undefined,
 				firstCustom,
 			});
 			if (decision.kind === "set") {
 				try {
-					const refreshed = runtime.getModel(
-						decision.model.provider,
-						decision.model.id,
-					);
+					const refreshed = runtime.getModel(decision.model.provider, decision.model.id);
 					if (refreshed) {
 						await session.setModel(refreshed);
 						this.pendingError = undefined;
@@ -269,14 +388,11 @@ export class AgentService {
 						this.pendingError = `模型配置刷新失败: 模型 ${decision.model.provider}/${decision.model.id} 未注册`;
 					}
 				} catch (error) {
-					const message =
-						error instanceof Error ? error.message : String(error);
-					this.pendingError =
-						`模型配置刷新失败: ${message}`.slice(0, 500);
+					const message = error instanceof Error ? error.message : String(error);
+					this.pendingError = `模型配置刷新失败: ${message}`.slice(0, 500);
 				}
 			} else if (decision.kind === "removed") {
-				this.pendingError =
-					"当前模型配置已被移除，请添加或选择可用模型";
+				this.pendingError = "当前模型配置已被移除，请添加或选择可用模型";
 			}
 		}
 		this.emit();
@@ -289,10 +405,7 @@ export class AgentService {
 		const start = Date.now();
 		try {
 			const runtime = await this.getModelRuntime();
-			const model = runtime.getModel(
-				`nekocode-${req.profileId}`,
-				req.modelId,
-			);
+			const model = runtime.getModel(req.profileId === "antigravity" ? "antigravity" : `nekocode-${req.profileId}`, req.modelId);
 			if (!model) {
 				return {
 					ok: false,
@@ -303,38 +416,28 @@ export class AgentService {
 			const controller = new AbortController();
 			const timer = setTimeout(() => controller.abort(), 20_000);
 			try {
-				const message = await runtime.completeSimple(model, {
-					messages: [
-						{
-							role: "user",
-							content: "Reply with exactly OK.",
-							timestamp: Date.now(),
-						},
-					],
-				}, { maxTokens: 8, signal: controller.signal });
-				const text = Array.isArray(message.content)
-					? message.content
-							.filter(
-								(c): c is { type: "text"; text: string } =>
-									c.type === "text",
-							)
-							.map((c) => c.text)
-							.join("")
-							.trim()
-					: "";
+				const message = await runtime.completeSimple(
+					model,
+					{
+						messages: [
+							{
+								role: "user",
+								content: "Reply with exactly OK.",
+								timestamp: Date.now(),
+							},
+						],
+					},
+					{ maxTokens: req.profileId === "antigravity" ? 2048 : 8, signal: controller.signal },
+				);
+				const text = assistantText(message);
 				const ok =
-					message.stopReason !== "error" &&
-					message.stopReason !== "aborted" &&
-					text.length > 0;
+					message.stopReason !== "error" && message.stopReason !== "aborted" && text.length > 0;
 				return {
 					ok,
 					latencyMs: Date.now() - start,
 					message: ok
 						? "成功"
-						: (
-								message.errorMessage ??
-								`stopReason: ${message.stopReason}`
-							).slice(0, 500),
+						: req.profileId === "antigravity" ? (message.errorMessage ?? `stopReason: ${message.stopReason}`) : (message.errorMessage ?? `stopReason: ${message.stopReason}`).slice(0, 500),
 					output: text.slice(0, 300),
 				};
 			} finally {
@@ -345,21 +448,22 @@ export class AgentService {
 			return {
 				ok: false,
 				latencyMs: Date.now() - start,
-				message: raw.slice(0, 500),
+				message: req.profileId === "antigravity" ? raw : raw.slice(0, 500),
 			};
 		}
 	}
 
-	async listSessions(cwd: string): Promise<SessionSummary[]> {
-		assertDirectory(cwd);
+	async listSessions(cwd?: string): Promise<SessionSummary[]> {
+		if (cwd) assertDirectory(cwd);
 		const { SessionManager } = await pi();
-		const sessions = await SessionManager.list(cwd, this.sessionDir);
+		const sessions = cwd ? await SessionManager.list(cwd, this.sessionDir) : await SessionManager.listAll(this.sessionDir);
 		return sessions.map((s) => ({
 			id: s.id,
 			sessionFile: s.path,
-			cwd: s.cwd || cwd,
+			cwd: s.cwd || cwd || "",
 			title: sessionTitle(s.name, s.firstMessage),
-			// Only renamed sessions get a second line: for the rest the title
+			titlePending: this.isTitlePending(s.path),
+			// Only named sessions get a second line: for the rest the title
 			// already is the opening prompt, and repeating it reads as noise.
 			preview: s.name?.trim() ? normalizeLine(s.firstMessage, 160) : "",
 			createdAt: s.created.getTime(),
@@ -380,12 +484,14 @@ export class AgentService {
 		assertDirectory(req.cwd);
 		this.cwd = req.cwd;
 		const sessionFile = this.resolveSessionFile(req.sessionFile);
+		// Re-opening the session that is already open would reload it from disk,
+		// which for one still waiting on its first assistant message means reading
+		// a file that is not there yet and starting over empty.
+		if (this.session?.sessionManager.getSessionFile() === sessionFile) {
+			return this.buildSnapshot();
+		}
 		const { SessionManager } = await pi();
-		const sessionManager = SessionManager.open(
-			sessionFile,
-			this.sessionDir,
-			req.cwd,
-		);
+		const sessionManager = SessionManager.open(sessionFile, this.sessionDir, req.cwd);
 		return this.startSession(sessionManager);
 	}
 
@@ -399,6 +505,9 @@ export class AgentService {
 		if (!title) throw new Error("Session name cannot be empty");
 		const sessionFile = this.resolveSessionFile(req.sessionFile);
 
+		// An explicit name settles the question — drop a title still in flight.
+		if (this.isTitlePending(sessionFile)) this.cancelTitleGeneration();
+
 		const active = this.session;
 		if (active && active.sessionManager.getSessionFile() === sessionFile) {
 			active.setSessionName(title);
@@ -408,6 +517,72 @@ export class AgentService {
 		}
 		this.emitSessionsChanged();
 		if (active) this.emit();
+	}
+
+	/** Is this the session whose model-written title has not come back yet? */
+	private isTitlePending(sessionFile: string): boolean {
+		return this.titlePendingFile !== null && resolve(sessionFile) === this.titlePendingFile;
+	}
+
+	private cancelTitleGeneration(): void {
+		this.titleAbort?.abort();
+		this.titleAbort = null;
+		this.titlePendingFile = null;
+	}
+
+	/**
+	 * Name a session after its opening prompt, using the session's own model.
+	 *
+	 * Fire-and-forget, and deliberately not routed through `helperAbort`: the run
+	 * this prompt started is already going, and the composer must not wait on a
+	 * title. A title that never arrives is not an error either — the row keeps
+	 * falling back to the opening prompt, which is what it used to show.
+	 */
+	private startTitleGeneration(session: AgentSession, firstPrompt: string): void {
+		const fusion = this.workflow?.fusion;
+		const model = fusion
+			? this.runtime?.getAvailableSnapshot().find((m) => modelKeyOf(m) === fusion.sidekickModelKey)
+			: session.model;
+		const runtime = this.runtime;
+		const sessionFile = session.sessionManager.getSessionFile();
+		if (!model || !runtime || !sessionFile) return;
+		this.cancelTitleGeneration();
+		const controller = new AbortController();
+		this.titleAbort = controller;
+		this.titlePendingFile = resolve(sessionFile);
+		const generation = this.generation;
+		const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS);
+		this.emit();
+		this.emitSessionsChanged();
+
+		void (async () => {
+			try {
+				const request = buildTitleRequest(firstPrompt, { modelMaxTokens: model.maxTokens });
+				const message = await runtime.completeSimple(
+					model,
+					{ systemPrompt: request.systemPrompt, messages: request.messages },
+					{ maxTokens: request.maxTokens, signal: controller.signal },
+				);
+				const title = sanitizeGeneratedTitle(assistantText(message));
+				if (!title || controller.signal.aborted || generation !== this.generation) return;
+				const active = this.session;
+				if (!active || !this.isTitlePending(active.sessionManager.getSessionFile() ?? "")) return;
+				// A rename landing first wins: it is the one the user chose.
+				if (active.sessionManager.getSessionName()) return;
+				active.setSessionName(title);
+			} catch {
+				// Offline, no credentials, a refused request — the fallback stands.
+			} finally {
+				clearTimeout(timer);
+				// A newer session (or a rename) already took this over; leave its state alone.
+				if (this.titleAbort === controller) {
+					this.titleAbort = null;
+					this.titlePendingFile = null;
+					this.emit();
+					this.emitSessionsChanged();
+				}
+			}
+		})();
 	}
 
 	/**
@@ -431,6 +606,10 @@ export class AgentService {
 		if (!sessionFile.startsWith(sessionDir + sep)) {
 			throw new Error(`Session file outside session dir: ${path}`);
 		}
+		// The open session is real even before its file is: a transcript is only
+		// written once the first assistant message lands, and the sidebar lists
+		// the session from the moment its first prompt is sent.
+		if (this.session?.sessionManager.getSessionFile() === sessionFile) return sessionFile;
 		if (!existsSync(sessionFile) || !statSync(sessionFile).isFile()) {
 			throw new Error(`Session file does not exist: ${path}`);
 		}
@@ -446,8 +625,15 @@ export class AgentService {
 		if (!session) return { accepted: false, error: "No active session" };
 		const text = req.text;
 		if (!text.trim()) return { accepted: false, error: "Empty message" };
-
 		const slash = parseSlashCommand(text);
+		if (slash?.command === "abort") {
+			await this.abort();
+			return { accepted: true };
+		}
+		if (this.workflow?.state.hasPendingQuestion)
+			return { accepted: false, error: "请先回答或取消当前问题" };
+		if (this.helperAbort) return { accepted: false, error: "请等待提交信息生成，或先停止当前运行" };
+		this.workflow?.refresh();
 		if (slash) {
 			const handled = await this.handleSlash(slash.command, slash.args);
 			if (handled) return handled;
@@ -464,24 +650,26 @@ export class AgentService {
 			this.emit();
 			return { accepted: false, error: msg };
 		}
-
-		// The opening prompt becomes the session's name, which is also what makes a
-		// brand-new session appear in the list — until then it has no transcript.
-		const firstPrompt = !session.messages.some((m) => m.role === "user");
-		if (firstPrompt) {
-			session.setSessionName(normalizeLine(text, 80));
-			this.emitSessionsChanged();
+		if (this.workflow?.fusion) {
+			try {
+				const { config } = await resolveFusion(this.workflow.fusion, await this.getModelRuntime());
+				if (modelKeyOf(session.model) !== config.leadModelKey)
+					throw new Error("Fusion Lead 模型已变化，请重新应用 Fusion 配置");
+			}
+			catch (error) { return { accepted: false, error: String(error) }; }
 		}
+
+		// The opening prompt is what the session gets named after — by the model,
+		// in the background. Until that lands the row shows a placeholder.
+		const firstPrompt = !session.messages.some((m) => m.role === "user");
+		if (firstPrompt) this.startTitleGeneration(session, text);
 
 		try {
 			if (session.isStreaming) {
 				await session.prompt(text, { streamingBehavior: "steer" });
 			} else {
 				session.prompt(text).catch((error: unknown) => {
-					this.projector.notice(
-						"error",
-						error instanceof Error ? error.message : String(error),
-					);
+					this.projector.notice("error", error instanceof Error ? error.message : String(error));
 					this.emit();
 				});
 			}
@@ -495,7 +683,10 @@ export class AgentService {
 	}
 
 	async abort(): Promise<void> {
+		this.helperAbort?.abort();
+		this.workflow?.stop();
 		await this.session?.abort();
+		await this.workflow?.state.whenSettled();
 		this.emit();
 	}
 
@@ -517,19 +708,19 @@ export class AgentService {
 			: [...THINKING_LEVELS];
 		const requested =
 			this.pendingThinkingLevel ??
-			(model
-				? settings.getModelThinkingLevel(model.provider, model.id)
-				: undefined) ??
+			(model ? settings.getModelThinkingLevel(model.provider, model.id) : undefined) ??
 			settings.getDefaultThinkingLevel() ??
 			"medium";
 		return {
 			modelKey: model ? modelKeyOf(model) : null,
+			fusion: this.pendingFusion,
 			models: this.modelOptions(),
-			thinkingLevel: model
-				? (clampThinkingLevel(model, requested) as ThinkingLevel)
-				: "off",
+			thinkingLevel: model ? (clampThinkingLevel(model, requested) as ThinkingLevel) : "off",
 			thinkingLevels,
 			mode: this.mode,
+			workMode: this.workMode,
+			// No session, so no run to have matched a phase to yet.
+			agentPhase: DEFAULT_AGENT_PHASE,
 		};
 	}
 
@@ -544,10 +735,12 @@ export class AgentService {
 		settings: SettingsManager,
 	): Model<Api> | undefined {
 		const available = runtime.getAvailableSnapshot();
+		if (this.pendingFusion) {
+			const lead = available.find((m) => modelKeyOf(m) === this.pendingFusion!.leadModelKey);
+			if (lead) return lead;
+		}
 		if (this.pendingModelKey) {
-			const picked = available.find(
-				(m) => modelKeyOf(m) === this.pendingModelKey,
-			);
+			const picked = available.find((m) => modelKeyOf(m) === this.pendingModelKey);
 			if (picked) return picked;
 			// Stale pick — the profile was deleted or lost auth since.
 			this.pendingModelKey = null;
@@ -559,9 +752,7 @@ export class AgentService {
 			if (found && runtime.hasConfiguredAuth(found.provider)) return found;
 		}
 		for (const [provider, id] of Object.entries(PROVIDER_DEFAULT_MODEL)) {
-			const match = available.find(
-				(m) => m.provider === provider && m.id === id,
-			);
+			const match = available.find((m) => m.provider === provider && m.id === id);
 			if (match) return match;
 		}
 		return available[0];
@@ -579,18 +770,17 @@ export class AgentService {
 	}
 
 	async setModel(modelKey: string): Promise<AgentSnapshot | null> {
+		this.assertWorkflowIdle();
 		const runtime = await this.getModelRuntime();
-		const model = runtime
-			.getAvailableSnapshot()
-			.find((m) => modelKeyOf(m) === modelKey);
+		const model = runtime.getAvailableSnapshot().find((m) => modelKeyOf(m) === modelKey);
 		if (!model) throw new Error(`Unknown model: ${modelKey}`);
+		await this.workflow?.setFusion(null);
+		this.pendingFusion = null;
+		this.savePreferences();
 		this.pendingModelKey = modelKey;
 		// A pick is the user's default for future sessions too — persist it like
 		// the SDK's { persist: true } does, so it survives a restart.
-		(await this.settingsForDefaults()).setDefaultModelAndProvider(
-			model.provider,
-			model.id,
-		);
+		(await this.settingsForDefaults()).setDefaultModelAndProvider(model.provider, model.id);
 		if (!this.session) {
 			this.emitDefaults();
 			return null;
@@ -603,6 +793,9 @@ export class AgentService {
 	}
 
 	async setThinkingLevel(level: ThinkingLevel): Promise<AgentSnapshot | null> {
+		this.assertWorkflowIdle();
+		const fusion = this.session ? this.workflow?.fusion : this.pendingFusion;
+		if (fusion) return this.setFusion({ ...fusion, leadThinkingLevel: level });
 		if (!THINKING_LEVELS.includes(level)) {
 			throw new Error(`Unknown thinking level: ${level}`);
 		}
@@ -622,22 +815,79 @@ export class AgentService {
 		if (!MODES.includes(mode)) {
 			throw new Error(`Unknown execution mode: ${String(mode)}`);
 		}
+		this.assertWorkflowIdle();
 		this.mode = mode;
 		this.savePreferences();
 		if (!this.session) {
 			this.emitDefaults();
 			return null;
 		}
-		this.session.setActiveToolsByName(
-			mode === "read-only" ? READ_ONLY_TOOLS : FULL_TOOLS,
-		);
+		this.workflow?.refresh();
 		const snapshot = this.buildSnapshot();
 		this.emit();
 		return snapshot;
 	}
 
+	async setFusion(value: FusionConfig): Promise<AgentSnapshot | null> {
+		this.assertWorkflowIdle();
+		const { config } = await resolveFusion(value, await this.getModelRuntime());
+		await this.workflow?.setFusion(config);
+		this.pendingFusion = config;
+		this.pendingModelKey = config.leadModelKey;
+		this.pendingThinkingLevel = config.leadThinkingLevel;
+		this.savePreferences();
+		if (!this.session) { this.emitDefaults(); return null; }
+		this.pendingError = undefined;
+		this.emit();
+		return this.buildSnapshot();
+	}
+
+	private assertWorkflowIdle(): void {
+		if (
+			this.session?.isStreaming ||
+			this.session?.isCompacting ||
+			this.helperAbort ||
+			this.workflow?.state.hasRunningTasks
+		)
+			throw new Error("请先停止当前运行及后台任务，再切换模式或权限");
+	}
+
+	setWorkMode(mode: WorkMode): AgentSnapshot | null {
+		if (!isWorkMode(mode)) throw new Error("Unknown work mode");
+		this.assertWorkflowIdle();
+		this.workMode = mode;
+		this.savePreferences();
+		this.workflow?.setMode(mode);
+		if (!this.session) {
+			this.emitDefaults();
+			return null;
+		}
+		const snapshot = this.buildSnapshot();
+		this.emit(snapshot);
+		return snapshot;
+	}
+
+	answerWorkflow(answer: WorkflowAnswer): AgentSnapshot {
+		if (!this.workflow) throw new Error("No active workflow");
+		this.workflow.answer(answer);
+		return this.buildSnapshot();
+	}
+
+	cancelTask(id: string): AgentSnapshot {
+		if (!this.workflow) throw new Error("No active workflow");
+		this.workflow.cancelTask(id);
+		return this.buildSnapshot();
+	}
+
 	close(): void {
+		this.preview?.dispose();
+		this.preview = null;
 		this.generation++;
+		this.helperAbort?.abort();
+		this.helperAbort = null;
+		this.cancelTitleGeneration();
+		this.workflow?.dispose();
+		this.workflow = null;
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		this.session?.dispose();
@@ -651,7 +901,22 @@ export class AgentService {
 		sessionManager: SessionManager,
 		freshCwd?: string,
 	): Promise<AgentSnapshot> {
+		this.preview?.dispose();
+		const preview = new BrowserPreview({
+			cwd: sessionManager.getCwd(), sessionId: sessionManager.getSessionId(),
+			onPreview: (request) => {
+				if (this.preview === preview && !this.win.isDestroyed())
+					this.win.webContents.send("browser:preview", request);
+			},
+		});
+		this.preview = preview;
 		const generation = ++this.generation;
+		this.helperAbort?.abort();
+		this.helperAbort = null;
+		this.cancelTitleGeneration();
+		const previousWorkflow = this.workflow;
+		previousWorkflow?.dispose();
+		this.workflow = null;
 		// This transition owns the currently-active session; dispose it now.
 		this.unsubscribe?.();
 		this.unsubscribe = null;
@@ -660,41 +925,67 @@ export class AgentService {
 		this.projector.reset();
 		this.pendingError = undefined;
 
-		const { createAgentSession, SettingsManager } = await pi();
+		await previousWorkflow?.state.whenSettled();
+		if (generation !== this.generation) throw new Error("Session superseded");
+		const { SettingsManager } = await pi();
 		const modelRuntime = await this.getModelRuntime();
 		// A brand-new session takes the welcome screen's picks; an opened one
 		// keeps the model it was saved with.
 		const model = freshCwd
-			? this.resolveNewSessionModel(
-					modelRuntime,
-					SettingsManager.create(freshCwd),
-				)
+			? this.resolveNewSessionModel(modelRuntime, SettingsManager.create(freshCwd))
 			: undefined;
-		const { session, modelFallbackMessage } = await createAgentSession({
+		const {
+			session,
+			workflow,
+			modelFallbackMessage,
+			extensionsResult,
+			resourceLoader,
+			fusionError,
+		} = await createWorkflowSession({
+			initialFusion: freshCwd ? this.pendingFusion : undefined,
+			onHelperEvent: (event, source) => preview.handle(event, source),
 			cwd: sessionManager.getCwd(),
 			sessionManager,
+			initialMode: this.workMode,
+			getPermission: () => this.mode,
+			debugRoot: join(app.getPath("userData"), "debug-logs"),
+			onChange: () => {
+				if (generation === this.generation && this.session) this.emit();
+			},
+			onError: (message) => {
+				if (generation === this.generation) this.projector.notice("error", message);
+			},
+			onModeChange: (mode) => {
+				if (generation === this.generation) {
+					this.workMode = mode;
+					this.savePreferences();
+				}
+			},
+			getPluginTools: () => this.pluginTools(),
 			modelRuntime,
 			model,
-			thinkingLevel: freshCwd
-				? (this.pendingThinkingLevel ?? undefined)
-				: undefined,
+			thinkingLevel: freshCwd ? (this.pendingThinkingLevel ?? undefined) : undefined,
 		});
 		if (generation !== this.generation) {
+			workflow.dispose();
 			session.dispose();
 			throw new Error("Session superseded");
 		}
 		this.runtime = modelRuntime;
 		this.session = session;
+		this.workflow = workflow;
+		this.extensions = extensionsResult;
+		this.resourceLoader = resourceLoader;
+		this.workMode = workflow.workMode;
 		this.createdAt = Date.now();
-		session.setActiveToolsByName(
-			this.mode === "read-only" ? READ_ONLY_TOOLS : FULL_TOOLS,
-		);
+		workflow.refresh();
 		if (!session.model || session.model.provider === "unknown") {
 			this.pendingError = modelFallbackMessage ?? NO_MODEL_ERROR;
 		} else if (modelFallbackMessage) {
 			this.projector.notice("warning", modelFallbackMessage);
 		}
-		this.projector.rebuild(session.messages);
+		if (fusionError) this.pendingError = fusionError;
+		this.projector.rebuild(session.messages, session.isStreaming);
 		this.wasStreaming = session.isStreaming;
 		this.unsubscribe = session.subscribe((event: AgentSessionEvent) => {
 			this.onSessionEvent(event);
@@ -702,24 +993,23 @@ export class AgentService {
 		const snapshot = this.buildSnapshot();
 		this.emit(snapshot);
 		this.emitSessionsChanged();
+		this.emitPlugins();
 		return snapshot;
 	}
 
 	private onSessionEvent(event: AgentSessionEvent): void {
 		const session = this.session;
 		if (!session) return;
+		this.preview?.handle(event as ProjectionEvent);
 		this.projector.handleEvent(event as ProjectionEvent);
-		this.projector.rebuild(session.messages);
+		this.projector.rebuild(session.messages, session.isStreaming);
 		this.emit();
 		// A finished run is when the row's message count and timestamp settle.
 		if (this.wasStreaming && !session.isStreaming) this.emitSessionsChanged();
 		this.wasStreaming = session.isStreaming;
 	}
 
-	private async handleSlash(
-		command: string,
-		args: string,
-	): Promise<SendPromptResult | null> {
+	private async handleSlash(command: string, args: string): Promise<SendPromptResult | null> {
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
 		switch (command) {
@@ -731,28 +1021,63 @@ export class AgentService {
 			case "clear":
 				return { accepted: true, action: "new-session" };
 			case "abort":
-				await session.abort();
+				await this.abort();
 				this.emit();
 				return { accepted: true };
 			case "compact":
-				session
-					.compact()
+				if (this.workflow?.state.hasRunningTasks)
+					return { accepted: false, error: "请先等待或停止后台任务" };
+				session.compact(args || undefined).catch((error: unknown) => {
+					this.projector.notice("error", error instanceof Error ? error.message : String(error));
+					this.emit();
+				});
+				return { accepted: true };
+			case "mode": {
+				if (!isWorkMode(args))
+					return { accepted: false, error: "Modes: agent, ask, plan, debug, multitask" };
+				try {
+					this.setWorkMode(args);
+					return { accepted: true };
+				} catch (error) {
+					return { accepted: false, error: String(error) };
+				}
+			}
+			case "commit-message": {
+				if (!this.workflow || session.isStreaming || this.workflow.state.hasRunningTasks)
+					return { accepted: false, error: "请先等待当前运行结束" };
+				const controller = new AbortController();
+				const generation = this.generation;
+				this.helperAbort = controller;
+				this.emit();
+				void this.workflow
+					.commitMessage(args, controller.signal)
+					.then(async (text) => {
+						if (!controller.signal.aborted && generation === this.generation)
+							await session.sendCustomMessage({
+								customType: "nekocode.commit-message",
+								content: "建议提交信息（未创建提交）：\n\n" + text,
+								display: true,
+								details: {},
+							});
+					})
 					.catch((error: unknown) => {
-						this.projector.notice(
-							"error",
-							error instanceof Error ? error.message : String(error),
-						);
-						this.emit();
+						if (!controller.signal.aborted && generation === this.generation)
+							this.projector.notice("error", String(error));
+					})
+					.finally(() => {
+						if (this.helperAbort === controller) {
+							this.helperAbort = null;
+							this.emit();
+						}
 					});
 				return { accepted: true };
+			}
 			case "model": {
 				if (!args) {
 					const models = this.modelOptions();
 					this.projector.notice(
 						"info",
-						models.length
-							? models.map((m) => m.key).join("\n")
-							: "No models available",
+						models.length ? models.map((m) => m.key).join("\n") : "No models available",
 					);
 					this.emit();
 					return { accepted: true };
@@ -760,8 +1085,7 @@ export class AgentService {
 				try {
 					await this.setModel(args);
 				} catch (error) {
-					const message =
-						error instanceof Error ? error.message : String(error);
+					const message = error instanceof Error ? error.message : String(error);
 					this.projector.notice("error", message);
 					this.emit();
 					return { accepted: false, error: message };
@@ -795,12 +1119,17 @@ export class AgentService {
 	}
 
 	private modelOptions(): ModelOption[] {
-		if (!this.runtime) return [];
-		return this.runtime.getAvailableSnapshot().map((m) => ({
+		const runtime = this.runtime;
+		if (!runtime) return [];
+		return runtime.getAvailableSnapshot().map((m) => ({
 			key: modelKeyOf(m),
 			provider: m.provider,
+			// The registered provider's label: what the user named the endpoint in
+			// settings, rather than the `nekocode-<uuid>` it is keyed by.
+			providerName: runtime.getProvider(m.provider)?.name ?? m.provider,
 			id: m.id,
 			name: m.name,
+			thinkingLevels: this.supportedThinking?.(m) ?? ["off"],
 		}));
 	}
 
@@ -819,10 +1148,7 @@ export class AgentService {
 			}
 		}
 		const firstUser = messages.find((m) => m.role === "user");
-		const firstText =
-			firstUser && typeof firstUser.content === "string"
-				? firstUser.content
-				: "";
+		const firstText = firstUser && typeof firstUser.content === "string" ? firstUser.content : "";
 		const name = sm.getSessionName();
 		const model = session.model;
 		return {
@@ -831,23 +1157,26 @@ export class AgentService {
 				sessionFile,
 				cwd: sm.getCwd(),
 				title: sessionTitle(name, firstText),
+				titlePending: this.isTitlePending(sessionFile),
 				preview: name?.trim() ? normalizeLine(firstText, 160) : "",
 				createdAt,
 				updatedAt: Date.now(),
 				messageCount: messages.length,
 			},
 			cells: this.projector.cells(),
-			streaming: session.isStreaming,
+			fusion: this.workflow?.fusion ?? null,
+			workflow: this.workflow?.state.snapshot() ?? { request: null, todos: [], tasks: [] },
+			streaming: session.isStreaming || this.helperAbort !== null,
 			modelKey:
-				model &&
-				model.provider !== "unknown" &&
-				this.isModelUsable(model)
+				model && model.provider !== "unknown" && this.isModelUsable(model)
 					? modelKeyOf(model)
 					: null,
 			models: this.modelOptions(),
 			thinkingLevel: session.thinkingLevel,
 			thinkingLevels: session.getAvailableThinkingLevels(),
 			mode: this.mode,
+			workMode: this.workMode,
+			agentPhase: this.workflow?.agentPhase ?? DEFAULT_AGENT_PHASE,
 			error: this.pendingError,
 		};
 	}

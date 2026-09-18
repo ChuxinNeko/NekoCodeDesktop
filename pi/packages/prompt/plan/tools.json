@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "mode": "plan",
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "stat",
+    "question",
+    "todo_write",
+    "switch_mode"
+  ]
+}

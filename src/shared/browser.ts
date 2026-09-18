@@ -21,6 +21,29 @@ export interface BrowserPopupRequest {
 	url: string;
 }
 
+export interface BrowserPreviewRequest {
+	id: string;
+	sessionId: string;
+	cwd: string;
+	url: string;
+	kind: "html" | "server";
+}
+
+export interface BrowserElementSelection {
+	guestId: number;
+	url: string;
+	tagName: string;
+	name: string;
+	selector: string;
+}
+
+export interface ComposerInsertion { id: string; text: string; }
+
+/** Element text is page data, never an instruction or an automatically sent prompt. */
+export function elementSelectionText(element: BrowserElementSelection): string {
+	return `\n[${element.tagName} · ${element.name}]\n${element.selector}\n${element.url}\n`;
+}
+
 /** URL schemes the panel is allowed to load. */
 const ALLOWED_SCHEMES = new Set(["http:", "https:", "about:"]);
 

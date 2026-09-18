@@ -1,5 +1,8 @@
 import { api } from "../api";
+import { useTranslation } from "../i18n";
+import { PanelLeftIcon, PanelRightCloseIcon } from "../lib/icons";
 import { isMacNavigatorPlatform } from "../lib/utils";
+import { IconButton } from "./ui/icon-button";
 
 /**
  * The app-drawn caption strip.
@@ -14,13 +17,35 @@ import { isMacNavigatorPlatform } from "../lib/utils";
  * working. `.app-titlebar` reserves their width, and macOS gets a fixed left
  * inset for the traffic lights instead.
  */
-export function TitleBar({ projectLabel }: { projectLabel: string | null }) {
+export function TitleBar({
+	projectLabel,
+	sidebarOpen,
+	onToggleSidebar,
+	dockOpen,
+	onToggleDock,
+}: {
+	projectLabel: string | null;
+	sidebarOpen: boolean;
+	onToggleSidebar: () => void;
+	dockOpen: boolean;
+	onToggleDock: () => void;
+}) {
+	const { t } = useTranslation();
 	return (
 		<header
 			className="app-titlebar flex shrink-0 select-none items-center gap-1.5"
 			data-mac={isMacNavigatorPlatform() ? "" : undefined}
 			style={{ height: api.shell.titleBarHeight }}
 		>
+			<IconButton
+				aria-pressed={sidebarOpen}
+				label={t("sidebar.toggleSidebar")}
+				onClick={onToggleSidebar}
+				tooltip={t("sidebar.toggleSidebar")}
+				tooltipSide="bottom"
+			>
+				<PanelLeftIcon className="size-3.5" />
+			</IconButton>
 			<span className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)] font-medium text-foreground/85">
 				NekoCode
 			</span>
@@ -34,6 +59,16 @@ export function TitleBar({ projectLabel }: { projectLabel: string | null }) {
 					</span>
 				</>
 			) : null}
+			<div className="flex-1" />
+			<IconButton
+				aria-pressed={dockOpen}
+				label={t("dock.toggle")}
+				onClick={onToggleDock}
+				tooltip={t("dock.toggle")}
+				tooltipSide="bottom"
+			>
+				<PanelRightCloseIcon className="size-3.5" />
+			</IconButton>
 		</header>
 	);
 }

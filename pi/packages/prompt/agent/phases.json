@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "mode": "agent",
+  "phases": {
+    "answer": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "stat",
+      "question",
+      "switch_mode"
+    ],
+    "plan": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "stat",
+      "question",
+      "todo_write",
+      "switch_mode"
+    ],
+    "execute": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "stat",
+      "bash",
+      "powershell",
+      "edit",
+      "write",
+      "question",
+      "todo_write",
+      "switch_mode",
+      "commit_message"
+    ],
+    "debug": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "stat",
+      "bash",
+      "powershell",
+      "edit",
+      "write",
+      "question",
+      "todo_write",
+      "switch_mode",
+      "debug_log"
+    ],
+    "delegate": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "stat",
+      "bash",
+      "powershell",
+      "edit",
+      "write",
+      "question",
+      "todo_write",
+      "switch_mode",
+      "task",
+      "task_status",
+      "task_cancel",
+      "commit_message"
+    ]
+  }
+}

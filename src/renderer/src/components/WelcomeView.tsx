@@ -1,16 +1,17 @@
+import type { ComposerInsertion } from "../../../shared/browser";
+import type { FusionConfig } from "../../../shared/fusion";
+import type { WorkMode } from "../../../shared/workflow";
 import type { AgentDefaults, ExecutionMode, ThinkingLevel } from "../../../shared/agent";
-import { shortenPath } from "../../../shared/paths";
-import { api } from "../api";
 import { useTranslation } from "../i18n";
-import { FolderOpenIcon, XIcon } from "../lib/icons";
-import { cn } from "../lib/utils";
+import { XIcon } from "../lib/icons";
 import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
-import { COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME } from "./chat/composerPickerStyles";
+import { ProjectPicker } from "./chat/ProjectPicker";
 import { Button } from "./ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface WelcomeViewProps {
+	insertion?: ComposerInsertion | null;
+	onInsertionConsumed?: (id: string) => void;
 	cwd: string | null;
 	busy: boolean;
 	error: string | null;
@@ -20,9 +21,11 @@ interface WelcomeViewProps {
 	/** Starts a session in `cwd` and sends this as its opening prompt. */
 	onStart: (text: string) => void;
 	onDismissError: () => void;
+	onSetFusion: (config: FusionConfig) => void;
 	onSetModel: (modelKey: string) => void;
 	onSetThinking: (level: ThinkingLevel) => void;
 	onSetMode: (mode: ExecutionMode) => void;
+	onSetWorkMode: (mode: WorkMode) => void;
 }
 
 /**
@@ -31,7 +34,7 @@ interface WelcomeViewProps {
  *
  * The composer sits at the bottom, in the same place it occupies during a
  * session, so sending the first prompt swaps the content above it without the
- * input moving. Its toolbar carries the working directory plus the same
+ * input moving. The header carries the working directory; the toolbar has the same
  * model/thinking/mode pickers a session shows — the picks are held in the main
  * process and applied when the session is created.
  */
@@ -41,6 +44,9 @@ export function WelcomeView(props: WelcomeViewProps) {
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
+			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
+				<ProjectPicker cwd={cwd} disabled={busy} onPickProject={props.onPickProject} />
+			</header>
 			{error ? (
 				<div className="flex items-center gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
 					<span className="min-w-0 flex-1 truncate">{error}</span>
@@ -60,45 +66,30 @@ export function WelcomeView(props: WelcomeViewProps) {
 			</div>
 
 			<ComposerShell
+				insertion={props.insertion}
+				onInsertionConsumed={props.onInsertionConsumed}
 				autoFocus
 				disabled={busy || !cwd}
 				onSend={props.onStart}
 				placeholder={t("composer.placeholder")}
 				toolbar={
 					<>
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<Button
-										className={cn(
-											COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME,
-											"border-transparent",
-										)}
-										onClick={props.onPickProject}
-										size="chip"
-										variant="ghost"
-									/>
-								}
-							>
-								<FolderOpenIcon className="size-3.5" />
-								<span className="truncate text-[var(--color-text-foreground-secondary)]">
-									{cwd ? shortenPath(cwd, api.homeDir) : t("welcome.chooseFolder")}
-								</span>
-							</TooltipTrigger>
-							<TooltipPopup side="top">
-								{cwd ? t("welcome.workingIn", { cwd }) : t("welcome.chooseWorkingDir")}
-							</TooltipPopup>
-						</Tooltip>
 						{defaults ? (
 							<ComposerPickers
 								models={defaults.models}
 								modelKey={defaults.modelKey}
+								fusion={defaults.fusion}
 								thinkingLevel={defaults.thinkingLevel}
 								thinkingLevels={defaults.thinkingLevels}
 								mode={defaults.mode}
+								workMode={defaults.workMode}
+								agentPhase={defaults.agentPhase}
+								disabled={busy}
+								onSetFusion={props.onSetFusion}
 								onSetModel={props.onSetModel}
 								onSetThinking={props.onSetThinking}
 								onSetMode={props.onSetMode}
+								onSetWorkMode={props.onSetWorkMode}
 							/>
 						) : null}
 					</>

@@ -12,6 +12,7 @@ import {
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Context, Model } from "../src/types.ts";
+import { USER_AGENT_APP } from "../src/utils/pi-user-agent.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
@@ -159,8 +160,8 @@ describe("openai-codex streaming", () => {
 				expect(headers?.get("Authorization")).toBe(`Bearer ${token}`);
 				expect(headers?.get("chatgpt-account-id")).toBe("acc_test");
 				expect(headers?.get("OpenAI-Beta")).toBe("responses=experimental");
-				expect(headers?.get("originator")).toBe("pi");
-				expect(headers?.get("User-Agent")).toBe(`pi (${platform()} ${release()}; ${arch()})`);
+				expect(headers?.get("originator")).toBe(USER_AGENT_APP);
+				expect(headers?.get("User-Agent")).toBe(`${USER_AGENT_APP} (${platform()} ${release()}; ${arch()})`);
 				expect(headers?.get("accept")).toBe("text/event-stream");
 				expect(headers?.has("x-api-key")).toBe(false);
 				return new Response(stream, {
@@ -207,6 +208,49 @@ describe("openai-codex streaming", () => {
 
 		expect(sawTextDelta).toBe(true);
 		expect(sawDone).toBe(true);
+	});
+
+	it("lets configured headers pin the client identity sent upstream", async () => {
+		// A host embedding pi may have to present a specific client to this
+		// endpoint; that only works if provider/request headers beat pi's own
+		// defaults. Credential-derived headers stay pi's either way.
+		const token = mockToken();
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+		let seen: Headers | undefined;
+
+		const resultStream = streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+			headers: { "User-Agent": "codex-tui/0.154.0", originator: "codex-tui" },
+			fetch: async (_input, init) => {
+				seen = init?.headers instanceof Headers ? init.headers : undefined;
+				return new Response(buildSSEPayload({ status: "completed" }), {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				});
+			},
+		});
+		await resultStream.result();
+
+		expect(seen?.get("User-Agent")).toBe("codex-tui/0.154.0");
+		expect(seen?.get("originator")).toBe("codex-tui");
+		expect(seen?.get("Authorization")).toBe(`Bearer ${token}`);
+		expect(seen?.get("chatgpt-account-id")).toBe("acc_test");
 	});
 
 	// Regression test for https://github.com/earendil-works/pi/issues/9047

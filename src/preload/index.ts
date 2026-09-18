@@ -1,7 +1,17 @@
+import type { FusionConfig } from "../shared/fusion";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { DEFAULT_SHELL_INFO, type ShellInfo } from "../shared/window";
+import type {
+	InstallPluginRequest,
+	PluginActionRequest,
+	PluginCatalogQuery,
+	PluginCatalogPage,
+	PluginsSnapshot,
+	SetPluginEnabledRequest,
+} from "../shared/plugins";
+import type { WorkMode, WorkflowAnswer } from "../shared/workflow";
 import type { AutomationEvent, AutomationRun, AutomationWithState, SaveAutomationRequest } from "../shared/automation";
-import type { BrowserPopupRequest } from "../shared/browser";
+import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection } from "../shared/browser";
 import type {
 	CreatePullRequestRequest,
 	GitHubAuthStatus,
@@ -23,6 +33,7 @@ import type {
 	SessionSummary,
 	ThinkingLevel,
 } from "../shared/agent";
+import type { FsEntry, FsReadResult } from "../shared/files";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
 import type {
 	TerminalCreateRequest,
@@ -39,6 +50,10 @@ import type {
 	ModelStoreStatus,
 	ModelTestRequest,
 	ModelTestResult,
+	OAuthLoginEvent,
+	OAuthProviderId,
+	OAuthProviderSummary,
+	ProxyStatus,
 	SaveModelProfileRequest,
 } from "../shared/settings";
 
@@ -70,6 +85,11 @@ const api = {
 	onBrowserPopup: (listener: (request: BrowserPopupRequest) => void) =>
 		subscribe("browser:popup", listener),
 
+	onBrowserPreview: (listener: (request: BrowserPreviewRequest) => void) => subscribe("browser:preview", listener),
+	onBrowserElementSelected: (listener: (selection: BrowserElementSelection) => void) => subscribe("browser:elementSelected", listener),
+	onBrowserInspectStopped: (listener: (state: { guestId: number }) => void) => subscribe("browser:inspectStopped", listener),
+	browserSetInspect: (guestId: number, enabled: boolean): Promise<void> => ipcRenderer.invoke("browser:setInspect", guestId, enabled),
+
 	setTheme: (theme: "light" | "dark" | "system") =>
 		ipcRenderer.invoke("theme:set", theme),
 
@@ -79,9 +99,14 @@ const api = {
 		ipcRenderer.invoke("git:files", cwd, scope),
 	gitAction: (req: GitActionRequest) => ipcRenderer.invoke("git:action", req),
 	gitInit: (cwd: string) => ipcRenderer.invoke("git:init", cwd),
+
+	fsList: (cwd: string, relPath: string): Promise<FsEntry[]> =>
+		ipcRenderer.invoke("fs:list", cwd, relPath),
+	fsReadFile: (cwd: string, relPath: string): Promise<FsReadResult> =>
+		ipcRenderer.invoke("fs:readFile", cwd, relPath),
 	pickDirectory: () => ipcRenderer.invoke("dialog:openDirectory"),
 
-	sessionList: (cwd: string): Promise<SessionSummary[]> =>
+	sessionList: (cwd?: string): Promise<SessionSummary[]> =>
 		ipcRenderer.invoke("agent:listSessions", cwd),
 	sessionRename: (req: RenameSessionRequest): Promise<void> =>
 		ipcRenderer.invoke("agent:rename", req),
@@ -106,15 +131,34 @@ const api = {
 		subscribe("agent:defaults", listener),
 	// Null without a session: the pick is held as the welcome screen's default
 	// and pushed back through onAgentDefaults.
+	agentSetFusion: (config: FusionConfig): Promise<AgentSnapshot | null> =>
+		ipcRenderer.invoke("agent:setFusion", config),
 	agentSetModel: (modelKey: string): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setModel", modelKey),
 	agentSetThinking: (level: ThinkingLevel): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setThinking", level),
+	agentSetWorkMode: (mode: WorkMode): Promise<AgentSnapshot | null> => ipcRenderer.invoke("agent:setWorkMode", mode),
+	agentAnswerWorkflow: (answer: WorkflowAnswer): Promise<AgentSnapshot> => ipcRenderer.invoke("agent:answerWorkflow", answer),
+	agentCancelTask: (id: string): Promise<AgentSnapshot> => ipcRenderer.invoke("agent:cancelTask", id),
 	agentSetMode: (mode: ExecutionMode): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setMode", mode),
 	// Null when the open session goes away (it was deleted).
 	onAgentSnapshot: (listener: (snapshot: AgentSnapshot | null) => void) =>
 		subscribe("agent:snapshot", listener),
+
+	pluginsCatalog: (query: PluginCatalogQuery): Promise<PluginCatalogPage> =>
+		ipcRenderer.invoke("plugins:catalog", query),
+	pluginsList: (): Promise<PluginsSnapshot> => ipcRenderer.invoke("plugins:list"),
+	pluginsInstall: (request: InstallPluginRequest): Promise<PluginsSnapshot> =>
+		ipcRenderer.invoke("plugins:install", request),
+	pluginsRemove: (request: PluginActionRequest): Promise<PluginsSnapshot> =>
+		ipcRenderer.invoke("plugins:remove", request),
+	pluginsUpdate: (source?: string): Promise<PluginsSnapshot> =>
+		ipcRenderer.invoke("plugins:update", source),
+	pluginsSetEnabled: (request: SetPluginEnabledRequest): Promise<PluginsSnapshot> =>
+		ipcRenderer.invoke("plugins:setEnabled", request),
+	onPluginsChanged: (listener: (snapshot: PluginsSnapshot) => void) =>
+		subscribe("plugins:changed", listener),
 
 	terminalCreate: (req: TerminalCreateRequest): Promise<TerminalSession> =>
 		ipcRenderer.invoke("terminal:create", req),
@@ -141,6 +185,20 @@ const api = {
 		ipcRenderer.invoke("settings:fetchModels", req),
 	modelTest: (req: ModelTestRequest): Promise<ModelTestResult> =>
 		ipcRenderer.invoke("settings:testModel", req),
+
+	proxyStatus: (): Promise<ProxyStatus> => ipcRenderer.invoke("settings:proxyStatus"),
+	proxySave: (manual: string | null): Promise<ProxyStatus> => ipcRenderer.invoke("settings:saveProxy", manual),
+
+	oauthList: (): Promise<OAuthProviderSummary[]> => ipcRenderer.invoke("oauth:list"),
+	oauthRefresh: (id: OAuthProviderId): Promise<OAuthProviderSummary> => ipcRenderer.invoke("oauth:refresh", id),
+	oauthLogin: (id: OAuthProviderId): Promise<OAuthProviderSummary> =>
+		ipcRenderer.invoke("oauth:login", id),
+	oauthCancel: (id: OAuthProviderId): Promise<void> => ipcRenderer.invoke("oauth:cancel", id),
+	oauthSubmitCode: (id: OAuthProviderId, code: string): Promise<void> =>
+		ipcRenderer.invoke("oauth:submitCode", id, code),
+	oauthLogout: (id: OAuthProviderId): Promise<OAuthProviderSummary> =>
+		ipcRenderer.invoke("oauth:logout", id),
+	onOAuthEvent: (listener: (event: OAuthLoginEvent) => void) => subscribe("oauth:event", listener),
 
 	githubStatus: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke("github:status"),
 	githubSave: (token: string): Promise<GitHubAuthStatus> =>

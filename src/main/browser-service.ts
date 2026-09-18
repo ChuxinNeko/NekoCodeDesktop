@@ -1,5 +1,6 @@
 import { session, type BrowserWindow, type WebContents, type WebPreferences } from "electron";
 import { BROWSER_PARTITION, type BrowserPopupRequest } from "../shared/browser";
+import { BrowserInspector } from "./browser-inspector";
 
 /**
  * Main-process guard rails for the in-app browser panel.
@@ -12,6 +13,7 @@ import { BROWSER_PARTITION, type BrowserPopupRequest } from "../shared/browser";
 
 /** Applied to every guest so a renderer cannot attach a privileged webview. */
 function hardenGuestPreferences(webPreferences: WebPreferences): void {
+	delete webPreferences.preload;
 	webPreferences.partition = BROWSER_PARTITION;
 	webPreferences.contextIsolation = true;
 	webPreferences.sandbox = true;
@@ -35,8 +37,10 @@ function installBrowserPermissionPolicy(): void {
 	session.fromPartition(BROWSER_PARTITION).setPermissionCheckHandler(() => false);
 }
 
-export function installBrowserGuards(win: BrowserWindow): void {
+export function installBrowserGuards(win: BrowserWindow): BrowserInspector {
 	installBrowserPermissionPolicy();
+	const inspector = new BrowserInspector(win);
+	win.once("closed", () => { void inspector.stop(); });
 
 	win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
 		if (params.partition !== BROWSER_PARTITION) {
@@ -48,7 +52,9 @@ export function installBrowserGuards(win: BrowserWindow): void {
 
 	win.webContents.on("did-attach-webview", (_event, guest) => {
 		routeGuestPopups(win, guest);
+		inspector.register(guest);
 	});
+	return inspector;
 }
 
 /**

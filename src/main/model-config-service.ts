@@ -24,11 +24,13 @@ import {
 } from "./model-endpoint";
 import {
 	API_PROTOCOLS,
+	DEFAULT_PROVIDER_KIND,
 	MAX_MODEL_ID,
 	MAX_MODELS,
 	MAX_NAME,
 	MAX_PROFILES,
 	MAX_URL,
+	PROVIDER_KINDS,
 	toSummary,
 	validateProfileFile,
 	type ProfileFile,
@@ -124,6 +126,16 @@ export class ModelConfigService {
 		const name = req.name.trim();
 		if (!name) throw new Error("配置名称不能为空");
 		if (name.length > MAX_NAME) throw new Error("配置名称过长");
+		const kind = req.kind ?? DEFAULT_PROVIDER_KIND;
+		if (!PROVIDER_KINDS.includes(kind)) {
+			throw new Error(`Unknown provider kind: ${String(kind)}`);
+		}
+		// Everything below — base URL, route, pasted key — is the custom-API shape.
+		// An OAuth provider will carry a token from a sign-in flow instead, so it
+		// gets its own branch here rather than being squeezed through this one.
+		if (kind !== "custom-api") {
+			throw new Error(`暂不支持的供应商类型: ${kind}`);
+		}
 		if (!API_PROTOCOLS.includes(req.api)) {
 			throw new Error(`Unknown API protocol: ${String(req.api)}`);
 		}
@@ -134,10 +146,11 @@ export class ModelConfigService {
 		if (baseUrl.length > MAX_URL || route.length > MAX_URL) {
 			throw new Error("URL/route too long");
 		}
+		// A provider is saved before its models are picked — the models tab pulls
+		// the list from the saved endpoint — so an empty list is a valid state.
 		const modelIds = [
 			...new Set(req.modelIds.map((m) => m.trim()).filter(Boolean)),
 		];
-		if (modelIds.length === 0) throw new Error("至少需要一个模型");
 		if (modelIds.length > MAX_MODELS) throw new Error("模型数量过多");
 		for (const id of modelIds) {
 			if (id.length > MAX_MODEL_ID) throw new Error(`Model id too long: ${id}`);
@@ -168,6 +181,7 @@ export class ModelConfigService {
 		const record: StoredProfile = existing
 			? {
 					...existing,
+					kind,
 					name,
 					baseUrl,
 					route,
@@ -179,6 +193,7 @@ export class ModelConfigService {
 				}
 			: {
 					id: randomUUID(),
+					kind,
 					name,
 					baseUrl,
 					route,
@@ -260,17 +275,21 @@ export class ModelConfigService {
 
 	/** Main-process only: decrypted credentials for pi provider registration. */
 	registrationProfiles(): RegistrationProfile[] {
-		return this.load().map((p) => {
-			const { sdkBaseUrl } = resolveEndpoints(p.baseUrl, p.route, p.api);
-			return {
-				providerId: `nekocode-${p.id}`,
-				name: p.name,
-				sdkBaseUrl,
-				api: p.api,
-				apiKey: this.decryptApiKey(p),
-				modelIds: [...p.modelIds],
-				reasoning: p.reasoning === true,
-			};
-		});
+		// A provider whose models have not been picked yet has nothing to offer
+		// the runtime, so it stays unregistered until it has at least one.
+		return this.load()
+			.filter((p) => p.modelIds.length > 0)
+			.map((p) => {
+				const { sdkBaseUrl } = resolveEndpoints(p.baseUrl, p.route, p.api);
+				return {
+					providerId: `nekocode-${p.id}`,
+					name: p.name,
+					sdkBaseUrl,
+					api: p.api,
+					apiKey: this.decryptApiKey(p),
+					modelIds: [...p.modelIds],
+					reasoning: p.reasoning === true,
+				};
+			});
 	}
 }

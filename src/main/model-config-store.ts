@@ -1,6 +1,7 @@
 import type {
 	ModelApiProtocol,
 	ModelProfileSummary,
+	ProviderKind,
 } from "../shared/settings";
 import { resolveEndpoints } from "./model-endpoint";
 
@@ -15,12 +16,17 @@ export const API_PROTOCOLS: ModelApiProtocol[] = [
 	"openai-responses",
 	"anthropic-messages",
 ];
+export const PROVIDER_KINDS: ProviderKind[] = ["custom-api", "oauth"];
+/** What a profile written before provider types existed has to be. */
+export const DEFAULT_PROVIDER_KIND: ProviderKind = "custom-api";
 
 const SHAPE_ERROR =
 	"model-profiles.json has an unexpected shape and will not be overwritten";
 
 export interface StoredProfile {
 	id: string;
+	/** Optional: profiles written before provider types existed are custom API. */
+	kind?: ProviderKind;
 	name: string;
 	baseUrl: string;
 	route: string;
@@ -85,9 +91,10 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 		if (!API_PROTOCOLS.includes(p.api as ModelApiProtocol)) {
 			throw new Error(SHAPE_ERROR);
 		}
+		// An empty list is valid: a provider is stored as soon as its endpoint and
+		// key are known, and its models are picked from that endpoint afterwards.
 		if (
 			!Array.isArray(p.modelIds) ||
-			p.modelIds.length === 0 ||
 			p.modelIds.length > MAX_MODELS ||
 			!p.modelIds.every(
 				(m) => isNonEmptyString(m) && m.length <= MAX_MODEL_ID,
@@ -96,6 +103,12 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (p.reasoning !== undefined && typeof p.reasoning !== "boolean") {
+			throw new Error(SHAPE_ERROR);
+		}
+		if (
+			p.kind !== undefined &&
+			!PROVIDER_KINDS.includes(p.kind as ProviderKind)
+		) {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (
@@ -122,6 +135,7 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 export function toSummary(p: StoredProfile): ModelProfileSummary {
 	return {
 		id: p.id,
+		kind: p.kind ?? DEFAULT_PROVIDER_KIND,
 		name: p.name,
 		baseUrl: p.baseUrl,
 		route: p.route,

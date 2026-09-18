@@ -178,6 +178,9 @@ async function refreshAccessToken(refreshToken: string, signal: AbortSignal): Pr
 				grant_type: "refresh_token",
 				refresh_token: refreshToken,
 				client_id: CLIENT_ID,
+				// Sent explicitly rather than left to default to the granted scope:
+				// this is the shape the Codex clients refresh with.
+				scope: "openid profile email",
 			}),
 			signal,
 		});
@@ -290,9 +293,7 @@ async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal: AbortSi
 	});
 }
 
-async function createAuthorizationFlow(
-	originator: string = "pi",
-): Promise<{ verifier: string; state: string; url: string }> {
+async function createAuthorizationFlow(originator?: string): Promise<{ verifier: string; state: string; url: string }> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = createState();
 
@@ -304,9 +305,14 @@ async function createAuthorizationFlow(
 	url.searchParams.set("code_challenge", challenge);
 	url.searchParams.set("code_challenge_method", "S256");
 	url.searchParams.set("state", state);
+	// The account picker every time: one machine routinely signs in to more than
+	// one ChatGPT account, and a silent re-auth would bind the wrong one.
+	url.searchParams.set("prompt", "login");
 	url.searchParams.set("id_token_add_organizations", "true");
 	url.searchParams.set("codex_cli_simplified_flow", "true");
-	url.searchParams.set("originator", originator);
+	// Only when a host asks for one: the authorize request carries no client
+	// identity of its own unless it is set here.
+	if (originator) url.searchParams.set("originator", originator);
 
 	return { verifier, state, url: url.toString() };
 }

@@ -9,7 +9,9 @@ export {
 	getDocsPath,
 	getExamplesPath,
 	getPackageDir,
+	getProjectConfigDir,
 	getReadmePath,
+	LEGACY_CONFIG_DIR_NAME,
 	VERSION,
 } from "./config.ts";
 export {

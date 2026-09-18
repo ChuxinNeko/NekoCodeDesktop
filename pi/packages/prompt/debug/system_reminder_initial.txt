@@ -1,0 +1,2 @@
+日志接入：先调用 debug_log(action="status") 获得真实路径。后端程序可用其语言标准库向该路径追加 NDJSON，每行一个合法 JSON 对象，例如 {"hypothesis":"A","location":"file.ts:42","message":"observed state","data":{},"timestamp":0}。JSON 行中不允许注释。不得记录凭据、令牌或个人敏感信息。
+当前没有自动 HTTP 日志收集端点。浏览器或远端程序不能直接访问本机日志路径时，使用真实可用的控制台、测试输出或让用户提供日志，不要注入对不存在服务的 fetch 请求。

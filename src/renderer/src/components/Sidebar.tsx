@@ -13,7 +13,6 @@ import type { WorkspaceView } from "../App";
 import { useTranslation, type TranslationKey } from "../i18n";
 import { SessionList } from "./sessions/SessionList";
 import { IconButton } from "./ui/icon-button";
-import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
 	FolderOpenIcon,
@@ -40,6 +39,7 @@ const SECONDARY_NAV: ReadonlyArray<{
 
 interface SidebarProps {
 	cwd: string | null;
+	workspaces: string[];
 	sessions: SessionSummary[];
 	sessionsLoading: boolean;
 	activeSessionId: string | null;
@@ -51,6 +51,7 @@ interface SidebarProps {
 	browserOpen: boolean;
 	onPickProject: () => void;
 	onNewSession: () => void;
+	onNewWorkspaceSession: (cwd: string) => void;
 	onOpenSession: (session: SessionSummary) => void;
 	onRenameSession: (session: SessionSummary, title: string) => void;
 	onDeleteSession: (session: SessionSummary) => void;
@@ -85,44 +86,37 @@ export function Sidebar(props: SidebarProps) {
 	return (
 		<aside
 			className={cn(
-				"app-sidebar-surface flex h-full w-[260px] min-w-[220px] shrink-0 flex-col",
+				"app-sidebar-backdrop flex h-full w-[260px] min-w-[220px] shrink-0 flex-col",
 				"border-r border-[color:var(--sidebar-border)]",
 			)}
 		>
 			<div className="flex flex-col gap-1 px-2 pb-1 pt-2.5">
-				<Tooltip>
-					<TooltipTrigger
-						render={
-							<button
-								type="button"
-								onClick={onPickProject}
-								className={cn(
-									SIDEBAR_HEADER_ROW_CLASS_NAME,
-									SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
-									SIDEBAR_ROW_HOVER_CLASS_NAME,
-								)}
-							/>
-						}
-					>
-						<FolderOpenIcon className="size-3.5 shrink-0 opacity-80" />
-						<span className="min-w-0 flex-1 truncate">{projectLabel(cwd, api.homeDir)}</span>
-					</TooltipTrigger>
-					<TooltipPopup side="bottom">
-						{cwd ?? t("sidebar.projectPicker")}
-					</TooltipPopup>
-				</Tooltip>
-
-				<div className="flex items-center gap-1 px-1">
-					<Button
-						className="flex-1 justify-start"
-						disabled={!cwd || busy}
-						onClick={onNewSession}
-						size="sm"
-						variant="subtle"
-					>
-						<NewThreadIcon className="size-3.5" />
-						{t("sidebar.newSession")}
-					</Button>
+				<div className="flex items-center gap-1">
+					<Tooltip>
+						<TooltipTrigger
+							render={
+								<button
+									type="button"
+									onClick={onPickProject}
+									disabled={busy}
+									className={cn(
+										SIDEBAR_HEADER_ROW_CLASS_NAME,
+										"flex-1",
+										SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
+										SIDEBAR_ROW_HOVER_CLASS_NAME,
+									)}
+								/>
+							}
+						>
+							<FolderOpenIcon className="size-3.5 shrink-0 opacity-80" />
+							<span className="min-w-0 flex-1 truncate">
+								{projectLabel(cwd, api.homeDir)}
+							</span>
+						</TooltipTrigger>
+						<TooltipPopup side="bottom">
+							{cwd ?? t("sidebar.projectPicker")}
+						</TooltipPopup>
+					</Tooltip>
 					<IconButton
 						label={t("sidebar.toggleTheme")}
 						onClick={onToggleTheme}
@@ -134,28 +128,23 @@ export function Sidebar(props: SidebarProps) {
 							<MoonIcon className="size-3.5" />
 						)}
 					</IconButton>
-					<IconButton
-						label={t("sidebar.settings")}
-						onClick={() => onSelectView("settings")}
-						tooltip={t("sidebar.settings")}
-					>
-						<SettingsIcon className="size-3.5" />
-					</IconButton>
 				</div>
-			</div>
 
-			<SessionList
-				activeId={view === "chat" ? activeSessionId : null}
-				hasProject={cwd !== null}
-				loading={sessionsLoading}
-				onDelete={onDeleteSession}
-				onOpen={onOpenSession}
-				onRename={onRenameSession}
-				sessions={sessions}
-				streaming={streaming}
-			/>
+				<button
+					type="button"
+					disabled={!cwd || busy}
+					onClick={onNewSession}
+					className={cn(
+						SIDEBAR_HEADER_ROW_CLASS_NAME,
+						SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
+						SIDEBAR_ROW_HOVER_CLASS_NAME,
+						"disabled:pointer-events-none disabled:opacity-50",
+					)}
+				>
+					<NewThreadIcon className="size-3.5 shrink-0 opacity-80" />
+					<span className="min-w-0 flex-1 truncate">{t("sidebar.newSession")}</span>
+				</button>
 
-			<div className="flex flex-col gap-1 px-2 pb-2 pt-1">
 				{SECONDARY_NAV.map((entry) => (
 					<button
 						key={entry.id}
@@ -189,6 +178,25 @@ export function Sidebar(props: SidebarProps) {
 						{browserOpen ? t("nav.browserOn") : t("nav.browserOff")}
 					</span>
 				</button>
+			</div>
+
+			<SessionList
+				activeId={view === "chat" ? activeSessionId : null}
+				currentCwd={cwd}
+				workspaces={props.workspaces}
+				homeDir={api.homeDir}
+				busy={busy}
+				onAddWorkspace={onPickProject}
+				onNewSession={props.onNewWorkspaceSession}
+				loading={sessionsLoading}
+				onDelete={onDeleteSession}
+				onOpen={onOpenSession}
+				onRename={onRenameSession}
+				sessions={sessions}
+				streaming={streaming}
+			/>
+
+			<div className="flex flex-col gap-1 px-2 pb-2 pt-1">
 				<button
 					type="button"
 					onClick={() => onSelectView("settings")}

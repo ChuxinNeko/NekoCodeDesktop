@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test src/main/ src/shared/",
     "pi:build": "bun scripts/pi-toolchain.ts build",
-    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build"
+    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build",
+    "test:workflow": "bun test src/main/prompt-library.test.ts src/main/workflow-state.test.ts src/main/workflow-runtime.test.ts src/main/workflow-ui.test.tsx"
   },
   "trustedDependencies": [
     "@google/genai",
@@ -32,6 +33,7 @@
     "@tabler/icons-react": "^3.44.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "node-pty": "1.1.0",
     "react": "^19.3.0",
@@ -39,7 +41,10 @@
     "react-icons": "^5.6.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^3.6.0"
+    "shiki": "^4.4.3",
+    "tailwind-merge": "^3.6.0",
+    "typebox": "1.3.27",
+    "undici": "^8.10.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",

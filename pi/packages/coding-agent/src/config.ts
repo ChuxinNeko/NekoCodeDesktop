@@ -502,6 +502,28 @@ export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent
 export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
+
+/**
+ * The upstream config directory name, kept for projects that predate a rebrand.
+ */
+export const LEGACY_CONFIG_DIR_NAME = ".pi";
+
+/**
+ * The project-scoped config directory for `cwd`.
+ *
+ * A rebranded `configDir` must not orphan a repository that already carries the
+ * upstream one: its settings, installed packages, extensions, skills and trust
+ * all live under that name, and a checkout is shared with collaborators who may
+ * be running the upstream agent. So an existing legacy directory keeps being
+ * used where there is no branded one beside it; anything new is created under
+ * the branded name.
+ */
+export function getProjectConfigDir(cwd: string): string {
+	const branded = join(cwd, CONFIG_DIR_NAME);
+	if (CONFIG_DIR_NAME === LEGACY_CONFIG_DIR_NAME || existsSync(branded)) return branded;
+	const legacy = join(cwd, LEGACY_CONFIG_DIR_NAME);
+	return existsSync(legacy) ? legacy : branded;
+}
 export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR

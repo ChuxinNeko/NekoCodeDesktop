@@ -1,3 +1,6 @@
+import type { AgentPhase, WorkMode, WorkflowSnapshot } from "./workflow";
+import type { FusionConfig } from "./fusion";
+
 export type ExecutionMode = "read-only" | "auto" | "full-access";
 export type ThinkingLevel =
 	| "off"
@@ -9,10 +12,68 @@ export type ThinkingLevel =
 	| "max";
 
 export interface ModelOption {
+	thinkingLevels?: ThinkingLevel[];
 	key: string;
 	provider: string;
+	/** The provider's own label — "zai", not the `nekocode-…` id it registers under. */
+	providerName: string;
 	id: string;
 	name: string;
+}
+
+/**
+ * What the pickers call a model: `provider/model`, e.g. `zai/glm-4.6`.
+ *
+ * A configured endpoint names its models by their raw API id, which is usually
+ * a vendor-prefixed path — `zai-org/glm-4.6` — and pairing that with a provider
+ * id like `nekocode-3f2a…` is a mouthful nobody reads. The provider half
+ * already names the vendor, so the model half keeps only its last segment.
+ */
+export function modelLabel(
+	option: Pick<ModelOption, "provider" | "providerName" | "id" | "name">,
+): string {
+	const provider = option.providerName.trim() || option.provider;
+	// A built-in model carries a written-out name ("Claude Sonnet 4.5"); a
+	// configured one is registered under its id, and that is what gets trimmed.
+	const model =
+		option.name.trim() && option.name !== option.id
+			? option.name
+			: (option.id.split("/").pop() ?? option.id);
+	return `${provider}/${model}`;
+}
+
+/**
+ * What one turn spent: every model call from the user's prompt until the agent
+ * stopped working, summed.
+ *
+ * A turn, not a call, because a call is not a unit anyone acts on — a single
+ * answer routinely takes a dozen of them around tool use, and most produce no
+ * visible message to hang a number off.
+ *
+ * Token counts and cost come off the stored messages, so they survive reopening
+ * a session; the two durations are wall-clock this window measured while the
+ * turn ran and are absent for history it did not watch.
+ */
+export interface TurnUsage {
+	provider: string;
+	model: string;
+	/** What the provider actually served, when it is not the model requested. */
+	responseModel?: string;
+	/** Model calls the turn took. */
+	calls: number;
+	/** Prompt tokens billed at full rate — cache reads/writes are counted apart. */
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	/** Thinking tokens, when the provider breaks them out. A subset of `output`. */
+	reasoning?: number;
+	totalTokens: number;
+	costUsd?: number;
+	/** First call's start to last call's end — tool execution included. */
+	durationMs?: number;
+	/** Time inside the model calls themselves, which is what a rate divides by. */
+	modelMs?: number;
 }
 
 export type AgentCell =
@@ -29,6 +90,11 @@ export type AgentCell =
 			thinkingStartedAt?: number;
 			/** ms epoch when non-thinking output began (or the message ended). */
 			thinkingEndedAt?: number;
+			/**
+			 * Set on the last visible message of a finished turn, and nowhere else:
+			 * it accounts for the whole turn, so it belongs at the end of it.
+			 */
+			usage?: TurnUsage;
 	  }
 	| {
 			id: string;
@@ -38,6 +104,12 @@ export type AgentCell =
 			args: unknown;
 			output: string;
 			status: "pending" | "running" | "done" | "error";
+			/**
+			 * When the call was issued. `timestamp` moves to the result once one
+			 * lands — which is what orders the cell — so the start is kept apart
+			 * rather than recovered from it.
+			 */
+			startedAt?: number;
 			timestamp: number;
 	  }
 	| {
@@ -56,6 +128,12 @@ export interface SessionSummary {
 	/** User-set name when there is one, else the opening prompt, else a placeholder. */
 	title: string;
 	/**
+	 * A model-written title is in flight for this session. The row shows the
+	 * localized "new session" placeholder until it lands, because `title` is
+	 * still only the raw opening prompt at that point.
+	 */
+	titlePending: boolean;
+	/**
 	 * Second line of a row. Only set for renamed sessions, where the opening
 	 * prompt is extra information; for the rest the title already is that prompt.
 	 */
@@ -70,16 +148,21 @@ export interface SessionSummary {
  * session starts with. Mirrors the pickers' half of AgentSnapshot.
  */
 export interface AgentDefaults {
+	fusion?: FusionConfig | null;
 	modelKey: string | null;
 	models: ModelOption[];
 	thinkingLevel: ThinkingLevel;
 	thinkingLevels: ThinkingLevel[];
 	mode: ExecutionMode;
+	workMode: WorkMode;
+	agentPhase: AgentPhase;
 }
 
 export interface AgentSnapshot {
+	fusion?: FusionConfig | null;
 	session: SessionSummary;
 	cells: AgentCell[];
+	workflow: WorkflowSnapshot;
 	streaming: boolean;
 	modelKey: string | null;
 	models: ModelOption[];
@@ -91,6 +174,13 @@ export interface AgentSnapshot {
 	 */
 	thinkingLevels: ThinkingLevel[];
 	mode: ExecutionMode;
+	workMode: WorkMode;
+	/**
+	 * The discipline Agent mode picked for the work in front of it. The picker
+	 * shows it so an automatic switch is something the user watches happen rather
+	 * than infers from the tools that went missing.
+	 */
+	agentPhase: AgentPhase;
 	error?: string;
 }
 

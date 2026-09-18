@@ -83,6 +83,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+	/** App instructions added to both manual and automatic context compaction. */
+	compactionInstructions?: string;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
 }
@@ -393,6 +395,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,
+		compactionInstructions: options.compactionInstructions,
 		modelRuntime,
 		initialActiveToolNames,
 		allowedToolNames,

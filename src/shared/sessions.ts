@@ -1,4 +1,45 @@
 import type { SessionSummary } from "./agent";
+import { projectLabel } from "./paths";
+
+/** Windows paths compare without case; POSIX workspace names remain distinct. */
+export function workspaceKey(path: string): string {
+	const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+	return /^[a-z]:/i.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized || "/";
+}
+
+export interface WorkspaceSessionGroup {
+	id: string;
+	cwd: string;
+	label: string;
+	sessions: SessionSummary[];
+}
+
+/** Workspaces group by full path, never by basename. Search includes paths. */
+export function groupSessionsByWorkspace(sessions: readonly SessionSummary[], options: {
+	workspaces?: readonly string[]; currentCwd?: string | null; query?: string; homeDir?: string;
+} = {}): WorkspaceSessionGroup[] {
+	const groups = new Map<string, WorkspaceSessionGroup>();
+	const add = (cwd: string) => {
+		const id = cwd ? workspaceKey(cwd) : "";
+		let group = groups.get(id);
+		if (!group) { group = { id, cwd, label: cwd ? projectLabel(cwd, options.homeDir) : "", sessions: [] }; groups.set(id, group); }
+		return group;
+	};
+	for (const cwd of options.workspaces ?? []) if (cwd) add(cwd);
+	if (options.currentCwd) add(options.currentCwd);
+	for (const session of sessions) add(session.cwd).sessions.push(session);
+	const query = options.query?.trim().toLowerCase() ?? "";
+	return [...groups.values()].map((group) => ({
+		...group,
+		sessions: group.sessions.filter((session) => !query || group.cwd.toLowerCase().includes(query) || sessionMatchesQuery(session, query)).sort((a, b) => b.updatedAt - a.updatedAt || a.sessionFile.localeCompare(b.sessionFile)),
+	})).filter((group) => !query || group.sessions.length > 0 || group.cwd.toLowerCase().includes(query))
+		.sort((a, b) => {
+			const current = options.currentCwd ? workspaceKey(options.currentCwd) : null;
+			if (a.id === current) return -1;
+			if (b.id === current) return 1;
+			return (b.sessions[0]?.updatedAt ?? 0) - (a.sessions[0]?.updatedAt ?? 0) || a.cwd.localeCompare(b.cwd);
+		});
+}
 
 /**
  * Presentation rules for the session list, kept out of the components so the
@@ -20,6 +61,29 @@ export function sessionTitle(name: string | null | undefined, firstMessage: stri
 	const named = name?.trim();
 	if (named) return normalizeLine(named, 80);
 	return normalizeLine(firstMessage, 80) || UNTITLED_SESSION;
+}
+
+/**
+ * The open session joined into the on-disk list.
+ *
+ * A transcript is only written once its first assistant message lands, so a
+ * session that was just started has no file for `SessionManager.list` to find.
+ * Its own snapshot is the same data the list would report, so the sidebar shows
+ * the row — with its pending title — from the moment the first prompt is sent.
+ */
+export function mergeActiveSession(
+	sessions: readonly SessionSummary[],
+	active: SessionSummary | null | undefined,
+): SessionSummary[] {
+	if (!active || active.messageCount === 0) return [...sessions];
+	if (sessions.some((session) => session.sessionFile === active.sessionFile)) {
+		// On disk already: the live copy still wins, since a title generated
+		// moments ago reaches the snapshot before the file is re-read.
+		return sessions.map((session) =>
+			session.sessionFile === active.sessionFile ? active : session,
+		);
+	}
+	return [active, ...sessions];
 }
 
 export type SessionBucketId = "today" | "yesterday" | "week" | "month" | "older";

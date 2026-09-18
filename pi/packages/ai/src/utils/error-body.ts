@@ -35,6 +35,33 @@ type SdkErrorShape = Error & {
 	$response?: { statusCode?: unknown; body?: unknown };
 };
 
+const MAX_CAUSE_DEPTH = 4;
+
+/**
+ * The cause chain, as one readable trailer.
+ *
+ * A transport failure arrives as `TypeError: fetch failed` and nothing else —
+ * what actually happened (DNS, TLS, a reset, a refused proxy) sits in
+ * `error.cause`. Dropping it leaves the user with an error that names no cause
+ * and suggests no fix.
+ */
+function describeCauseChain(error: Error): string | undefined {
+	const parts: string[] = [];
+	let current: unknown = (error as { cause?: unknown }).cause;
+	for (let depth = 0; current && depth < MAX_CAUSE_DEPTH; depth++) {
+		const link = current as { code?: unknown; message?: unknown; cause?: unknown };
+		const code = typeof link.code === "string" && link.code ? link.code : undefined;
+		const message = typeof link.message === "string" && link.message ? link.message : undefined;
+		// The message is the informative half — "connect ECONNREFUSED 127.0.0.1:7890"
+		// names the address the code alone would not — so the code is only prefixed
+		// when the message does not already carry it.
+		const text = message ? (code && !message.includes(code) ? `${code}: ${message}` : message) : code;
+		if (text && !parts.includes(text) && !error.message.includes(text)) parts.push(text);
+		current = link.cause;
+	}
+	return parts.length > 0 ? parts.join(" → ") : undefined;
+}
+
 export function normalizeProviderError(error: unknown): NormalizedProviderError {
 	if (!(error instanceof Error)) {
 		return { message: safeJsonStringify(error), messageCarriesBody: false };
@@ -44,11 +71,15 @@ export function normalizeProviderError(error: unknown): NormalizedProviderError 
 	const status = extractStatus(sdkError);
 	const body = extractBody(sdkError);
 	const messageCarriesBody = body === undefined || error.message.includes(body);
+	// Only for errors that carry no HTTP response of their own: an SDK error with
+	// a status and body already says what went wrong, and its own cause chain is
+	// noise beside it.
+	const cause = status === undefined && body === undefined ? describeCauseChain(error) : undefined;
 
 	return {
 		status,
 		body,
-		message: error.message,
+		message: cause ? `${error.message} (${cause})` : error.message,
 		messageCarriesBody,
 	} satisfies NormalizedProviderError;
 }

@@ -13,27 +13,26 @@ export interface SessionsState {
 }
 
 /**
- * Owns the session list for one project directory.
+ * Owns the sidebar's session list across all project directories.
  *
  * The list is authoritative on disk, so mutations write through the bridge and
  * re-read rather than patching local state — main also pushes
  * `onSessionsChanged` whenever a run names a session or finishes, and the two
  * paths have to converge on the same thing.
  */
-export function useSessions(cwd: string | null): SessionsState {
+export function useSessions(): SessionsState {
 	const [sessions, setSessions] = useState<SessionSummary[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	// Guards against an in-flight list for an old project (or an older refresh)
-	// landing after a newer one and resurrecting stale rows.
+	// An older refresh must not overwrite newer rows or update an unmounted list.
 	const requestRef = useRef(0);
 
 	const load = useCallback(
-		async (target: string) => {
+		async () => {
 			const request = ++requestRef.current;
 			setLoading(true);
 			try {
-				const next = await api.sessionList(target);
+				const next = await api.sessionList();
 				if (request === requestRef.current) {
 					setSessions(next);
 					setError(null);
@@ -48,19 +47,13 @@ export function useSessions(cwd: string | null): SessionsState {
 	);
 
 	const refresh = useCallback(() => {
-		if (cwd) void load(cwd);
-	}, [cwd, load]);
+		void load();
+	}, [load]);
 
 	useEffect(() => {
-		if (!cwd) {
-			requestRef.current++;
-			setSessions([]);
-			setError(null);
-			setLoading(false);
-			return;
-		}
-		void load(cwd);
-	}, [cwd, load]);
+		void load();
+		return () => { requestRef.current++; };
+	}, [load]);
 
 	useEffect(() => api.onSessionsChanged(() => refresh()), [refresh]);
 

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
+import { USER_AGENT_APP } from "../src/utils/pi-user-agent.ts";
 
 interface CapturedAzureClientOptions {
 	apiKey: string;
@@ -41,7 +42,8 @@ vi.mock("openai", () => {
 	return { AzureOpenAI };
 });
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+// Follows the product token rather than restating it: the fork rebrands it.
+const PI_USER_AGENT = `${USER_AGENT_APP} (${platform()} ${release()}; ${arch()})`;
 
 const context: Context = {
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],

@@ -6,17 +6,29 @@ import { VscMcp } from "react-icons/vsc";
 import { cn } from "./utils";
 import { CentralIcon, type CentralIconVariant } from "./central-icons";
 import {
+  IconAdjustmentsHorizontal,
   IconAlertCircle,
   IconAlertTriangle,
+  IconAppWindow,
   IconArchive,
   IconArrowBackUp,
+  IconArrowBarToDown,
+  IconArrowFork,
   IconArrowForwardUp,
   IconArrowDown,
   IconArrowLeft,
   IconArrowRight,
+  IconArrowsLeftRight,
+  IconArrowsMaximize,
+  IconArrowsMinimize,
+  IconArrowsSort,
   IconArrowUp,
   IconArrowUpRight,
+  IconBell,
+  IconBlocks,
   IconBolt,
+  IconBoltFilled,
+  IconBook,
   IconBrain,
   IconBug,
   IconCamera,
@@ -25,42 +37,87 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconChevronUp,
+  IconCircleArrowUp,
   IconCircleCheck,
+  IconClock,
+  IconCloudUpload,
+  IconCode,
   IconColumns2,
+  IconCopy,
+  IconCornerDownRight,
+  IconDeviceMobile,
   IconDots,
   IconDownload,
+  IconEraser,
   IconExternalLink,
   IconEye,
   IconFile,
+  IconFileDiff,
+  IconFilter,
   IconFlag,
   IconFlask2,
   IconFolder,
   IconFolderOpen,
+  IconFolders,
+  IconGauge,
+  IconGift,
+  IconGitCommit,
+  IconGitMerge,
+  IconGitPullRequest,
+  IconGitPullRequestClosed,
+  IconGitPullRequestDraft,
+  IconGripVertical,
+  IconHelpCircle,
   IconHistory,
+  IconHome,
   IconInfoCircle,
+  IconKeyboard,
   IconLayoutDistributeHorizontal,
+  IconLayoutKanban,
+  IconLayoutSidebar,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarRightCollapse,
+  IconLink,
   IconListCheck,
   IconListDetails,
   IconLoader2,
   IconMaximize,
+  IconMessage2,
+  IconMessageDots,
+  IconMicrophone,
   IconMinimize,
   IconMinus,
   IconDeviceLaptop,
   IconDeviceMobileRotated,
+  IconPencil,
+  IconPin,
+  IconPinFilled,
+  IconPlayerPause,
+  IconPlayerPauseFilled,
+  IconPlayerPlay,
+  IconPlayerPlayFilled,
+  IconPlayerRecord,
   IconPlugOff,
   IconPower,
+  IconPuzzle,
   IconMessageCircle,
   IconMoon,
   IconPaperclip,
   IconPlus,
   IconRefresh,
+  IconRestore,
+  IconRobot,
   IconRotate2,
+  IconSearch,
   IconSelector,
   IconStar,
   IconStarFilled,
   IconSun,
+  IconTargetArrow,
   IconTextWrap,
   IconTrash,
+  IconUsers,
+  IconWorld,
   IconX,
   type TablerIcon,
 } from "@tabler/icons-react";
@@ -97,39 +154,39 @@ export const AppsIcon: LucideIcon = (props) => (
   <RiApps2Line className={props.className} style={props.style} />
 );
 // Composer stacked-panel glyphs (subagent strip / workflow run card).
-export const BackgroundTrayIcon: LucideIcon = centralIconWrapper("arrow-down-wall");
-export const ContextCompactionIcon: LucideIcon = centralIconWrapper("arrows-hide");
-export const PanelExpandIcon: LucideIcon = centralIconWrapper("expand-45");
-export const PanelCollapseIcon: LucideIcon = centralIconWrapper("minimize-45");
-export const BackToParentIcon: LucideIcon = centralIconWrapper("arrow-share-left");
-export const WorkflowIcon: LucideIcon = centralIconWrapper("agents");
-export const SteerIcon: LucideIcon = centralIconWrapper("arrow-corner-down-right");
+export const BackgroundTrayIcon: LucideIcon = adaptIcon(IconArrowBarToDown);
+export const ContextCompactionIcon: LucideIcon = adaptIcon(IconArrowsMinimize);
+export const PanelExpandIcon: LucideIcon = adaptIcon(IconArrowsMaximize);
+export const PanelCollapseIcon: LucideIcon = adaptIcon(IconMinimize);
+export const BackToParentIcon: LucideIcon = adaptIcon(IconArrowBackUp);
+export const WorkflowIcon: LucideIcon = adaptIcon(IconClock);
+export const SteerIcon: LucideIcon = adaptIcon(IconCornerDownRight);
 export const ComposerSendArrowIcon: LucideIcon = centralIconWrapper("arrow-up");
 export const HANDOFF_ICON_NAME = "arrow-left-right";
-export const HandoffIcon: LucideIcon = centralIconWrapper(HANDOFF_ICON_NAME);
-export const SkillCubeIcon: LucideIcon = centralIconWrapper("building-blocks");
+export const HandoffIcon: LucideIcon = adaptIcon(IconArrowsLeftRight);
+export const SkillCubeIcon: LucideIcon = adaptIcon(IconBlocks);
 export const NewThreadIcon: LucideIcon = centralIconWrapper("compose-pencil");
 /** The "+" affordance behind every add/create action (Add project, activity header). */
-export const AddPlusIcon: LucideIcon = centralIconWrapper("plus-medium");
+export const AddPlusIcon: LucideIcon = adaptIcon(IconPlus);
 /** 2x3 dot grip for drag-to-reorder handles (provider rows, sidebar nav customize). */
-export const DragHandleIcon: LucideIcon = centralIconWrapper("dot-grid-2x3");
+export const DragHandleIcon: LucideIcon = adaptIcon(IconGripVertical);
 /** Sliders glyph for "customize this surface" entries. */
-export const CustomizeIcon: LucideIcon = centralIconWrapper("settings-slider-three");
-export const EraserIcon: LucideIcon = centralIconWrapper("eraser");
+export const CustomizeIcon: LucideIcon = adaptIcon(IconAdjustmentsHorizontal);
+export const EraserIcon: LucideIcon = adaptIcon(IconEraser);
 export const ArrowLeftIcon = adaptIcon(IconArrowLeft);
 export const ArrowRightIcon = adaptIcon(IconArrowRight);
 export const ArrowDownIcon = adaptIcon(IconArrowDown);
 export const ArrowUpIcon = adaptIcon(IconArrowUp);
 export const ArrowUpRightIcon = adaptIcon(IconArrowUpRight);
-export const SortIcon: LucideIcon = centralIconWrapper("arrow-top-bottom");
+export const SortIcon: LucideIcon = adaptIcon(IconArrowsSort);
 // Single source for the robot/agent glyph. Sourced from the Central icon set so
 // every robot affordance (reasoning rows, agent-task rows, agent mention chips,
 // subagent menus, agent-activity headers) renders one identical icon. Use
 // BotIcon in React; AGENT_ROBOT_ICON_NAME for imperative DOM via
 // createCentralIconElement.
 export const AGENT_ROBOT_ICON_NAME = "robot";
-export const BotIcon: LucideIcon = centralIconWrapper(AGENT_ROBOT_ICON_NAME);
-export const BookIcon: LucideIcon = centralIconWrapper("book-simple");
+export const BotIcon: LucideIcon = adaptIcon(IconRobot);
+export const BookIcon: LucideIcon = adaptIcon(IconBook);
 export const BugIcon = adaptIcon(IconBug);
 export const CameraIcon = adaptIcon(IconCamera);
 export const CheckIcon = adaptIcon(IconCheck);
@@ -143,31 +200,31 @@ export const CircleCheckIcon = adaptIcon(IconCircleCheck);
 // User-input rows: a question-mark circle while the agent waits for an answer,
 // and an up-arrow circle once the answer is submitted. Sourced from the Central
 // set so they sit visually beside the other timeline glyphs (robot, search, …).
-export const CircleQuestionIcon: LucideIcon = centralIconWrapper("circle-questionmark");
-export const ArrowUpCircleIcon: LucideIcon = centralIconWrapper("arrow-up-circle");
-export const CloudSyncIcon = centralIconWrapper("cloud-sync");
+export const CircleQuestionIcon: LucideIcon = adaptIcon(IconHelpCircle);
+export const ArrowUpCircleIcon: LucideIcon = adaptIcon(IconCircleArrowUp);
+export const CloudSyncIcon = adaptIcon(IconRefresh);
 export const Columns2Icon = adaptIcon(IconColumns2);
-export const ChangesIcon = centralIconWrapper("changes");
+export const ChangesIcon = adaptIcon(IconFileDiff);
 export const COPY_ICON_NAME = "square-behind-square-6";
-export const CopyIcon = centralIconWrapper(COPY_ICON_NAME);
-export const LinkIcon = centralIconWrapper("chain-link-3");
-export const DiffIcon = centralIconWrapper("difference-modified");
+export const CopyIcon = adaptIcon(IconCopy);
+export const LinkIcon = adaptIcon(IconLink);
+export const DiffIcon = adaptIcon(IconFileDiff);
 export const DownloadIcon = adaptIcon(IconDownload);
 // The clock doubles as the automation glyph everywhere it appears (meta chip,
 // Automations nav, slash command, created card, environment section), so it is
 // sourced from the Central icon set rather than the Tabler stroke icon.
 export const BELL_ICON_NAME = "notes";
-export const BellIcon: LucideIcon = centralIconWrapper(BELL_ICON_NAME);
-export const ClockIcon = centralIconWrapper("clock");
+export const BellIcon: LucideIcon = adaptIcon(IconBell);
+export const ClockIcon = adaptIcon(IconClock);
 export const EllipsisIcon = adaptIcon(IconDots);
 export const ExternalLinkIcon = adaptIcon(IconExternalLink);
 export const EyeIcon = adaptIcon(IconEye);
 // Markdown Source/Preview toggle glyphs, sourced from the Central set so the
 // file-preview header controls share one visual language with the rest of the
 // chrome (raw source = code brackets, rendered preview = open eye).
-export const CodeIcon: LucideIcon = centralIconWrapper("code");
+export const CodeIcon: LucideIcon = adaptIcon(IconCode);
 export const EYE_OPEN_ICON_NAME = "eye-open";
-export const EyeOpenIcon: LucideIcon = centralIconWrapper(EYE_OPEN_ICON_NAME);
+export const EyeOpenIcon: LucideIcon = adaptIcon(IconEye);
 export const PaperclipIcon = adaptIcon(IconPaperclip);
 export const ArchiveIcon = adaptIcon(IconArchive);
 export const BrainIcon = adaptIcon(IconBrain);
@@ -179,43 +236,46 @@ export const FolderOpenIcon = adaptIcon(IconFolderOpen);
 // Stacked "folders" glyph used as the single representation of a file tree /
 // explorer surface (right-dock explorer, editor Files activity, diff file-tree
 // toggle). Central "reversed" outline asset so it matches the rest of the chrome.
-export const FoldersIcon: LucideIcon = centralIconWrapper("folders");
-export const GiftIcon: LucideIcon = centralIconWrapper("gift-2");
-export const GitCommitIcon: LucideIcon = centralIconWrapper("commits");
+export const FoldersIcon: LucideIcon = adaptIcon(IconFolders);
+// Speedometer for per-call token usage: it reads as throughput, which is what
+// the panel behind it is mostly about.
+export const GaugeIcon = adaptIcon(IconGauge);
+export const GiftIcon: LucideIcon = adaptIcon(IconGift);
+export const GitCommitIcon: LucideIcon = adaptIcon(IconGitCommit);
 export const GitBranchIcon: LucideIcon = centralIconWrapper("branch");
 // Forking a thread reuses the branch glyph: the Central "fork" asset reads as a
 // second, unrelated icon next to it, so fork and branch share one visual.
 export const GitForkIcon: LucideIcon = GitBranchIcon;
-export const GitMergeIcon: LucideIcon = centralIconWrapper("merged");
-export const GitMergedSimpleIcon: LucideIcon = centralIconWrapper("merged-simple");
-export const PushIcon: LucideIcon = centralIconWrapper("cloud-simple-upload");
+export const GitMergeIcon: LucideIcon = adaptIcon(IconGitMerge);
+export const GitMergedSimpleIcon: LucideIcon = adaptIcon(IconGitMerge);
+export const PushIcon: LucideIcon = adaptIcon(IconCloudUpload);
 export const GitHubIcon: LucideIcon = (props) => (
   <SiGithub className={props.className} style={props.style} />
 );
-export const GitPullRequestIcon = centralIconWrapper("pull-request");
+export const GitPullRequestIcon = adaptIcon(IconGitPullRequest);
 // Pull-request state glyphs from the same three-node Central family as "pull-request",
 // so draft/closed/merged read as variations of one icon rather than four styles.
-export const GitPullRequestDraftIcon: LucideIcon = centralIconWrapper("draft");
-export const GitPullRequestClosedIcon: LucideIcon = centralIconWrapper("request-closed");
-export const GitMergeConflictIcon: LucideIcon = centralIconWrapper("merge-conflict");
+export const GitPullRequestDraftIcon: LucideIcon = adaptIcon(IconGitPullRequestDraft);
+export const GitPullRequestClosedIcon: LucideIcon = adaptIcon(IconGitPullRequestClosed);
+export const GitMergeConflictIcon: LucideIcon = adaptIcon(IconAlertTriangle);
 // Three descending-width lines — the app's one "filter controls" glyph (pull
 // request list filters, and anywhere else that opens a filter popover).
-export const FilterIcon: LucideIcon = centralIconWrapper("filter-2");
+export const FilterIcon: LucideIcon = adaptIcon(IconFilter);
 // Two-person glyph for "reviewers"/"people" rows (pull request meta grid).
-export const UsersIcon: LucideIcon = centralIconWrapper("user-group");
+export const UsersIcon: LucideIcon = adaptIcon(IconUsers);
 // One globe for the whole app (browser rows, web search, favicon fallback,
 // local servers): the Central glyph, so it matches the other work-row icons.
-export const GlobeIcon: LucideIcon = centralIconWrapper("globe");
+export const GlobeIcon: LucideIcon = adaptIcon(IconWorld);
 export const WebSearchIcon: LucideIcon = GlobeIcon;
 // Handset glyph for the iOS Simulator dock pane.
-export const DeviceMobileIcon: LucideIcon = centralIconWrapper("phone");
+export const DeviceMobileIcon: LucideIcon = adaptIcon(IconDeviceMobile);
 // Hardware-button glyphs for the simulator's control rail.
-export const DeviceHomeIcon: LucideIcon = centralIconWrapper("home");
-export const DeviceShutterIcon: LucideIcon = centralIconWrapper("camera-1");
+export const DeviceHomeIcon: LucideIcon = adaptIcon(IconHome);
+export const DeviceShutterIcon: LucideIcon = adaptIcon(IconCamera);
 // Simulator toolbar: start/stop a screen recording, turn the view, power the
 // device off, and let go of it. The two Tabler glyphs have no Central
 // equivalent that reads as unambiguously as a rotating handset and a power symbol.
-export const DeviceRecordIcon: LucideIcon = centralIconWrapper("record");
+export const DeviceRecordIcon: LucideIcon = adaptIcon(IconPlayerRecord);
 export const DeviceRecordStopIcon: LucideIcon = centralIconWrapper("stop", "fill");
 export const DeviceRotateIcon = adaptIcon(IconDeviceMobileRotated);
 export const DevicePowerIcon = adaptIcon(IconPower);
@@ -223,15 +283,15 @@ export const DeviceDetachIcon = adaptIcon(IconPlugOff);
 export const McpIcon: LucideIcon = (props) => (
   <VscMcp className={props.className} style={props.style} />
 );
-export const PluginIcon: LucideIcon = centralIconWrapper("puzzle");
+export const PluginIcon: LucideIcon = adaptIcon(IconPuzzle);
 // Single hammer/build glyph (tool-call rows, codex provider, "build" scripts).
 // Sourced from the Central set so it matches the other work-row icons (pencil,
 // terminal, skill cube) it sits beside, instead of the Tabler wrench it used to be.
 export const HammerIcon: LucideIcon = centralIconWrapper("hammer");
 export const HistoryIcon = adaptIcon(IconHistory);
 export const InfoIcon = adaptIcon(IconInfoCircle);
-export const KanbanIcon = centralIconWrapper("columns-3-wide");
-export const KeyboardIcon: LucideIcon = centralIconWrapper("keyboard");
+export const KanbanIcon = adaptIcon(IconLayoutKanban);
+export const KeyboardIcon: LucideIcon = adaptIcon(IconKeyboard);
 export const ListChecksIcon = adaptIcon(IconListCheck);
 export const ListTodoIcon = adaptIcon(IconListDetails);
 export const Loader2Icon = adaptIcon(IconLoader2);
@@ -241,38 +301,40 @@ export const Maximize2 = adaptIcon(IconMaximize);
 export const Minimize2 = adaptIcon(IconMinimize);
 export const MessageCircleIcon = adaptIcon(IconMessageCircle);
 export const MinusIcon = adaptIcon(IconMinus);
-export const ChatBubbleIcon: LucideIcon = centralIconWrapper("bubble-text");
+export const ChatBubbleIcon: LucideIcon = adaptIcon(IconMessageCircle);
 // Canonical side-chat glyph — every sidechat surface (right dock pane, environment
 // panel rows, tabs) must use this one so the feature reads consistently.
-export const SidechatIcon: LucideIcon = centralIconWrapper("chat-bubble-7");
-export const MicIcon: LucideIcon = centralIconWrapper("microphone");
-export const PanelLeftIcon = centralIconWrapper("sidebar-simple-left-wide");
-export const PanelRightCloseIcon = centralIconWrapper("sidebar-simple-right-wide");
-export const WindowIcon: LucideIcon = centralIconWrapper("window");
-export const LayoutSidebarIcon: LucideIcon = centralIconWrapper("layout-sidebar");
+export const SidechatIcon: LucideIcon = adaptIcon(IconMessage2);
+export const MicIcon: LucideIcon = adaptIcon(IconMicrophone);
+// The Central set ships no sidebar glyphs in this repo, so the panel toggles
+// bind to the Tabler sidebar icons instead of masking a missing asset.
+export const PanelLeftIcon = adaptIcon(IconLayoutSidebarLeftCollapse);
+export const PanelRightCloseIcon = adaptIcon(IconLayoutSidebarRightCollapse);
+export const WindowIcon: LucideIcon = adaptIcon(IconAppWindow);
+export const LayoutSidebarIcon: LucideIcon = adaptIcon(IconLayoutSidebar);
 export const PENCIL_ICON_NAME = "pencil";
-export const PencilIcon: LucideIcon = centralIconWrapper(PENCIL_ICON_NAME);
+export const PencilIcon: LucideIcon = adaptIcon(IconPencil);
 export const PIN_ICON_NAME = "pin";
-export const PinIcon: LucideIcon = centralIconWrapper(PIN_ICON_NAME);
+export const PinIcon: LucideIcon = adaptIcon(IconPin);
 // Solid pin from the fill set — used wherever a pin reflects "pinned" status
 // (project + thread rows and their hover cards) rather than a neutral action.
-export const PinFilledIcon: LucideIcon = centralIconWrapper("pin", "fill");
-export const PauseIcon: LucideIcon = centralIconWrapper("pause", "fill");
-export const PlayIcon: LucideIcon = centralIconWrapper("play", "fill");
+export const PinFilledIcon: LucideIcon = adaptIcon(IconPinFilled);
+export const PauseIcon: LucideIcon = adaptIcon(IconPlayerPauseFilled);
+export const PlayIcon: LucideIcon = adaptIcon(IconPlayerPlayFilled);
 // Outline transport glyphs (Central "reversed" set) for surfaces that read as a
 // row of neutral actions rather than playback state — e.g. the composer goal strip.
-export const PauseOutlineIcon: LucideIcon = centralIconWrapper("pause");
-export const PlayOutlineIcon: LucideIcon = centralIconWrapper("play");
+export const PauseOutlineIcon: LucideIcon = adaptIcon(IconPlayerPause);
+export const PlayOutlineIcon: LucideIcon = adaptIcon(IconPlayerPlay);
 /** Outline trash can from the Central set (Trash2 is the legacy Tabler glyph). */
 export const TrashCanIcon: LucideIcon = centralIconWrapper("trash-can");
 // Persistent thread goal ("Pursuing goal" strip, /goal surfaces).
-export const GoalIcon: LucideIcon = centralIconWrapper("target-arrow");
+export const GoalIcon: LucideIcon = adaptIcon(IconTargetArrow);
 export const Plus = adaptIcon(IconPlus);
 export const PlusIcon = adaptIcon(IconPlus);
 export const RefreshCwIcon = adaptIcon(IconRefresh);
 export const RotateCcwIcon = adaptIcon(IconRotate2);
 export const Rows3Icon = adaptIcon(IconLayoutDistributeHorizontal);
-export const SearchIcon: LucideIcon = centralIconWrapper("magnifying-glass");
+export const SearchIcon: LucideIcon = adaptIcon(IconSearch);
 // Single source for the settings gear. Every settings affordance renders this
 // one Central glyph so gears stay identical across the chrome.
 export const SettingsIcon: LucideIcon = centralIconWrapper("settings-gear-4");
@@ -289,7 +351,7 @@ export const SquareSplitHorizontal: LucideIcon = (props) => (
 export const SquareSplitVertical: LucideIcon = (props) => (
   <PiSquareSplitVertical className={props.className} style={props.style} />
 );
-const TemporaryThreadGlyph = centralIconWrapper("bubble-annotation-5");
+const TemporaryThreadGlyph = adaptIcon(IconMessageDots);
 // Dotted "annotation" chat bubble — the temporary thread marker shown on the
 // composer toggle and beside temporary threads in the sidebar.
 export const TemporaryThreadIcon: LucideIcon = ({ className, ...props }) => (
@@ -306,14 +368,14 @@ export const Undo2Icon = adaptIcon(IconArrowBackUp);
 // Single source for every "reset / restore default / revert" affordance (settings
 // row resets, Restore defaults, effort-slider reset, space reset, file revert):
 // the Central reversed counter-clockwise arrow, never a Tabler/Lucide rotate glyph.
-export const ResetIcon: LucideIcon = centralIconWrapper("arrow-rotate-counter-clockwise");
+export const ResetIcon: LucideIcon = adaptIcon(IconRestore);
 export const Redo2Icon = adaptIcon(IconArrowForwardUp);
-export const WorktreeIcon = centralIconWrapper("arrow-split-right");
+export const WorktreeIcon = adaptIcon(IconArrowFork);
 export const XIcon = adaptIcon(IconX);
 export const ZapIcon = adaptIcon(IconBolt);
 // Single source for the fast-mode glyph. Every fast-mode affordance (composer
 // trait badges, the effort-header toggle, the /fast command) renders this one solid
 // lightning bolt from the Central fill set instead of mixing Tabler/Ionicons bolts.
-export const FastModeIcon: LucideIcon = centralIconWrapper("zap", "fill");
+export const FastModeIcon: LucideIcon = adaptIcon(IconBoltFilled);
 // Outline twin of FastModeIcon (Central reversed set) for the inactive toggle state.
-export const FastModeOutlineIcon: LucideIcon = centralIconWrapper("zap");
+export const FastModeOutlineIcon: LucideIcon = adaptIcon(IconBolt);

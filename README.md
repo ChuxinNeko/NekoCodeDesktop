@@ -168,9 +168,19 @@ Review 面板调用系统 `git`（与 Codex 的做法一致，不自带 git 二�
 
 GitHub Enterprise 不支持；`url.<base>.insteadof` 镜像重写会被正确绕过（见上）。
 
+## 浏览器预览与元素讨论
+
+会话中成功写入或编辑独立 `.html` / `.htm` 文件后，右侧浏览器会自动打开预览；继续编辑同一页面会刷新原标签。预览通过仅监听本机的 HTTP 服务加载，支持项目内的相对样式、脚本和图片。Vue / Next.js / Vite 等项目需实际启动开发服务：运行时从启动命令或紧接着读取的 `.log` 日志识别本地 URL，确认服务可访问后打开，不会自行猜端口或启动项目。Fusion 辅助模型的编辑和启动输出同样有效。
+
+点击浏览器地址栏右侧“选择元素并讨论”，再点击页面元素，将元素名称、定位选择器和页面地址追加到消息输入框。已有草稿保留，消息由用户发送；按 Esc、切换标签或离开浏览器可取消选择。
+
 ## 模型配置
 
-pi 内置 provider 通过各自的凭据工作（`~/.pi/agent/auth.json` 或 provider 环境变量）。
+输入框的模型菜单提供 **Fusion**。点击后在右侧配置 Lead 模型、Lead 思考等级、Sidekick 模型和 Sidekick 思考等级，再点击“使用 Fusion”。候选项来自当前可用模型，思考等级随模型能力变化。配置保存在会话中，也作为新会话的默认选择；选择普通模型即可退出 Fusion。
+
+Fusion 中，Lead 负责规划、设计、调查和最终审查，Sidekick 承接实施与验证。建议选择能力强的 Lead 和成本较低的 Sidekick。简单任务由 Lead 直接处理，委派仅传递必要上下文；辅助任务顺序运行，避免重复调查和相互覆盖。Sidekick 需要运行构建或测试时，由 Lead 声明整个工作区作为任务范围以取得独占命令执行权限；只读和规划模式继续遵守原有权限。命令执行不是操作系统级沙箱。
+
+pi 内置 provider 通过各自的凭据工作（`~/.nekocode/agent/auth.json` 或 provider 环境变量）。
 
 自定义端点：Settings → Models → Add model，填写 API Base URL、协议（OpenAI Chat Completions /
 OpenAI Responses / Anthropic Messages）、API Key 与模型 id。API Key 只在保存/拉取时以单次 IPC
@@ -253,3 +263,16 @@ bun run build       # 构建
 
 本项目的许可证尚未确定。`pi/`（pi agent 内核）与界面基元分别遵循其上游 MIT 许可证，
 原文与改动说明见 [licenses/](./licenses/)。
+
+
+## PI 原生工作模式
+
+输入框新增独立的工作模式选择：**Agent / Ask / Plan / Debug / Multitask**。原来的“只读 / 自动 / 完全访问”仍是执行权限，不与工作模式混用。
+
+- Ask、Plan 由后端限制为只读，不靠提示词自律。
+- 模式切换与需要澄清的问题通过真实确认卡片处理。
+- Multitask 支持最多四个后台 PI worker、状态展示、取消、结果回传；写入 worker 有独立的路径范围，无 shell 或递归委派。
+- Debug 使用每会话 NDJSON 日志及真实复现问答，不依赖不存在的 HTTP 服务或 XML 按钮。
+- /commit-message 仅为暂存区生成建议提交信息；/compact 与自动压缩均应用本项目的摘要约束。
+
+提示词及完整约定见 [工作模式提示词说明](pi/packages/prompt/README.md)。运行 bun run test:workflow 可执行使用回环模拟模型的集成测试。

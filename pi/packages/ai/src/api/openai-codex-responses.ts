@@ -31,7 +31,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { getPiUserAgent, USER_AGENT_APP } from "../utils/pi-user-agent.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -1603,7 +1603,16 @@ function buildBaseCodexHeaders(
 	accountId: string,
 	token: string,
 ): Headers {
-	const headers = new Headers(initHeaders);
+	const headers = new Headers();
+	headers.set("originator", USER_AGENT_APP);
+	headers.set("User-Agent", getPiUserAgent());
+	// Configured headers go over pi's defaults, not under them. The client
+	// identity this endpoint sees (User-Agent, originator) is part of how the
+	// account is treated upstream, so a host embedding pi has to be able to pin
+	// it; that only works if provider/request headers win.
+	for (const [key, value] of Object.entries(initHeaders || {})) {
+		headers.set(key, value);
+	}
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
 		if (value === null) {
 			headers.delete(key);
@@ -1611,10 +1620,9 @@ function buildBaseCodexHeaders(
 			headers.set(key, value);
 		}
 	}
+	// Credential-derived, so they stay last: these are never a caller's to set.
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
-	headers.set("originator", "pi");
-	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
 

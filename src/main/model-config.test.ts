@@ -25,6 +25,20 @@ describe("validateProfileFile", () => {
 		).toHaveLength(1);
 	});
 
+	test("a profile written before provider types existed is a custom API one", () => {
+		expect(toSummary(validProfile).kind).toBe("custom-api");
+		expect(toSummary({ ...validProfile, kind: "oauth" }).kind).toBe("oauth");
+	});
+
+	test("rejects an unknown provider kind", () => {
+		expect(() =>
+			validateProfileFile({
+				version: 1,
+				profiles: [{ ...validProfile, kind: "saml" }],
+			}),
+		).toThrow("unexpected shape");
+	});
+
 	test("accepts the reasoning flag and profiles written before it existed", () => {
 		expect(
 			validateProfileFile({
@@ -74,6 +88,16 @@ describe("validateProfileFile", () => {
 		).toThrow("unexpected shape");
 	});
 
+	test("accepts a provider saved before its models were picked", () => {
+		// The providers tab stores an endpoint as soon as it has a key; the models
+		// tab then pulls the list from it, so an empty list must round-trip.
+		const [profile] = validateProfileFile({
+			version: 1,
+			profiles: [{ ...validProfile, modelIds: [] }],
+		});
+		expect(profile?.modelIds).toEqual([]);
+	});
+
 	test("rejects load-limit violations", () => {
 		const tooMany = {
 			version: 1,
@@ -83,13 +107,6 @@ describe("validateProfileFile", () => {
 			})),
 		};
 		expect(() => validateProfileFile(tooMany)).toThrow("unexpected shape");
-
-		expect(() =>
-			validateProfileFile({
-				version: 1,
-				profiles: [{ ...validProfile, modelIds: [] }],
-			}),
-		).toThrow("unexpected shape");
 
 		expect(() =>
 			validateProfileFile({

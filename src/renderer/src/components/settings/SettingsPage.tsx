@@ -5,13 +5,15 @@ import { Button } from "../ui/button";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { GitHubSettings } from "./GitHubSettings";
-import { ModelSettings } from "./ModelSettings";
+import { ProviderModelSettings } from "./ProviderModelSettings";
+import { PluginSettings } from "./PluginSettings";
 import { ArrowLeftIcon } from "../../lib/icons";
 
 const SECTIONS = [
 	{ id: "general", labelKey: "settings.section.general" },
 	{ id: "appearance", labelKey: "settings.section.appearance" },
-	{ id: "models", labelKey: "settings.section.models" },
+	{ id: "providers", labelKey: "settings.section.providers" },
+	{ id: "plugins", labelKey: "settings.section.plugins" },
 	{ id: "github", labelKey: "settings.section.github" },
 	{ id: "about", labelKey: "settings.section.about" },
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey }>;
@@ -57,7 +59,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 					</h2>
 					{section === "general" ? <GeneralSettings /> : null}
 					{section === "appearance" ? <AppearanceSettings /> : null}
-					{section === "models" ? <ModelSettings /> : null}
+					{section === "providers" ? <ProviderModelSettings /> : null}
+					{section === "plugins" ? <PluginSettings /> : null}
 					{section === "github" ? <GitHubSettings /> : null}
 					{section === "about" ? (
 						<div className="flex flex-col gap-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">

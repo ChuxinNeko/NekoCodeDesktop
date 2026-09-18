@@ -3,6 +3,9 @@ import type { SessionSummary } from "./agent";
 import {
 	UNTITLED_SESSION,
 	groupSessions,
+	groupSessionsByWorkspace,
+	workspaceKey,
+	mergeActiveSession,
 	normalizeLine,
 	relativeSessionTime,
 	sessionBucket,
@@ -13,11 +16,42 @@ import {
 const NOW = new Date("2026-09-16T14:30:00").getTime();
 const DAY = 86_400_000;
 
+describe("workspace session grouping", () => {
+	test("uses full paths, keeps same-name folders separate and sorts threads by recency", () => {
+		const groups = groupSessionsByWorkspace([
+			session({ id: "old", cwd: "D:\\one\\app", updatedAt: NOW - DAY }),
+			session({ id: "other", cwd: "D:\\two\\app" }),
+			session({ id: "new", cwd: "d:/one/app/" }),
+		], { currentCwd: "D:\\one\\app" });
+		expect(groups).toHaveLength(2);
+		expect(groups[0]!.sessions.map((entry) => entry.id)).toEqual(["new", "old"]);
+		expect(groups[1]!.sessions.map((entry) => entry.id)).toEqual(["other"]);
+		expect(groups.map((group) => group.label)).toEqual(["app", "app"]);
+	});
+	test("includes remembered empty workspaces and the current folder", () => {
+		const groups = groupSessionsByWorkspace([], { currentCwd: "/current", workspaces: ["/empty", "/empty/"] });
+		expect(groups.map((group) => group.cwd)).toEqual(["/current", "/empty"]);
+	});
+	test("searches every workspace by title, preview or full path without mutating input", () => {
+		const input = [session({ id: "first", cwd: "/one", title: "Fix login" }), session({ id: "second", cwd: "/two", preview: "LOGIN regression" })];
+		expect(groupSessionsByWorkspace(input, { query: "login" })).toHaveLength(2);
+		expect(groupSessionsByWorkspace(input, { query: "/two" })[0]!.sessions[0]!.id).toBe("second");
+		expect(groupSessionsByWorkspace(input, { query: "absent" })).toEqual([]);
+		expect(input.map((entry) => entry.id)).toEqual(["first", "second"]);
+	});
+	test("POSIX case stays distinct and Windows separators/case are normalized", () => {
+		expect(workspaceKey("C:\\Work\\App\\")).toBe(workspaceKey("c:/work/app"));
+		expect(workspaceKey("/Work/App")).not.toBe(workspaceKey("/work/app"));
+		expect(workspaceKey("/")).toBe("/");
+	});
+});
+
 function session(patch: Partial<SessionSummary> & { id: string }): SessionSummary {
 	return {
 		sessionFile: `/sessions/${patch.id}.jsonl`,
 		cwd: "/repo",
 		title: patch.id,
+		titlePending: false,
 		preview: "",
 		createdAt: NOW,
 		updatedAt: NOW,
@@ -46,6 +80,28 @@ describe("sessionTitle", () => {
 	test("falls back to the opening prompt, then to a placeholder", () => {
 		expect(sessionTitle(null, "  why is the build red ")).toBe("why is the build red");
 		expect(sessionTitle("   ", "")).toBe(UNTITLED_SESSION);
+	});
+});
+
+describe("mergeActiveSession", () => {
+	const listed = [session({ id: "a" }), session({ id: "b" })];
+
+	test("adds the open session while its transcript is still unwritten", () => {
+		const active = session({ id: "live", messageCount: 1, titlePending: true });
+		const merged = mergeActiveSession(listed, active);
+		expect(merged.map((s) => s.id)).toEqual(["live", "a", "b"]);
+	});
+
+	test("prefers the live copy of a session already on disk", () => {
+		const active = session({ id: "a", title: "Named by the model", messageCount: 4 });
+		const merged = mergeActiveSession(listed, active);
+		expect(merged).toHaveLength(2);
+		expect(merged[0]?.title).toBe("Named by the model");
+	});
+
+	test("leaves the list alone with no session, or one nothing has been sent to", () => {
+		expect(mergeActiveSession(listed, null)).toEqual(listed);
+		expect(mergeActiveSession(listed, session({ id: "empty", messageCount: 0 }))).toEqual(listed);
 	});
 });
 

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "mode": "ask",
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "stat",
+    "question",
+    "switch_mode"
+  ]
+}

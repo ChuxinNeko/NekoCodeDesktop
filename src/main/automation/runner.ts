@@ -1,9 +1,10 @@
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Automation } from "../../shared/automation";
 import { pi } from "../pi";
+import { createPromptResources } from "../workflow-runtime";
+import { createStatTool } from "../file-tools";
+import { COMPACTION_INSTRUCTIONS, toolsForMode, type PromptContext } from "../prompt-library";
 
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
-const FULL_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const SUMMARY_LIMIT = 2_000;
 const RUN_TIMEOUT_MS = 30 * 60_000;
 
@@ -42,11 +43,27 @@ export class AutomationRunner {
 		const { createAgentSession, SessionManager } = await pi();
 		const modelRuntime = await this.options.getModelRuntime();
 		const sessionManager = SessionManager.create(automation.cwd, this.options.sessionsDir);
+		let currentSession: AgentSession | undefined;
+		const context = (): PromptContext => ({
+			mode: "agent",
+			permission: automation.mode,
+			headless: true,
+			modelId: currentSession?.model
+				? currentSession.model.provider + "/" + currentSession.model.id
+				: (automation.modelKey ?? undefined),
+		});
+		const resourceLoader = await createPromptResources(automation.cwd, context);
 		const { session } = await createAgentSession({
+			resourceLoader,
+			tools: toolsForMode(context()),
+			customTools: [createStatTool(automation.cwd)],
+			compactionInstructions: COMPACTION_INSTRUCTIONS,
 			cwd: automation.cwd,
 			sessionManager,
 			modelRuntime,
 		});
+
+		currentSession = session;
 
 		// PI's session owns cancellation; a local AbortController would stop nothing.
 		// Both the caller's signal and the wall-clock ceiling funnel into session.abort().
@@ -72,9 +89,7 @@ export class AutomationRunner {
 		try {
 			await this.applyModel(session, modelRuntime, automation);
 			session.setSessionName(automation.name.slice(0, 80));
-			session.setActiveToolsByName(
-				automation.mode === "read-only" ? READ_ONLY_TOOLS : FULL_TOOLS,
-			);
+			session.setActiveToolsByName(toolsForMode(context()));
 			if (!aborted) await session.prompt(automation.prompt);
 		} catch (error) {
 			// An abort surfaces as a rejected prompt; that is a normal stop, not a failure.

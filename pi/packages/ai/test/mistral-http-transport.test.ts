@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, FetchFunction, ProviderResponse } from "../src/types.ts";
+import { USER_AGENT_APP } from "../src/utils/pi-user-agent.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+// Follows the product token rather than restating it: the fork rebrands it.
+const PI_USER_AGENT = `${USER_AGENT_APP} (${platform()} ${release()}; ${arch()})`;
 
 function createSseResponse(events: unknown[], headers?: Record<string, string>): Response {
 	const body = `${events.map((event) => `data: ${JSON.stringify(event)}`).join("\r\n\r\n")}\r\n\r\ndata: [DONE]\r\n\r\n`;

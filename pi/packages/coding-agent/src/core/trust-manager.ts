@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { getProjectConfigDir } from "../config.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 
@@ -187,7 +187,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
 
-	const configDir = join(currentDir, CONFIG_DIR_NAME);
+	const configDir = getProjectConfigDir(currentDir);
 	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
 		return true;
 	}

@@ -4,7 +4,7 @@
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
-		"configDir": ".pi"
+		"configDir": ".nekocode"
 	},
 	"bin": {
 		"pi": "dist/bundle/cli.js"

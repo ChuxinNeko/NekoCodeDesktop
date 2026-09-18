@@ -89,8 +89,10 @@ import { stream as streamGoogleGenerativeAi } from "../src/api/google-generative
 import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
+import { USER_AGENT_APP } from "../src/utils/pi-user-agent.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+// Follows the product token rather than restating it: the fork rebrands it.
+const PI_USER_AGENT = `${USER_AGENT_APP} (${platform()} ${release()}; ${arch()})`;
 
 const context: Context = {
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],

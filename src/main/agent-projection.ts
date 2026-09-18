@@ -1,4 +1,4 @@
-import type { AgentCell } from "../shared/agent";
+import type { AgentCell, TurnUsage } from "../shared/agent";
 
 // Structural shapes mirroring pi-ai/pi-agent-core messages and events so the
 // projection stays pure and testable without importing the agent runtime.
@@ -20,6 +20,17 @@ export interface ToolCallBlock {
 	arguments: Record<string, unknown>;
 }
 
+/** The `usage` block pi-ai puts on every assistant message. */
+export interface ProjectableUsage {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	reasoning?: number;
+	totalTokens?: number;
+	cost?: { total?: number };
+}
+
 export interface ProjectableMessage {
 	role: string;
 	content?: unknown;
@@ -35,6 +46,10 @@ export interface ProjectableMessage {
 	display?: boolean;
 	summary?: string;
 	customType?: string;
+	usage?: ProjectableUsage;
+	provider?: string;
+	model?: string;
+	responseModel?: string;
 }
 
 export type ProjectionEvent =
@@ -128,7 +143,7 @@ function toolCallArgs(block: { arguments?: unknown }): Record<string, unknown> {
 		: {};
 }
 
-function textOf(content: unknown): string {
+export function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
@@ -137,12 +152,26 @@ function textOf(content: unknown): string {
 		.join("");
 }
 
-function thinkingOf(content: unknown): string {
+export function thinkingOf(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
 		.filter(isThinkingBlock)
 		.map((b) => b.thinking)
 		.join("");
+}
+
+/**
+ * Has this message stopped reasoning and started producing?
+ *
+ * Which is what ends a thinking block: the first text or tool call is the
+ * moment the model left off thinking, and it lands well before the message
+ * itself does.
+ */
+export function hasNonThinkingContent(content: unknown): boolean {
+	return (
+		textOf(content).length > 0 ||
+		(Array.isArray(content) && content.some(isToolCallBlock))
+	);
 }
 
 /** Extract displayable text from a tool result/partialResult payload. */
@@ -166,6 +195,149 @@ type ToolCell = Extract<AgentCell, { type: "tool" }>;
 /** Thinking-block timing observed while the message streamed, by message ts. */
 export type ThinkingTiming = Map<number, { startedAt: number; endedAt?: number }>;
 
+/** Start/end of the whole model call, observed live, by message ts. */
+export type CallTiming = Map<number, { startedAt: number; endedAt?: number }>;
+
+function num(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function assistantError(message: ProjectableMessage): string | undefined {
+	return message.stopReason === "error" || message.stopReason === "aborted"
+		? (message.errorMessage ?? message.stopReason)
+		: undefined;
+}
+
+/** Does this assistant message render a cell at all? Tool-call-only ones do not. */
+function showsAssistantCell(message: ProjectableMessage): boolean {
+	return Boolean(
+		textOf(message.content) || thinkingOf(message.content) || assistantError(message),
+	);
+}
+
+/**
+ * Sum every model call in one turn.
+ *
+ * Returns undefined when no call in the turn reported tokens — an aborted run,
+ * or a provider that does not account for usage. A panel of zeroes there would
+ * read as "this turn was free" rather than "nothing was reported".
+ */
+export function aggregateTurnUsage(
+	messages: readonly ProjectableMessage[],
+	callTiming?: CallTiming,
+): TurnUsage | undefined {
+	let calls = 0;
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+	let cacheWrite = 0;
+	let totalTokens = 0;
+	let cost = 0;
+	let reasoning: number | undefined;
+	let provider = "";
+	let model = "";
+	let responseModel: string | undefined;
+	let modelMs = 0;
+	let startedAt: number | undefined;
+	let endedAt: number | undefined;
+
+	for (const message of messages) {
+		const timing = callTiming?.get(ts(message));
+		if (timing?.endedAt !== undefined) {
+			modelMs += Math.max(0, timing.endedAt - timing.startedAt);
+			startedAt = startedAt === undefined ? timing.startedAt : Math.min(startedAt, timing.startedAt);
+			endedAt = endedAt === undefined ? timing.endedAt : Math.max(endedAt, timing.endedAt);
+		}
+		const usage = message.usage;
+		if (!usage) continue;
+		const messageInput = num(usage.input);
+		const messageOutput = num(usage.output);
+		const messageCacheRead = num(usage.cacheRead);
+		const messageCacheWrite = num(usage.cacheWrite);
+		const messageTotal =
+			num(usage.totalTokens) ||
+			messageInput + messageOutput + messageCacheRead + messageCacheWrite;
+		if (messageTotal === 0) continue;
+		calls++;
+		input += messageInput;
+		output += messageOutput;
+		cacheRead += messageCacheRead;
+		cacheWrite += messageCacheWrite;
+		totalTokens += messageTotal;
+		cost += num(usage.cost?.total);
+		if (typeof usage.reasoning === "number") reasoning = (reasoning ?? 0) + usage.reasoning;
+		// The last call in the turn names the model: mid-turn switches are rare,
+		// and the one the answer came from is the useful one to report.
+		provider = message.provider ?? provider;
+		model = message.model ?? model;
+		responseModel =
+			message.responseModel && message.responseModel !== message.model
+				? message.responseModel
+				: responseModel;
+	}
+	if (calls === 0) return undefined;
+
+	return {
+		provider,
+		model,
+		...(responseModel ? { responseModel } : {}),
+		calls,
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		...(reasoning !== undefined ? { reasoning } : {}),
+		totalTokens,
+		...(cost > 0 ? { costUsd: cost } : {}),
+		...(startedAt !== undefined && endedAt !== undefined
+			? { durationMs: endedAt - startedAt, modelMs }
+			: {}),
+	};
+}
+
+/**
+ * Where each turn's usage goes: the index of the last assistant message that
+ * renders a cell in it.
+ *
+ * The turn still running is skipped — its totals are not final, and attaching a
+ * partial sum to an intermediate message would move the panel down the
+ * transcript as the turn went on.
+ */
+function turnUsageByMessage(
+	messages: readonly ProjectableMessage[],
+	callTiming: CallTiming | undefined,
+	running: boolean,
+): Map<number, TurnUsage> {
+	const turns: { assistants: number[]; lastShown: number | null }[] = [];
+	let turn: { assistants: number[]; lastShown: number | null } | null = null;
+	messages.forEach((message, index) => {
+		if (message.role === "user") {
+			turn = { assistants: [], lastShown: null };
+			turns.push(turn);
+			return;
+		}
+		if (message.role !== "assistant") return;
+		if (!turn) {
+			turn = { assistants: [], lastShown: null };
+			turns.push(turn);
+		}
+		turn.assistants.push(index);
+		if (showsAssistantCell(message)) turn.lastShown = index;
+	});
+
+	const byMessage = new Map<number, TurnUsage>();
+	turns.forEach((entry, index) => {
+		if (running && index === turns.length - 1) return;
+		if (entry.lastShown === null) return;
+		const usage = aggregateTurnUsage(
+			entry.assistants.map((i) => messages[i]),
+			callTiming,
+		);
+		if (usage) byMessage.set(entry.lastShown, usage);
+	});
+	return byMessage;
+}
+
 /**
  * Rebuild cells for all persisted messages in a session. IDs are stable:
  * derived from message timestamp + array index, or toolCallId for tool cells,
@@ -173,12 +345,19 @@ export type ThinkingTiming = Map<number, { startedAt: number; endedAt?: number }
  *
  * `thinkingTiming` carries the live-observed think start/end onto the persisted
  * cell — history alone has no per-block timestamps, so sessions reopened from
- * disk simply show "Thought" without a duration.
+ * disk simply show "Thought" without a duration. `callTiming` does the same for
+ * the model calls, which is what the usage panel reports durations from.
+ *
+ * `running` says a turn is still in flight, so its usage is left off until the
+ * agent has stopped and the totals mean something.
  */
 export function projectMessages(
 	messages: readonly ProjectableMessage[],
 	thinkingTiming?: ThinkingTiming,
+	callTiming?: CallTiming,
+	running = false,
 ): AgentCell[] {
+	const usageByMessage = turnUsageByMessage(messages, callTiming, running);
 	const cells: AgentCell[] = [];
 	const toolByCallId = new Map<string, ToolCell>();
 	let noticeSeq = 0;
@@ -200,10 +379,7 @@ export function projectMessages(
 			case "assistant": {
 				const text = textOf(message.content);
 				const thinking = thinkingOf(message.content);
-				const error =
-					message.stopReason === "error" || message.stopReason === "aborted"
-						? (message.errorMessage ?? message.stopReason)
-						: undefined;
+				const error = assistantError(message);
 				if (text || thinking || error) {
 					const timing = thinking ? thinkingTiming?.get(t) : undefined;
 					cells.push({
@@ -216,6 +392,7 @@ export function projectMessages(
 						timestamp: t || Date.now(),
 						thinkingStartedAt: timing?.startedAt,
 						thinkingEndedAt: timing?.endedAt,
+						usage: usageByMessage.get(index),
 					});
 				}
 				// Tool calls inside the assistant content become pending tool cells
@@ -238,6 +415,8 @@ export function projectMessages(
 							args: toolCallArgs(block),
 							output: "",
 							status: "pending",
+							// The message that asked for the call is where the work began.
+							startedAt: t || Date.now(),
 							timestamp: t || Date.now(),
 						};
 						toolByCallId.set(block.id, cell);
@@ -331,9 +510,12 @@ export class CellProjector {
 	private overlay: AgentCell[] = [];
 	private noticeSeq = 0;
 	private thinkingTiming: ThinkingTiming = new Map();
+	private callTiming: CallTiming = new Map();
 
-	rebuild(messages: readonly ProjectableMessage[]): void {
-		this.persisted = projectMessages(messages, this.thinkingTiming);
+	/** `running` is the session's own streaming flag: it spans a whole turn,
+	 *  tool calls included, which is exactly the span usage is summed over. */
+	rebuild(messages: readonly ProjectableMessage[], running = false): void {
+		this.persisted = projectMessages(messages, this.thinkingTiming, this.callTiming, running);
 		const persistedTools = new Map<string, ToolCell>();
 		for (const c of this.persisted) {
 			if (c.type === "tool") persistedTools.set(c.toolCallId, c);
@@ -355,16 +537,23 @@ export class CellProjector {
 			case "message_start":
 			case "message_update": {
 				if (event.message.role === "assistant") {
+					// Wall-clock for the call starts at the first sign of the message
+					// and is what the usage panel divides output tokens by.
+					const t = ts(event.message);
+					if (!this.callTiming.has(t)) this.callTiming.set(t, { startedAt: Date.now() });
 					this.upsertStreamCell(event.message);
 				}
 				break;
 			}
 			case "message_end": {
 				if (event.message.role === "assistant") {
-					const timing = this.thinkingTiming.get(ts(event.message));
+					const t = ts(event.message);
+					const timing = this.thinkingTiming.get(t);
 					if (timing && timing.endedAt === undefined) {
 						timing.endedAt = Date.now();
 					}
+					const call = this.callTiming.get(t);
+					if (call) call.endedAt ??= Date.now();
 					this.dropStreamCell(event.message);
 				}
 				break;
@@ -384,6 +573,7 @@ export class CellProjector {
 						args: event.args,
 						output: "",
 						status: "running",
+						startedAt: Date.now(),
 						timestamp: Date.now(),
 					});
 				}
@@ -410,6 +600,11 @@ export class CellProjector {
 				const now = Date.now();
 				for (const timing of this.thinkingTiming.values()) {
 					timing.endedAt ??= now;
+				}
+				// An aborted call never sees message_end; close it here so its row
+				// reports the time it actually ran rather than nothing at all.
+				for (const call of this.callTiming.values()) {
+					call.endedAt ??= now;
 				}
 				this.overlay = this.overlay.filter(
 					(c) => !(c.type === "assistant" && c.streaming),
@@ -491,6 +686,7 @@ export class CellProjector {
 		this.persisted = [];
 		this.overlay = [];
 		this.thinkingTiming.clear();
+		this.callTiming.clear();
 	}
 
 	private upsertStreamCell(message: ProjectableMessage): void {
@@ -510,11 +706,7 @@ export class CellProjector {
 			timing = { startedAt: Date.now() };
 			this.thinkingTiming.set(t, timing);
 		}
-		const nonThinkingContent =
-			text.length > 0 ||
-			(Array.isArray(message.content) &&
-				message.content.some(isToolCallBlock));
-		if (timing && timing.endedAt === undefined && nonThinkingContent) {
+		if (timing && timing.endedAt === undefined && hasNonThinkingContent(message.content)) {
 			timing.endedAt = Date.now();
 		}
 

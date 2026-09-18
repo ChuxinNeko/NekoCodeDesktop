@@ -14,6 +14,17 @@ function loadNodeOs(): typeof NodeOs | null {
 // Keep runtime OS loading browser-safe. A top-level runtime import of node:os breaks browser/Vite builds.
 const nodeOs = loadNodeOs();
 
+/**
+ * The product token this fork sends on requests it makes as itself.
+ *
+ * Providers that expect a specific client — Codex, Claude Code, Copilot — set
+ * their own identity instead of this one, and must keep doing so: those are
+ * wire formats, not branding.
+ */
+export const USER_AGENT_APP = "nekocode";
+
 export function getPiUserAgent(): string {
-	return nodeOs ? `pi (${nodeOs.platform()} ${nodeOs.release()}; ${nodeOs.arch()})` : "pi (browser)";
+	return nodeOs
+		? `${USER_AGENT_APP} (${nodeOs.platform()} ${nodeOs.release()}; ${nodeOs.arch()})`
+		: `${USER_AGENT_APP} (browser)`;
 }

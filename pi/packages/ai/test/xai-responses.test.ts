@@ -7,8 +7,10 @@ import { getSupportedThinkingLevels } from "../src/models.ts";
 import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
 import type { Context, Model } from "../src/types.ts";
+import { USER_AGENT_APP } from "../src/utils/pi-user-agent.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+// Follows the product token rather than restating it: the fork rebrands it.
+const PI_USER_AGENT = `${USER_AGENT_APP} (${platform()} ${release()}; ${arch()})`;
 
 type CapturedRequest = {
 	url: string;

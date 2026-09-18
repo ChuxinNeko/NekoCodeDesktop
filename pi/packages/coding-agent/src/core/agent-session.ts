@@ -206,6 +206,8 @@ export interface AgentSessionConfig {
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	/** Resource loader for extensions, skills, prompts, themes, context files, and system prompt */
 	resourceLoader: ResourceLoader;
+	/** Additional instructions for the default manual and automatic compaction generator. */
+	compactionInstructions?: string;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
 	/** Canonical model/auth runtime used by coding-agent internals. */
@@ -348,6 +350,7 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
+	private readonly _compactionInstructions?: string;
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
@@ -384,6 +387,7 @@ export class AgentSession {
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
+		this._compactionInstructions = config.compactionInstructions;
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
 		this._extensionRunnerRef = config.extensionRunnerRef;
@@ -1933,7 +1937,7 @@ export class AgentSession {
 			requestModel,
 			apiKey,
 			headers,
-			customInstructions,
+			[this._compactionInstructions, customInstructions].filter(Boolean).join("\n\n") || undefined,
 			signal,
 			this.thinkingLevel,
 			this.agent.streamFunction,

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mode": "subagent",
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "stat"
+  ]
+}

@@ -112,6 +112,11 @@
   .app-titlebar {
     -webkit-app-region: drag;
     app-region: drag;
+    /* WinUI 3-style: the caption strip shares the sidebar's surface token so
+       the title bar and the navigation column read as one continuous material. */
+    background: var(--app-sidebar-surface, var(--card));
+    -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter, none);
+    backdrop-filter: var(--app-sidebar-backdrop-filter, none);
     padding-left: 0.75rem;
     padding-right: calc(
       100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
@@ -144,6 +149,22 @@
      without duplicating sidebar markup or class strings. */
   .app-sidebar-surface {
     background: var(--app-sidebar-surface, var(--card));
+    -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter, none);
+    backdrop-filter: var(--app-sidebar-backdrop-filter, none);
+  }
+
+  /* Flat chrome tint without the blur pass: used for the content ROW behind the
+     rounded content/dock cards so the corner cutouts reveal the same material as
+     the title bar. Kept filter-free on purpose — a backdrop-filter here would
+     create a containing block and misplace fixed-position overlays inside the row. */
+  .app-chrome-surface {
+    background: var(--app-sidebar-surface, var(--card));
+  }
+
+  /* Blur pass only: the sidebar sits on top of the row's chrome tint, so it must
+     not apply the tint a second time — blur alone lands it on the exact same
+     rendered color as the title bar (tint over blurred window material). */
+  .app-sidebar-backdrop {
     -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter, none);
     backdrop-filter: var(--app-sidebar-backdrop-filter, none);
   }
@@ -307,6 +328,42 @@
 @media (prefers-reduced-motion: reduce) {
   .sidebar-surface-enter {
     animation: none;
+  }
+}
+
+/* Right-dock level swaps (menu <-> tool pane). The hidden level keeps
+   `visibility: hidden` so it stays mounted — browser webviews in particular
+   must not lose their layout — while opacity/transform give the incoming
+   level a short slide-in. Hiding is instant: visibility flips at the end of
+   the transition, and pointer events are cut immediately. */
+.dock-pane {
+  transition:
+    opacity 160ms ease-out,
+    transform 160ms ease-out,
+    visibility 0s linear 160ms;
+}
+
+.dock-pane-visible {
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.dock-pane-hidden {
+  opacity: 0;
+  transform: translateX(16px);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-pane {
+    transition: visibility 0s;
+  }
+
+  .dock-pane-hidden {
+    transform: none;
   }
 }
 
@@ -1102,6 +1159,18 @@ label:has(> select#reasoning-effort) select {
 .editor-file-viewer__highlight .shiki code,
 .editor-file-viewer__highlight .shiki * {
   font-family: inherit !important;
+}
+
+/* Dual-theme Shiki output: `codeToHtml` emits `--shiki-light`/`--shiki-dark`
+   vars per token; the .dark root class picks which one paints. */
+.editor-file-viewer__highlight .shiki,
+.editor-file-viewer__highlight .shiki span {
+  color: var(--shiki-light);
+}
+
+.dark .editor-file-viewer__highlight .shiki,
+.dark .editor-file-viewer__highlight .shiki span {
+  color: var(--shiki-dark);
 }
 
 .editor-file-editor {

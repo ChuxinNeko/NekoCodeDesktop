@@ -6,7 +6,7 @@ import type {
 } from "../../../../shared/automation";
 import { normalizeSchedule } from "../../../../shared/automation";
 import { nextOccurrence } from "../../../../shared/automationSchedule";
-import type { ExecutionMode, ModelOption } from "../../../../shared/agent";
+import { modelLabel, type ExecutionMode, type ModelOption } from "../../../../shared/agent";
 import { errorMessage } from "../../api";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
@@ -182,7 +182,7 @@ export function AutomationEditor({
 					<option value="">{t("automations.editor.runtimeDefault")}</option>
 					{models.map((model) => (
 						<option key={model.key} value={model.key}>
-							{model.name} ({model.provider})
+							{modelLabel(model)}
 						</option>
 					))}
 				</select>

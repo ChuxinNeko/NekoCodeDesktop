@@ -1,3 +1,4 @@
+import type { ComposerInsertion } from "../../../../shared/browser";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
@@ -16,6 +17,8 @@ import {
 } from "./composerPickerStyles";
 
 interface ComposerShellProps {
+	insertion?: ComposerInsertion | null;
+	onInsertionConsumed?: (id: string) => void;
 	disabled: boolean;
 	streaming?: boolean;
 	placeholder?: string;
@@ -46,6 +49,16 @@ export function ComposerShell(props: ComposerShellProps) {
 		el.style.height = "auto";
 		el.style.height = `${String(Math.min(el.scrollHeight, 320))}px`;
 	}, [text]);
+
+	const consumedInsertion = useRef<string | null>(null);
+	useEffect(() => {
+		if (!props.insertion || consumedInsertion.current === props.insertion.id) return;
+		consumedInsertion.current = props.insertion.id;
+		const insertion = props.insertion;
+		setText((draft) => draft + (draft && !draft.endsWith("\n") ? "\n" : "") + insertion.text);
+		props.onInsertionConsumed?.(insertion.id);
+		textareaRef.current?.focus();
+	}, [props.insertion, props.onInsertionConsumed]);
 
 	const submit = () => {
 		const value = text.trim();

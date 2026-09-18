@@ -1,3 +1,13 @@
+import type { FusionConfig } from "../../shared/fusion";
+import type {
+	InstallPluginRequest,
+	PluginActionRequest,
+	PluginCatalogQuery,
+	PluginCatalogPage,
+	PluginsSnapshot,
+	SetPluginEnabledRequest,
+} from "../../shared/plugins";
+import type { WorkMode, WorkflowAnswer } from "../../shared/workflow";
 import type {
 	AgentDefaults,
 	AgentSnapshot,
@@ -10,7 +20,7 @@ import type {
 	SessionSummary,
 	ThinkingLevel,
 } from "../../shared/agent";
-import type { BrowserPopupRequest } from "../../shared/browser";
+import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection } from "../../shared/browser";
 import type {
 	AutomationEvent,
 	AutomationRun,
@@ -26,6 +36,7 @@ import type {
 	PullRequestSummary,
 	RepositoryBranch,
 } from "../../shared/pullRequests";
+import type { FsEntry, FsReadResult } from "../../shared/files";
 import type { GitActionRequest, GitDiffRequest, RepoStatus, ReviewScope } from "../../shared/git";
 import type {
 	FetchModelsRequest,
@@ -34,6 +45,10 @@ import type {
 	ModelStoreStatus,
 	ModelTestRequest,
 	ModelTestResult,
+	OAuthLoginEvent,
+	OAuthProviderId,
+	OAuthProviderSummary,
+	ProxyStatus,
 	SaveModelProfileRequest,
 } from "../../shared/settings";
 import type {
@@ -57,6 +72,11 @@ export interface AgentApi {
 	openExternal(url: string): Promise<void>;
 	onBrowserPopup(listener: (request: BrowserPopupRequest) => void): () => void;
 
+	onBrowserPreview(listener: (request: BrowserPreviewRequest) => void): () => void;
+	onBrowserElementSelected(listener: (selection: BrowserElementSelection) => void): () => void;
+	onBrowserInspectStopped(listener: (state: { guestId: number }) => void): () => void;
+	browserSetInspect(guestId: number, enabled: boolean): Promise<void>;
+
 	setTheme(theme: "light" | "dark" | "system"): Promise<void>;
 
 	pickDirectory(): Promise<string | null>;
@@ -67,7 +87,10 @@ export interface AgentApi {
 	gitAction(req: GitActionRequest): Promise<void>;
 	gitInit(cwd: string): Promise<void>;
 
-	sessionList(cwd: string): Promise<SessionSummary[]>;
+	fsList(cwd: string, relPath: string): Promise<FsEntry[]>;
+	fsReadFile(cwd: string, relPath: string): Promise<FsReadResult>;
+
+	sessionList(cwd?: string): Promise<SessionSummary[]>;
 	sessionRename(req: RenameSessionRequest): Promise<void>;
 	sessionDelete(req: DeleteSessionRequest): Promise<void>;
 	onSessionsChanged(listener: () => void): () => void;
@@ -81,10 +104,22 @@ export interface AgentApi {
 	agentDefaults(cwd: string): Promise<AgentDefaults>;
 	onAgentDefaults(listener: (defaults: AgentDefaults) => void): () => void;
 	/** Null without a session: the pick becomes the welcome screen's default. */
+	agentSetFusion(config: FusionConfig): Promise<AgentSnapshot | null>;
 	agentSetModel(modelKey: string): Promise<AgentSnapshot | null>;
 	agentSetThinking(level: ThinkingLevel): Promise<AgentSnapshot | null>;
 	agentSetMode(mode: ExecutionMode): Promise<AgentSnapshot | null>;
+	agentSetWorkMode(mode: WorkMode): Promise<AgentSnapshot | null>;
+	agentAnswerWorkflow(answer: WorkflowAnswer): Promise<AgentSnapshot>;
+	agentCancelTask(id: string): Promise<AgentSnapshot>;
 	onAgentSnapshot(listener: (snapshot: AgentSnapshot | null) => void): () => void;
+
+	pluginsCatalog(query: PluginCatalogQuery): Promise<PluginCatalogPage>;
+	pluginsList(): Promise<PluginsSnapshot>;
+	pluginsInstall(request: InstallPluginRequest): Promise<PluginsSnapshot>;
+	pluginsRemove(request: PluginActionRequest): Promise<PluginsSnapshot>;
+	pluginsUpdate(source?: string): Promise<PluginsSnapshot>;
+	pluginsSetEnabled(request: SetPluginEnabledRequest): Promise<PluginsSnapshot>;
+	onPluginsChanged(listener: (snapshot: PluginsSnapshot) => void): () => void;
 
 	terminalCreate(req: TerminalCreateRequest): Promise<TerminalSession>;
 	terminalInput(req: TerminalInputRequest): Promise<void>;
@@ -99,6 +134,17 @@ export interface AgentApi {
 	modelDelete(id: string): Promise<void>;
 	modelFetch(req: FetchModelsRequest): Promise<FetchedModel[]>;
 	modelTest(req: ModelTestRequest): Promise<ModelTestResult>;
+
+	proxyStatus(): Promise<ProxyStatus>;
+	proxySave(manual: string | null): Promise<ProxyStatus>;
+
+	oauthList(): Promise<OAuthProviderSummary[]>;
+	oauthRefresh(id: OAuthProviderId): Promise<OAuthProviderSummary>;
+	oauthLogin(id: OAuthProviderId): Promise<OAuthProviderSummary>;
+	oauthCancel(id: OAuthProviderId): Promise<void>;
+	oauthSubmitCode(id: OAuthProviderId, code: string): Promise<void>;
+	oauthLogout(id: OAuthProviderId): Promise<OAuthProviderSummary>;
+	onOAuthEvent(listener: (event: OAuthLoginEvent) => void): () => void;
 
 	githubStatus(): Promise<GitHubAuthStatus>;
 	githubSave(token: string): Promise<GitHubAuthStatus>;

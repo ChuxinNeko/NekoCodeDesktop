@@ -14,6 +14,8 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopupBase, MenuSeparator, MenuTrigger } from "../ui/menu";
 
 export interface SessionRowProps {
+	compact?: boolean;
+	disabled?: boolean;
 	session: SessionSummary;
 	active: boolean;
 	/** The active session is mid-run: the row shows a live indicator. */
@@ -42,6 +44,10 @@ export function SessionRow(props: SessionRowProps) {
 	const { session, active, running, renaming, confirmingDelete } = props;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [menuOpen, setMenuOpen] = useState(false);
+	// Until the model has named a new session, `title` is only its opening
+	// prompt — a placeholder reads better than half a sentence that is about to
+	// be replaced, and it is the one string here that has to be localized.
+	const title = session.titlePending ? t("sessions.pendingTitle") : session.title;
 
 	useEffect(() => {
 		if (!renaming) return;
@@ -54,14 +60,14 @@ export function SessionRow(props: SessionRowProps) {
 	if (renaming) {
 		const commit = () => {
 			const next = inputRef.current?.value ?? "";
-			if (next.trim() && next.trim() !== session.title) props.onRename(next);
+			if (next.trim() && next.trim() !== title) props.onRename(next);
 			else props.onCancelRename();
 		};
 		return (
 			<div className="px-1 py-0.5">
 				<input
 					ref={inputRef}
-					defaultValue={session.title}
+					defaultValue={title}
 					aria-label={t("sessions.nameAria")}
 					className={cn(
 						"w-full rounded-md border border-[color:var(--color-border-focus)] bg-background px-2 py-1",
@@ -76,7 +82,7 @@ export function SessionRow(props: SessionRowProps) {
 						if (event.key === "Escape") {
 							event.preventDefault();
 							// Blur would commit, so drop the handler before giving up focus.
-							event.currentTarget.value = session.title;
+							event.currentTarget.value = title;
 							props.onCancelRename();
 						}
 					}}
@@ -89,7 +95,7 @@ export function SessionRow(props: SessionRowProps) {
 		return (
 			<div className="flex flex-col gap-1 rounded-md bg-destructive/6 px-2 py-1.5">
 				<span className="truncate text-[length:var(--app-font-size-ui-sm,11px)] text-foreground/80">
-					{t("sessions.deleteConfirm", { title: session.title })}
+					{t("sessions.deleteConfirm", { title })}
 				</span>
 				<div className="flex items-center gap-1">
 					<Button className="flex-1" onClick={props.onCancelDelete} size="xs" variant="subtle">
@@ -124,6 +130,9 @@ export function SessionRow(props: SessionRowProps) {
 			<button
 				type="button"
 				data-session-file={session.sessionFile}
+				disabled={props.disabled}
+				aria-current={active ? "page" : undefined}
+				title={session.preview ? `${title}\n${session.preview}` : title}
 				onClick={props.onOpen}
 				className={cn(
 					"flex min-w-0 flex-1 flex-col gap-0.5 rounded-md px-2 py-1.5 text-left",
@@ -140,10 +149,10 @@ export function SessionRow(props: SessionRowProps) {
 						/>
 					) : null}
 					<span className="min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui-sm,11px)]">
-						{session.title}
+						{title}
 					</span>
 				</span>
-				{session.preview ? (
+				{session.preview && !props.compact ? (
 					<span className="min-w-0 truncate text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/60">
 						{session.preview}
 					</span>
@@ -166,7 +175,7 @@ export function SessionRow(props: SessionRowProps) {
 					<MenuTrigger
 						render={
 							<Button
-								aria-label={t("sessions.actionsFor", { title: session.title })}
+								aria-label={t("sessions.actionsFor", { title })}
 								className={cn(
 									"absolute right-0 opacity-0 transition-opacity",
 									"group-hover/row:opacity-100 focus-visible:opacity-100",

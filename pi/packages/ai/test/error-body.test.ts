@@ -224,3 +224,33 @@ describe("formatProviderError", () => {
 		expect(formatProviderError(norm)).toBe('{"reason":"boom"}');
 	});
 });
+
+describe("transport failures", () => {
+	it("names the cause a bare network error hides", () => {
+		// What the user would otherwise see is "fetch failed" and nothing else.
+		const error = new TypeError("fetch failed", {
+			cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+		});
+
+		expect(formatProviderError(normalizeProviderError(error))).toBe("fetch failed (read ECONNRESET)");
+	});
+
+	it("walks a nested cause chain", () => {
+		const root = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:7890"), { code: "ECONNREFUSED" });
+		const error = new TypeError("fetch failed", { cause: new Error("proxy unreachable", { cause: root }) });
+
+		expect(normalizeProviderError(error).message).toBe(
+			"fetch failed (proxy unreachable → connect ECONNREFUSED 127.0.0.1:7890)",
+		);
+	});
+
+	it("leaves an error that already carries an HTTP response alone", () => {
+		const error = Object.assign(new Error("Request failed"), {
+			status: 429,
+			body: "rate limited",
+			cause: new Error("noise"),
+		});
+
+		expect(normalizeProviderError(error).message).toBe("Request failed");
+	});
+});

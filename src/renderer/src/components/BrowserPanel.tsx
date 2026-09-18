@@ -3,6 +3,7 @@ import type { WebviewTag } from "electron";
 import {
 	BROWSER_PARTITION,
 	type BrowserTabState,
+	type BrowserPreviewRequest,
 	browserUrlLabel,
 	isBlankBrowserUrl,
 	resolveBrowserInputUrl,
@@ -18,6 +19,7 @@ import {
 	ArrowRightIcon,
 	ExternalLinkIcon,
 	GlobeIcon,
+	GoalIcon,
 	PlusIcon,
 	RefreshCwIcon,
 	StopIcon,
@@ -53,13 +55,20 @@ function scrollTabIntoView(strip: HTMLElement, tab: HTMLElement): void {
 	}
 }
 
-export function BrowserPanel({ onClose }: { onClose: () => void }) {
+export function BrowserPanel({ onClose, preview, visible = true }: {
+	onClose: () => void;
+	preview?: BrowserPreviewRequest | null;
+	visible?: boolean;
+}) {
 	const { t } = useTranslation();
 	const [tabs, setTabs] = useState<BrowserTabState[]>(() => [makeTab("", t("browser.newTab"))]);
 	const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0]?.id ?? "");
 	const [addressDraft, setAddressDraft] = useState("");
 	const [addressFocused, setAddressFocused] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [inspecting, setInspecting] = useState(false);
+	const inspectGuest = useRef<number | null>(null);
+	const lastPreview = useRef<string | null>(null);
 	const webviews = useRef(new Map<string, WebviewTag>());
 	const stripRef = useRef<HTMLDivElement | null>(null);
 	const hostRef = useRef<HTMLDivElement | null>(null);
@@ -99,6 +108,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 				}
 				return next;
 			});
+			webviews.current.get(tabId)?.remove();
 			webviews.current.delete(tabId);
 		},
 		[activeTabId, t],
@@ -111,6 +121,55 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 			if (url) createTab(url);
 		});
 	}, [createTab]);
+
+	useEffect(() => {
+		if (!preview || lastPreview.current === preview.id) return;
+		lastPreview.current = preview.id;
+		setError(null);
+		const existing = tabs.find((tab) => tab.url === preview.url);
+		if (existing) {
+			setActiveTabId(existing.id);
+			if (preview.kind === "html") webviews.current.get(existing.id)?.reload();
+		} else createTab(preview.url);
+	}, [preview, tabs, createTab]);
+
+	useEffect(() => api.onBrowserInspectStopped(({ guestId }) => {
+		if (inspectGuest.current !== guestId) return;
+		inspectGuest.current = null;
+		setInspecting(false);
+	}), []);
+
+	const stopInspecting = useCallback(() => {
+		const guestId = inspectGuest.current;
+		inspectGuest.current = null;
+		setInspecting(false);
+		if (guestId !== null) void api.browserSetInspect(guestId, false).catch(() => {});
+	}, []);
+
+	// Hidden tabs cannot keep intercepting clicks or keyboard input.
+	useEffect(() => { stopInspecting(); }, [activeTabId, visible, stopInspecting]);
+	useEffect(() => () => {
+		const guestId = inspectGuest.current;
+		if (guestId !== null) void api.browserSetInspect(guestId, false).catch(() => {});
+		for (const element of webviews.current.values()) element.remove();
+		webviews.current.clear();
+	}, []);
+
+	const toggleInspecting = async () => {
+		if (inspecting) { stopInspecting(); return; }
+		try {
+			const guest = activeTab && webviews.current.get(activeTab.id);
+			if (!guest) return;
+			const id = guest.getWebContentsId();
+			inspectGuest.current = id;
+			await api.browserSetInspect(id, true);
+			if (inspectGuest.current === id) setInspecting(true);
+		} catch (cause) {
+			inspectGuest.current = null;
+			setInspecting(false);
+			setError(String(cause));
+		}
+	};
 
 	useLayoutEffect(() => {
 		const strip = stripRef.current;
@@ -352,6 +411,16 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 					/>
 				</form>
 				<IconButton
+					disabled={!activeTab || activeTab.loading || isBlankBrowserUrl(activeTab.url)}
+					label={t(inspecting ? "browser.stopInspect" : "browser.inspect")}
+					tooltip={t(inspecting ? "browser.stopInspect" : "browser.inspect")}
+					aria-pressed={inspecting}
+					variant={inspecting ? "subtle" : "ghost"}
+					onClick={() => void toggleInspecting()}
+				>
+					<GoalIcon className="size-3.5" />
+				</IconButton>
+				<IconButton
 					disabled={!activeTab || isBlankBrowserUrl(activeTab.url)}
 					label={t("browser.openExternal")}
 					onClick={() => {
@@ -364,6 +433,7 @@ export function BrowserPanel({ onClose }: { onClose: () => void }) {
 				</IconButton>
 			</div>
 
+			{inspecting ? <p role="status" className="border-b border-border px-3 py-2 text-xs text-muted-foreground">{t("browser.inspectHint")}</p> : null}
 			{error ? (
 				<div className="flex items-center gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
 					<span className="min-w-0 flex-1 truncate">{error}</span>
