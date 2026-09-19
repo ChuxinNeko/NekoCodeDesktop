@@ -60,20 +60,45 @@ export function translateNpmArgs(args: string[]): string[] | null {
 	return null;
 }
 
-/** Resolve Electron's executable the way `require("electron")` does. */
-function electronBinary(): string {
-	const pkg = join(ROOT, "node_modules", "electron");
-	const pathFile = join(pkg, "path.txt");
+const ELECTRON_PKG = join(ROOT, "node_modules", "electron");
+
+/** Where `require("electron")` would look right now, per the installer's path.txt. */
+function electronBinaryPath(): string {
+	const pathFile = join(ELECTRON_PKG, "path.txt");
 	const relative = existsSync(pathFile)
 		? readFileSync(pathFile, "utf8").trim()
 		: IS_WINDOWS
 			? "electron.exe"
 			: "electron";
-	const binary = join(pkg, "dist", relative);
-	if (!existsSync(binary)) {
+	return join(ELECTRON_PKG, "dist", relative);
+}
+
+/**
+ * Resolve Electron's executable the way `require("electron")` does, downloading
+ * the dist if it is missing.
+ *
+ * Electron has no postinstall script anymore, so `bun install` leaves
+ * `node_modules/electron/dist/` empty; the download happens lazily on the first
+ * `require("electron")`. Nothing here requires the module (the shims only need
+ * the path), so the download has to be kicked off explicitly.
+ */
+function electronBinary(): string {
+	const existing = electronBinaryPath();
+	if (existsSync(existing)) return existing;
+
+	const installer = join(ELECTRON_PKG, "install.js");
+	if (!existsSync(installer)) {
+		throw new Error(`Electron is not installed at ${ELECTRON_PKG}. Run \`bun install\` first.`);
+	}
+	console.log("Downloading the Electron binary...");
+	const result = spawnSync(process.execPath, [installer], { stdio: "inherit", cwd: ROOT });
+	if (result.error) throw result.error;
+
+	const binary = electronBinaryPath();
+	if (result.status !== 0 || !existsSync(binary)) {
 		throw new Error(
-			`Electron binary not found at ${binary}. Run \`bun install\` first ` +
-				`(set ELECTRON_MIRROR if the download is blocked).`,
+			`Electron binary not found at ${binary} and the download failed. ` +
+				`Run \`bun ${installer}\` manually (set ELECTRON_MIRROR if the download is blocked).`,
 		);
 	}
 	return binary;

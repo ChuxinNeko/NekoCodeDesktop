@@ -104,8 +104,10 @@ bun run dev          # electron-vite 开发模式
 Windows 上这两个 shim 是 `.cmd`（cmd.exe 不认 shebang，Bun Shell 也只按扩展名在 PATH 上找可执行文件）。
 pi 的依赖（含 `tsgo`、`shx`、`esbuild` 等构建工具）都来自根目录这一次 `bun install`。
 
-shim 依赖 `node_modules/electron/dist/` 里的 Electron 二进制，它由 electron 包的 postinstall 下载。
-若下载被墙导致 `pi:build` 报 `Electron binary not found`，设置镜像后重跑安装脚本即可：
+shim 依赖 `node_modules/electron/dist/` 里的 Electron 二进制。electron 包已经没有 postinstall，
+`bun install` 只会装下载器，二进制要等第一次 `require("electron")` 时才懒加载；`pi:build` 只需要路径不会
+require，所以 `scripts/pi-toolchain.ts` 在二进制缺失时会自己调一次 `node_modules/electron/install.js`。
+若下载被墙导致它报 `Electron binary not found`，设置镜像后重跑安装脚本即可：
 
 ```bash
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ bun node_modules/electron/install.js
@@ -257,8 +259,8 @@ bun run build       # 构建
 - `pi:build` 首次运行需要联网获取模型 catalog（models.dev 等）。国内网络较慢时可先设置镜像：
 
   ```bash
-  ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron bun install
   BUN_CONFIG_REGISTRY=https://registry.npmmirror.com bun install
+  ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ bun run pi:build
   ```
 
 ## 已知限制
