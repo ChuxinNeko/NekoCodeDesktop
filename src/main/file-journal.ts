@@ -1,5 +1,6 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { CheckpointEditedFile } from "../shared/checkpoints";
 
 /**
  * What a checkpoint remembers, and where it lives.
@@ -182,6 +183,8 @@ export interface TurnStats {
 	files: number;
 	additions: number;
 	deletions: number;
+	/** Per-file breakdown, in the order the turn first touched each path. */
+	list: CheckpointEditedFile[];
 }
 
 /**
@@ -198,21 +201,28 @@ export interface TurnStats {
  */
 export function turnStats(branch: readonly SessionEntry[], checkpointId: string): TurnStats {
 	const start = branch.findIndex((entry) => entry.id === checkpointId);
-	const stats: TurnStats = { files: 0, additions: 0, deletions: 0 };
+	const stats: TurnStats = { files: 0, additions: 0, deletions: 0, list: [] };
 	if (start === -1) return stats;
 
-	const seen = new Set<string>();
+	const seen = new Map<string, CheckpointEditedFile>();
 	for (let i = start + 1; i < branch.length; i++) {
 		const entry = branch[i];
 		if (checkpointLabel(entry) !== null) break;
 		const mutation = fileMutation(entry);
 		if (!mutation) continue;
-		if (!seen.has(mutation.path)) {
-			seen.add(mutation.path);
+		let file = seen.get(mutation.path);
+		if (!file) {
+			file = { path: mutation.path, additions: 0, deletions: 0 };
+			seen.set(mutation.path, file);
+			stats.list.push(file);
 			stats.files++;
 		}
-		stats.additions += mutation.additions ?? 0;
-		stats.deletions += mutation.deletions ?? 0;
+		const added = mutation.additions ?? 0;
+		const removed = mutation.deletions ?? 0;
+		file.additions += added;
+		file.deletions += removed;
+		stats.additions += added;
+		stats.deletions += removed;
 	}
 	return stats;
 }

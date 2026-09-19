@@ -297,6 +297,7 @@ export function ChatView(props: ChatViewProps) {
 							onOpenFile={props.onOpenFile}
 							checkpoints={snapshot.checkpoints}
 							onRestoreCheckpoint={props.onRestoreCheckpoint}
+							onOpenReview={props.onOpenReview}
 						/>
 						)}
 					</div>

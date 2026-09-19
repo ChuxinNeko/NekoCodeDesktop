@@ -873,6 +873,7 @@ export class AgentService {
 				conversationRestorable: turn !== null,
 				codeRestorable: plan.steps.length > 0,
 				fileCount: stats.files,
+				files: stats.list,
 				additions: stats.additions,
 				deletions: stats.deletions,
 				shellRuns: plan.opaqueRuns,

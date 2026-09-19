@@ -71,6 +71,16 @@ export interface CheckpointDiff {
 	shellRuns: number;
 }
 
+/** One file a turn's tool calls changed, summed over the calls that touched it. */
+export interface CheckpointEditedFile {
+	/** Workspace-relative, forward slashes. */
+	path: string;
+	/** Lines the turn's tool calls added to it, all calls counted. */
+	additions: number;
+	/** Lines the turn's tool calls removed from it, all calls counted. */
+	deletions: number;
+}
+
 export interface CheckpointSummary {
 	/** The session entry that marks this point. */
 	id: string;
@@ -87,8 +97,10 @@ export interface CheckpointSummary {
 	conversationRestorable: boolean;
 	/** The agent changed files after this point that can be put back. */
 	codeRestorable: boolean;
-	/** Files the agent has changed since this point. */
+	/** Files the agent changed in the turn this checkpoint fronts. */
 	fileCount: number;
+	/** Those files themselves, in the order the turn first touched each. */
+	files: CheckpointEditedFile[];
 	additions: number;
 	deletions: number;
 	/** Shell commands that ran since; their effects are not recorded. */

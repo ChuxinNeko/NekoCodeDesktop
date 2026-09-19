@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { countLineChanges, type DiffCounts } from "../shared/line-diff";
 import {
 	FILE_MUTATION_ENTRY,
 	MAX_PREIMAGE_BYTES,
@@ -22,8 +23,16 @@ import {
  * runner, and the workflow gate installs another on top.
  */
 export class FileJournalRecorder {
-	/** Pre-images read in `beforeToolCall`, waiting for their tool to finish. */
-	private readonly pending = new Map<string, FileMutationData>();
+	/**
+	 * Pre-images read in `beforeToolCall`, waiting for their tool to finish.
+	 *
+	 * The decoded text rides along beside the record so the line counts can be
+	 * taken against it without gunzipping back what was just packed.
+	 */
+	private readonly pending = new Map<
+		string,
+		{ record: FileMutationData; before: string | null }
+	>();
 
 	constructor(private readonly cwd: string) {}
 
@@ -55,6 +64,9 @@ export class FileJournalRecorder {
 			beforeBytes: 0,
 			tool: toolName,
 		};
+		// Null all the way through for a file that does not exist yet, which makes
+		// every line the tool writes an addition — which is what it is.
+		let before: string | null = null;
 		try {
 			const info = await stat(target.absolute);
 			if (!info.isFile()) return;
@@ -67,6 +79,7 @@ export class FileJournalRecorder {
 				const contents = await readFile(target.absolute);
 				record.before = packPreimage(contents);
 				record.beforeBytes = contents.length;
+				before = contents.toString("utf8");
 			}
 		} catch (error) {
 			// Absent is the common case and the interesting one: `before: null`
@@ -75,7 +88,26 @@ export class FileJournalRecorder {
 				record.skipped = "unreadable";
 			}
 		}
-		this.pending.set(toolCallId, record);
+		this.pending.set(toolCallId, { record, before });
+	}
+
+	/**
+	 * Lines the finished call moved, against the contents it started from.
+	 *
+	 * Null when the answer would not be trustworthy — the new contents cannot be
+	 * read, or are past the size where diffing them is worth anyone's time. The
+	 * field is optional for exactly that case, and a row with no counts shows
+	 * none rather than showing zero.
+	 */
+	private async countChange(path: string, before: string): Promise<DiffCounts | null> {
+		try {
+			const absolute = resolve(this.cwd, path);
+			const info = await stat(absolute);
+			if (!info.isFile() || info.size > MAX_PREIMAGE_BYTES) return null;
+			return countLineChanges(before, (await readFile(absolute)).toString("utf8"));
+		} catch {
+			return null;
+		}
 	}
 
 	/**
@@ -85,11 +117,23 @@ export class FileJournalRecorder {
 	 * claiming otherwise would make a restore rewrite a file with what is already
 	 * in it — harmless, but it would also report a change that never happened.
 	 */
-	afterTool(session: AgentSession, toolCallId: string, isError: boolean): void {
-		const record = this.pending.get(toolCallId);
-		if (!record) return;
+	async afterTool(session: AgentSession, toolCallId: string, isError: boolean): Promise<void> {
+		const pending = this.pending.get(toolCallId);
+		if (!pending) return;
 		this.pending.delete(toolCallId);
 		if (isError) return;
+		const { record } = pending;
+		// Measured here, the one moment both versions are to hand. The checkpoint
+		// list is rebuilt on every streaming event, so a row that had to read files
+		// and diff them to draw itself would put the transcript's frame rate on the
+		// disk. A skipped pre-image has nothing to measure against.
+		if (!record.skipped) {
+			const counts = await this.countChange(record.path, pending.before ?? "");
+			if (counts) {
+				record.additions = counts.additions;
+				record.deletions = counts.deletions;
+			}
+		}
 		try {
 			session.sessionManager.appendCustomEntry(FILE_MUTATION_ENTRY, record);
 		} catch {
@@ -130,7 +174,7 @@ export class FileJournalRecorder {
 		session.agent.afterToolCall = async (context, signal) => {
 			const result = await previousAfter?.(context, signal);
 			try {
-				this.afterTool(session, context.toolCall.id, result?.isError ?? context.isError);
+				await this.afterTool(session, context.toolCall.id, result?.isError ?? context.isError);
 			} catch (error) {
 				console.error("Could not record a file change:", error);
 			}

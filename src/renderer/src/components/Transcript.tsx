@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentCell } from "../../../shared/agent";
@@ -20,6 +20,7 @@ import { Spinner } from "./ui/spinner";
 import { FileTypeIcon } from "../lib/fileIcons";
 import { highlightFileToHtml } from "../lib/codeHighlight";
 import { TaskCard } from "./chat/AgentTask";
+import { EditedFilesCard } from "./chat/EditedFilesCard";
 import { lastThinkingLine, ThinkingBlock } from "./chat/Thinking";
 import {
 	MUTED_LABEL_TEXT_CLASS_NAME,
@@ -703,6 +704,7 @@ export function Transcript({
 	onOpenFile,
 	checkpoints,
 	onRestoreCheckpoint,
+	onOpenReview,
 }: {
 	cells: AgentCell[];
 	streaming?: boolean;
@@ -714,6 +716,8 @@ export function Transcript({
 	/** Restore points, so a prompt can offer the rewind of its own turn. */
 	checkpoints?: readonly CheckpointSummary[];
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
+	/** Open the review panel — the edit summary card's "Review" action. */
+	onOpenReview?: () => void;
 }) {
 	const taskLookup = useMemo<TaskView>(
 		() => ({
@@ -743,6 +747,25 @@ export function Transcript({
 		}
 	}
 	const rows = groupTranscriptRows(cells);
+	// A turn's edit summary hangs off its last row: the checkpoint that fronts the
+	// turn already knows which files it changed, so the card only needs to know
+	// where the turn ends. A following prompt settles that; at the tail nothing
+	// does, so the card waits for the run to finish rather than appearing
+	// half-written above an answer that is still arriving.
+	const cardByRowId = new Map<string, CheckpointSummary>();
+	let turnCheckpoint: CheckpointSummary | undefined;
+	for (let i = 0; i < rows.length; i++) {
+		const row = rows[i];
+		if (row.kind === "user") {
+			turnCheckpoint = checkpointByCell.get(row.cell.id);
+			continue;
+		}
+		const next = rows[i + 1];
+		const turnEnded = next === undefined ? streaming !== true : next.kind === "user";
+		if (turnEnded && turnCheckpoint !== undefined && turnCheckpoint.fileCount > 0) {
+			cardByRowId.set(row.id, turnCheckpoint);
+		}
+	}
 	const waiting = waitingOnModel(cells, streaming === true);
 	// An open run owns the wait: the line belongs to the work it is waiting on,
 	// and only stands alone when nothing has been done in this turn yet.
@@ -752,34 +775,41 @@ export function Transcript({
 			<div className="flex flex-col gap-4">
 				{rows.map((row, index) => {
 					const last = index === rows.length - 1;
-					switch (row.kind) {
-						case "user":
-							return (
+					const card = cardByRowId.get(row.id);
+					return (
+						<Fragment key={row.id}>
+							{row.kind === "user" ? (
 								<UserCell
-									key={row.id}
 									cell={row.cell}
 									anchor={row.cell.id === lastUserId}
 									checkpoint={checkpointByCell.get(row.cell.id)}
 									onRestore={onRestoreCheckpoint}
 									restoreDisabled={streaming === true}
 								/>
-							);
-						case "message":
-							return <MessageCell key={row.id} cell={row.cell} />;
-						case "thinking":
-							return <CellThinking key={row.id} cell={row.cell} />;
-						case "notice":
-							return <NoticeCell key={row.id} cell={row.cell} />;
-						case "work":
-							return (
+							) : row.kind === "message" ? (
+								<MessageCell cell={row.cell} />
+							) : row.kind === "thinking" ? (
+								<CellThinking cell={row.cell} />
+							) : row.kind === "notice" ? (
+								<NoticeCell cell={row.cell} />
+							) : (
 								<WorkingBlock
-									key={row.id}
 									row={row}
 									active={last && streaming === true}
 									waiting={last && waitingInWork}
 								/>
-							);
-					}
+							)}
+							{card ? (
+								<EditedFilesCard
+									checkpoint={card}
+									disabled={streaming === true}
+									onRestore={onRestoreCheckpoint}
+									onReview={onOpenReview}
+									onOpenFile={onOpenFile}
+								/>
+							) : null}
+						</Fragment>
+					);
 				})}
 				{waiting && !waitingInWork ? <PlanningLine /> : null}
 			</div>
