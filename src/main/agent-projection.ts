@@ -107,6 +107,24 @@ export function parseSlashCommand(text: string): SlashCommand | null {
 	};
 }
 
+const DIRECT_SKILL_ALIASES = new Set(["design", "clone-website"]);
+
+export function expandNekoSlashAlias(text: string): string {
+	const slash = parseSlashCommand(text);
+	if (!slash || !DIRECT_SKILL_ALIASES.has(slash.command)) return text;
+	return `/skill:${slash.command}${slash.args ? ` ${slash.args}` : ""}`;
+}
+
+function displayUserText(text: string): string {
+	const skill = text.match(
+		/^<skill name="([^"]+)" location="[^"]+">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/,
+	);
+	if (!skill) return text;
+	const command = DIRECT_SKILL_ALIASES.has(skill[1]) ? `/${skill[1]}` : `/skill:${skill[1]}`;
+	const args = skill[2]?.trim();
+	return args ? `${command} ${args}` : command;
+}
+
 function isTextBlock(block: unknown): block is TextBlock {
 	return (
 		typeof block === "object" &&
@@ -372,7 +390,7 @@ export function projectMessages(
 		const t = ts(message);
 		switch (message.role) {
 			case "user": {
-				const text = textOf(message.content);
+				const text = displayUserText(textOf(message.content));
 				if (!text.trim()) break;
 				cells.push({
 					id: `user-${t}-${index}`,

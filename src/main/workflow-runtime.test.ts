@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { ExecutionMode } from "../shared/agent";
 import type { WorkMode } from "../shared/workflow";
 import {
@@ -12,10 +13,13 @@ import {
 	THINKING_SAMPLE_MS,
 	type Reasoning,
 	type WorkflowRuntime,
+	type WorkflowSessionOptions,
 } from "./workflow-runtime";
 import { COMPACTION_INSTRUCTIONS } from "./prompt-library";
 import { waitFor, workflowSandbox } from "./workflow-test-utils";
 import { savedFusion } from "./fusion-config";
+import { withFusionUsage } from "./fusion-usage";
+import { projectMessages } from "./agent-projection";
 import type { FusionConfig } from "../shared/fusion";
 import { HELPER_CONTINUATION_PROMPT, MAX_HELPER_CONTINUATIONS } from "./helper-completion";
 
@@ -100,6 +104,7 @@ async function fixture(
 	mode: WorkMode,
 	handler: (body: RequestBody, index: number) => Reply | Promise<Reply>,
 	settings?: object,
+	sessionOptions?: Pick<WorkflowSessionOptions, "customTools" | "getPluginTools">,
 ) {
 	const sandbox = workflowSandbox();
 	if (settings) writeFileSync(join(sandbox.agentDir, "settings.json"), JSON.stringify(settings));
@@ -162,6 +167,7 @@ async function fixture(
 			if (current) onChange?.(current.workflow);
 		},
 		onModeChange: () => {},
+		...sessionOptions,
 	});
 	return {
 		...current,
@@ -361,6 +367,14 @@ describe("Fusion routing", () => {
 			expect(f.requests[0].model).toBe("workflow-model");
 			expect(JSON.stringify(f.requests[0].messages)).toContain("Fusion · Lead");
 			expect(savedFusion(f.manager)?.sidekickModelKey).toBe(fusionConfig.sidekickModelKey);
+			await f.workflow.state.whenSettled();
+			const reopened = SessionManager.open(f.manager.getSessionFile()!);
+			const projected = withFusionUsage(projectMessages(reopened.buildSessionContext().messages), reopened.getBranch());
+			const last = projected.filter((cell) => cell.type === "assistant").at(-1);
+			const usage = last?.type === "assistant" ? last.usage : undefined;
+			expect(usage?.fusion?.lead.model).toBe("workflow-model");
+			expect(usage?.fusion?.sidekick.usage).toMatchObject({ model: "sidekick-model", calls: 2, input: 200, output: 100, totalTokens: 300 });
+			expect(usage?.totalTokens).toBe((usage?.fusion?.lead.totalTokens ?? 0) + 300);
 		} finally { await f.cleanup(); }
 	}, 15000);
 
@@ -566,7 +580,7 @@ describe("PI workflow end-to-end (loopback model)", () => {
 				const system = String(request.messages.find((m) => m.role === "system")?.content);
 				expect(system).toContain("### 当前阶段：" + phase);
 				expect(system).toContain("Agent 全自动工作模式");
-				const canEdit = request.tools?.some((tool) => tool.function.name === "edit");
+				const canEdit = request.tools?.some((tool) => tool.function.name === "edit") ?? false;
 				// This guideline comes from the actual edit definition through PI's
 				// custom prompt branch, not a duplicate in our mode prompt.
 				expect(system.includes("Keep edits[].oldText as small as possible")).toBe(canEdit);
@@ -1173,6 +1187,29 @@ describe("PI workflow end-to-end (loopback model)", () => {
 			expect(f.workflow.state.snapshot().tasks.every((task) => task.status === "completed")).toBe(
 				true,
 			);
+		} finally {
+			await f.cleanup();
+		}
+	}, 15000);
+
+	test("a native custom tool registers and rides the acting-phase gate like a plugin tool", async () => {
+		const navigate: ToolDefinition = {
+			name: "browser_navigate",
+			label: "Browser navigate",
+			description: "Test double",
+			parameters: Type.Object({ url: Type.String() }),
+			async execute() {
+				return { content: [{ type: "text", text: "navigated" }], details: {} };
+			},
+		};
+		const f = await fixture("agent", () => ({ text: "OK" }), undefined, {
+			customTools: [navigate],
+			getPluginTools: () => ["browser_navigate"],
+		});
+		try {
+			expect(f.session.getActiveToolNames()).toContain("browser_navigate");
+			f.workflow.setMode("plan");
+			expect(f.session.getActiveToolNames()).not.toContain("browser_navigate");
 		} finally {
 			await f.cleanup();
 		}

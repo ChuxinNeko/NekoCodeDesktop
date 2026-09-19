@@ -25,6 +25,7 @@ import {
 import { PullRequestsPage } from "./components/pullRequests/PullRequestsPage";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { SettingsPage } from "./components/settings/SettingsPage";
+import { AutomaticUpdateDialog } from "./components/updates/UpdateDialog";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { TitleBar } from "./components/TitleBar";
@@ -462,7 +463,7 @@ export default function App() {
 	};
 
 	return (
-		<div className="flex h-dvh min-h-0 w-full flex-col overflow-hidden text-foreground">
+		<div className="app-window-backdrop flex h-dvh min-h-0 w-full flex-col overflow-hidden text-foreground">
 			<TitleBar
 				projectLabel={cwd ? projectLabel(cwd, api.homeDir) : null}
 				sidebarOpen={sidebarOpen}
@@ -598,6 +599,7 @@ export default function App() {
 				onRestored={checkpointRestored}
 				onError={setError}
 			/>
+			<AutomaticUpdateDialog deferred={restoreTarget !== null} />
 		</div>
 	);
 }

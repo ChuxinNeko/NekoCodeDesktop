@@ -1,4 +1,5 @@
 import type { FusionConfig } from "../../shared/fusion";
+import type { AppVersionInfo, UpdateCheckResult } from "../../shared/updates";
 import type {
 	InstallPluginRequest,
 	PluginActionRequest,
@@ -66,11 +67,19 @@ import type {
 	TerminalResizeRequest,
 	TerminalSession,
 } from "../../shared/terminal";
-import type { ShellInfo } from "../../shared/window";
+import type { SetSkillEnabledRequest, SkillsSnapshot } from "../../shared/skills";
+import type { TokenUsageReport } from "../../shared/tokenStats";
+import type { ShellInfo, WindowMaterial } from "../../shared/window";
 
 export interface AgentApi {
+	appVersion(): Promise<AppVersionInfo>;
+	checkForUpdates(): Promise<UpdateCheckResult>;
+	checkForUpdatesOnStartup(): Promise<UpdateCheckResult | null>;
+	dismissStartupUpdate(): Promise<void>;
 	/** Window chrome the renderer lays out around: caption strip height, backdrop material. */
 	shell: ShellInfo;
+	/** The material this machine can composite; see {@link ShellInfo.materials}. */
+	windowMaterial: WindowMaterial;
 	/** The user's home directory — the working directory a fresh install starts in. */
 	homeDir: string;
 
@@ -83,8 +92,12 @@ export interface AgentApi {
 	onBrowserElementSelected(listener: (selection: BrowserElementSelection) => void): () => void;
 	onBrowserInspectStopped(listener: (state: { guestId: number }) => void): () => void;
 	browserSetInspect(guestId: number, enabled: boolean): Promise<void>;
+	browserBindAutomation(requestId: string, guestId: number): Promise<void>;
 
 	setTheme(theme: "light" | "dark" | "system"): Promise<void>;
+
+	/** Applies a system window material; resolves with the shell it left behind. */
+	setWindowMaterial(material: WindowMaterial): Promise<ShellInfo>;
 
 	pickDirectory(): Promise<string | null>;
 
@@ -149,6 +162,18 @@ export interface AgentApi {
 	modelDelete(id: string): Promise<void>;
 	modelFetch(req: FetchModelsRequest): Promise<FetchedModel[]>;
 	modelTest(req: ModelTestRequest): Promise<ModelTestResult>;
+
+	/** Built-in skills and what the open session loaded. Null without a session. */
+	skillsList(): Promise<SkillsSnapshot | null>;
+	/** Switches a built-in skill; rebuilds the open session's system prompt. */
+	skillsSetEnabled(request: SetSkillEnabledRequest): Promise<SkillsSnapshot | null>;
+
+	/** Everything ever spent, rolled up from the transcripts on disk. */
+	tokenUsage(): Promise<TokenUsageReport>;
+	/** Same report, but parsed from scratch rather than resumed. */
+	tokenUsageRescan(): Promise<TokenUsageReport>;
+	/** Writes the ledger as CSV; resolves with the path, or null if cancelled. */
+	tokenUsageExport(): Promise<string | null>;
 
 	proxyStatus(): Promise<ProxyStatus>;
 	proxySave(manual: string | null): Promise<ProxyStatus>;

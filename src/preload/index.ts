@@ -1,6 +1,7 @@
 import type { FusionConfig } from "../shared/fusion";
+import type { AppVersionInfo, UpdateCheckResult } from "../shared/updates";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { DEFAULT_SHELL_INFO, type ShellInfo } from "../shared/window";
+import { DEFAULT_SHELL_INFO, type ShellInfo, type WindowMaterial } from "../shared/window";
 import type {
 	InstallPluginRequest,
 	PluginActionRequest,
@@ -34,6 +35,8 @@ import type {
 	ThinkingLevel,
 } from "../shared/agent";
 import type { FsEntry, FsReadResult } from "../shared/files";
+import type { SetSkillEnabledRequest, SkillsSnapshot } from "../shared/skills";
+import type { TokenUsageReport } from "../shared/tokenStats";
 import type {
 	CheckpointFileDiff,
 	CheckpointPreview,
@@ -79,6 +82,10 @@ const shellInfo: ShellInfo =
 	(ipcRenderer.sendSync("app:shellInfo") as ShellInfo | undefined) ?? DEFAULT_SHELL_INFO;
 
 const api = {
+	appVersion: (): Promise<AppVersionInfo> => ipcRenderer.invoke("app:version"),
+	checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("app:checkForUpdates"),
+	checkForUpdatesOnStartup: (): Promise<UpdateCheckResult | null> => ipcRenderer.invoke("app:checkForUpdatesOnStartup"),
+	dismissStartupUpdate: (): Promise<void> => ipcRenderer.invoke("app:dismissStartupUpdate"),
 	/** Window chrome the renderer has to lay out around (caption strip, backdrop). */
 	shell: shellInfo,
 	/** The user's home directory — the working directory a fresh install starts in. */
@@ -96,9 +103,15 @@ const api = {
 	onBrowserElementSelected: (listener: (selection: BrowserElementSelection) => void) => subscribe("browser:elementSelected", listener),
 	onBrowserInspectStopped: (listener: (state: { guestId: number }) => void) => subscribe("browser:inspectStopped", listener),
 	browserSetInspect: (guestId: number, enabled: boolean): Promise<void> => ipcRenderer.invoke("browser:setInspect", guestId, enabled),
+	browserBindAutomation: (requestId: string, guestId: number): Promise<void> =>
+		ipcRenderer.invoke("browser:bindAutomation", requestId, guestId),
 
 	setTheme: (theme: "light" | "dark" | "system") =>
 		ipcRenderer.invoke("theme:set", theme),
+
+	/** Applies a system window material; resolves with the shell it left behind. */
+	setWindowMaterial: (material: WindowMaterial): Promise<ShellInfo> =>
+		ipcRenderer.invoke("window:setMaterial", material),
 
 	gitStatus: (cwd: string) => ipcRenderer.invoke("git:status", cwd),
 	gitDiff: (req: GitDiffRequest) => ipcRenderer.invoke("git:diff", req),
@@ -200,6 +213,14 @@ const api = {
 		ipcRenderer.invoke("settings:fetchModels", req),
 	modelTest: (req: ModelTestRequest): Promise<ModelTestResult> =>
 		ipcRenderer.invoke("settings:testModel", req),
+
+	skillsList: (): Promise<SkillsSnapshot> => ipcRenderer.invoke("skills:list"),
+	skillsSetEnabled: (request: SetSkillEnabledRequest): Promise<SkillsSnapshot> =>
+		ipcRenderer.invoke("skills:setEnabled", request),
+
+	tokenUsage: (): Promise<TokenUsageReport> => ipcRenderer.invoke("stats:tokens"),
+	tokenUsageRescan: (): Promise<TokenUsageReport> => ipcRenderer.invoke("stats:rescanTokens"),
+	tokenUsageExport: (): Promise<string | null> => ipcRenderer.invoke("stats:exportTokens"),
 
 	proxyStatus: (): Promise<ProxyStatus> => ipcRenderer.invoke("settings:proxyStatus"),
 	proxySave: (manual: string | null): Promise<ProxyStatus> => ipcRenderer.invoke("settings:saveProxy", manual),

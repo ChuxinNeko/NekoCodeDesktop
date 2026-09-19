@@ -62,3 +62,72 @@ describe("browser element inspector", () => {
 		expect(f.events.some((event) => event.channel === "browser:elementSelected")).toBe(false);
 	});
 });
+
+describe("browser automation binding", () => {
+	test("a bound request resolves to the registered guest and stays active", async () => {
+		const f = fixture();
+		let opened = false;
+		const pending = f.inspector.requestAutomation("req-1", () => { opened = true; });
+		expect(opened).toBe(true);
+		f.inspector.bindAutomation(f.owner, "req-1", 12);
+		expect(await pending).toBe(f.guest as unknown as WebContents);
+		expect(f.inspector.automationGuest()).toBe(f.guest as unknown as WebContents);
+	});
+
+	test("rejects a forged sender, unknown ids, and guests that were never registered", async () => {
+		const f = fixture();
+		expect(() => f.inspector.bindAutomation({} as WebContents, "req-1", 12)).toThrow("owner");
+		expect(() => f.inspector.bindAutomation(f.owner, "missing", 12)).toThrow("Unknown");
+		const pending = f.inspector.requestAutomation("req-2", () => {});
+		expect(() => f.inspector.bindAutomation(f.owner, "req-2", 99)).toThrow("available");
+		await expect(pending).rejects.toThrow("available");
+	});
+
+	test("duplicate request ids reject", async () => {
+		const f = fixture();
+		const pending = f.inspector.requestAutomation("dup", () => {});
+		await expect(f.inspector.requestAutomation("dup", () => {})).rejects.toThrow("Duplicate");
+		await f.inspector.dispose();
+		await expect(pending).rejects.toThrow();
+	});
+
+	test("the tool's abort signal rejects the pending request", async () => {
+		const f = fixture();
+		const abort = new AbortController();
+		const pending = f.inspector.requestAutomation("abort-1", () => {}, abort.signal);
+		abort.abort();
+		await expect(pending).rejects.toThrow("aborted");
+	});
+
+	test("an already-aborted request rejects without installing or opening", async () => {
+		const f = fixture();
+		const abort = new AbortController();
+		abort.abort();
+		let opened = false;
+		await expect(
+			f.inspector.requestAutomation(
+				"pre-aborted",
+				() => { opened = true; },
+				abort.signal,
+			),
+		).rejects.toThrow("aborted");
+		expect(opened).toBe(false);
+	});
+
+	test("guest destruction clears the active automation guest", async () => {
+		const f = fixture();
+		const pending = f.inspector.requestAutomation("req-3", () => {});
+		f.inspector.bindAutomation(f.owner, "req-3", 12);
+		await pending;
+		f.guest.emit("destroyed");
+		expect(() => f.inspector.automationGuest()).toThrow();
+	});
+
+	test("dispose rejects every pending automation request", async () => {
+		const f = fixture();
+		const pending = f.inspector.requestAutomation("req-4", () => {});
+		await f.inspector.dispose();
+		await expect(pending).rejects.toThrow("shutting down");
+		expect(() => f.inspector.automationGuest()).toThrow();
+	});
+});

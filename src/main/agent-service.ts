@@ -51,7 +51,9 @@ import { cellIdForMessage, findTurnEntry } from "./checkpoint-anchor";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import { PluginService } from "./plugin-service";
-import { CellProjector, parseSlashCommand, type ProjectionEvent } from "./agent-projection";
+import { BuiltinSkillStore, resolveBuiltinSkillsDir } from "./builtin-skills";
+import type { SetSkillEnabledRequest, SkillOrigin, SkillSummary, SkillsSnapshot } from "../shared/skills";
+import { CellProjector, expandNekoSlashAlias, parseSlashCommand, type ProjectionEvent } from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
 import { decideModelAfterReload } from "./model-refresh";
 import { registerOAuthClientIdentity } from "./oauth-service";
@@ -66,8 +68,15 @@ import {
 	type WorkflowAnswer,
 } from "../shared/workflow";
 import { createWorkflowSession, type WorkflowRuntime } from "./workflow-runtime";
+import type { BrowserInspector } from "./browser-inspector";
+import {
+	createWebsiteCloneTools,
+	resolveWebsiteCloneTemplateDir,
+	WEBSITE_CLONE_TOOL_NAMES,
+} from "./website-clone-tools";
 import { isFusionConfig, type FusionConfig } from "../shared/fusion";
 import { resolveFusion } from "./fusion-config";
+import { withFusionUsage } from "./fusion-usage";
 import { BrowserPreview } from "./browser-preview";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
@@ -82,6 +91,8 @@ const THINKING_LEVELS: ThinkingLevel[] = [
 
 const HELP_TEXT = [
 	"/help — list commands",
+	"/design [brief] — create a design artifact in the current workspace",
+	"/clone-website <url...> — clone websites with native browser inspection",
 	"/new, /clear — start a new session",
 	"/abort — stop the current run",
 	"/compact [focus] — compact context",
@@ -224,6 +235,8 @@ export class AgentService {
 	private cwd: string | null = null;
 	private readonly preferencesPath: string;
 	readonly plugins: PluginService;
+	/** The skills that ship with the app, and which of them are switched on. */
+	readonly builtinSkills: BuiltinSkillStore;
 	/** Records pre-images for the open session's file-changing tool calls. */
 	private journal: FileJournalRecorder | null = null;
 	/** What the open session's extensions registered; replaced on every reload. */
@@ -233,6 +246,7 @@ export class AgentService {
 	constructor(
 		private readonly win: BrowserWindow,
 		private readonly modelConfig: ModelConfigService,
+		private readonly browserInspector: BrowserInspector,
 		private readonly antigravity?: AntigravityOAuthService,
 	) {
 		this.sessionDir = join(app.getPath("userData"), "sessions");
@@ -242,6 +256,14 @@ export class AgentService {
 			statePath: join(app.getPath("userData"), "plugins.json"),
 			onChange: () => this.emitPlugins(),
 		});
+		this.builtinSkills = new BuiltinSkillStore(
+			resolveBuiltinSkillsDir({
+				appPath: app.getAppPath(),
+				resourcesPath: process.resourcesPath,
+				override: process.env.NEKOCODE_BUILTIN_SKILLS,
+			}),
+			join(app.getPath("userData"), "builtin-skills.json"),
+		);
 		this.loadPreferences();
 	}
 
@@ -313,6 +335,68 @@ export class AgentService {
 		this.workflow?.refresh();
 		this.emit();
 		return this.pluginsSnapshot();
+	}
+
+	/**
+	 * The skills the settings page lists: the ones that ship with the app, and
+	 * the ones the open session actually loaded.
+	 *
+	 * The two lists answer different questions. The first is what can be switched
+	 * on and off here; the second is what the model was told about this session,
+	 * which also covers skills the user dropped in themselves and ones a package
+	 * brought along — those are not this app's to disable, but hiding them would
+	 * make the prompt look emptier than it is.
+	 */
+	async skillsSnapshot(): Promise<SkillsSnapshot> {
+		const { getAgentDir, getProjectConfigDir } = await pi();
+		const loaded = this.resourceLoader?.getSkills();
+		const origin = (skill: { filePath: string; sourceInfo?: { scope?: string; origin?: string } }): SkillOrigin => {
+			if (this.builtinSkills.isBuiltin(skill.filePath)) return "builtin";
+			if (skill.sourceInfo?.origin === "package") return "package";
+			return skill.sourceInfo?.scope === "project" ? "project" : "user";
+		};
+		const active: SkillSummary[] = (loaded?.skills ?? []).map((skill) => ({
+			name: skill.name,
+			description: skill.description,
+			path: skill.filePath,
+			origin: origin(skill),
+			// Loaded is enabled: a skill switched off never reaches this list.
+			enabled: true,
+		}));
+		return {
+			builtin: this.builtinSkills.list(),
+			active,
+			directories: {
+				user: join(getAgentDir(), "skills"),
+				project: this.cwd ? join(getProjectConfigDir(this.cwd), "skills") : null,
+			},
+			// Every diagnostic the loader emits is a problem — a bad frontmatter, a
+			// path that vanished, two skills claiming one name.
+			warnings: (loaded?.diagnostics ?? []).map(
+				(diagnostic) => `${diagnostic.message} — ${diagnostic.path}`,
+			),
+		};
+	}
+
+	/**
+	 * Switch a built-in skill on or off.
+	 *
+	 * A skill is nothing but a name and a description in the system prompt until
+	 * the model reads its file, so rebuilding that prompt *is* the change:
+	 * `reload()` re-runs the resource load, and the filter the loader was built
+	 * with reads the new state. Without a session there is nothing to rebuild and
+	 * the next one will pick it up.
+	 */
+	async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillsSnapshot> {
+		this.builtinSkills.setEnabled(request.name, request.enabled);
+		const session = this.session;
+		if (session) {
+			await session.reload();
+			this.extensions = this.resourceLoader?.getExtensions();
+			this.workflow?.refresh();
+			this.emit();
+		}
+		return this.skillsSnapshot();
 	}
 
 	/**
@@ -667,7 +751,7 @@ export class AgentService {
 	async send(req: SendPromptRequest): Promise<SendPromptResult> {
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
-		const text = req.text;
+		const text = expandNekoSlashAlias(req.text);
 		if (!text.trim()) return { accepted: false, error: "Empty message" };
 		const slash = parseSlashCommand(text);
 		if (slash?.command === "abort") {
@@ -1146,6 +1230,24 @@ export class AgentService {
 		if (generation !== this.generation) throw new Error("Session superseded");
 		const { SettingsManager } = await pi();
 		const modelRuntime = await this.getModelRuntime();
+		const cloneTools = createWebsiteCloneTools({
+			cwd: sessionManager.getCwd(),
+			browser: this.browserInspector,
+			templateDir: resolveWebsiteCloneTemplateDir({
+				appPath: app.getAppPath(),
+				resourcesPath: process.resourcesPath,
+				override: process.env.NEKOCODE_WEBSITE_CLONER_TEMPLATE,
+			}),
+			onNavigate: (request) => {
+				if (!this.win.isDestroyed()) {
+					this.win.webContents.send("browser:preview", {
+						...request,
+						sessionId: sessionManager.getSessionId(),
+						cwd: sessionManager.getCwd(),
+					});
+				}
+			},
+		});
 		// A brand-new session takes the welcome screen's picks; an opened one
 		// keeps the model it was saved with.
 		const model = freshCwd
@@ -1178,7 +1280,9 @@ export class AgentService {
 					this.savePreferences();
 				}
 			},
-			getPluginTools: () => this.pluginTools(),
+			getPluginTools: () => [...new Set([...this.pluginTools(), ...WEBSITE_CLONE_TOOL_NAMES])],
+			builtinSkills: this.builtinSkills,
+			customTools: cloneTools,
 			modelRuntime,
 			model,
 			thinkingLevel: freshCwd ? (this.pendingThinkingLevel ?? undefined) : undefined,
@@ -1385,7 +1489,7 @@ export class AgentService {
 				updatedAt: Date.now(),
 				messageCount: messages.length,
 			},
-			cells: this.projector.cells(),
+			cells: withFusionUsage(this.projector.cells(), sm.getBranch(), this.workflow?.state.hasRunningTasks),
 			checkpoints: this.listCheckpoints(),
 			fusion: this.workflow?.fusion ?? null,
 			workflow: this.workflow?.state.snapshot() ?? { request: null, todos: [], tasks: [] },

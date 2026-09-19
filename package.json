@@ -3,6 +3,12 @@
   "version": "0.0.1",
   "private": true,
   "description": "NekoCode Desktop - Electron desktop coding agent built on the PI agent core",
+  "author": "ChuxinNeko",
+  "homepage": "https://github.com/ChuxinNeko/NekoCodeDesktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChuxinNeko/NekoCodeDesktop.git"
+  },
   "main": "out/main/index.js",
   "workspaces": [
     "pi/packages/*",
@@ -11,6 +17,8 @@
   "scripts": {
     "dev": "bunx --bun --no-install electron-vite dev",
     "build": "bunx --bun --no-install electron-vite build",
+    "package": "electron-builder --publish never",
+    "package:dir": "electron-builder --dir --publish never",
     "start": "bunx --bun --no-install electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test src/main/ src/shared/",
@@ -55,6 +63,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "bun-types": "1.4.2",
     "electron": "44.3.0",
+    "electron-builder": "26.15.3",
     "electron-vite": "^5.0.0",
     "esbuild": "0.28.2",
     "shx": "0.4.0",

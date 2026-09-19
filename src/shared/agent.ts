@@ -56,6 +56,11 @@ export function modelLabel(
  * turn ran and are absent for history it did not watch.
  */
 export interface TurnUsage {
+	/** Role-specific totals for Fusion, captured with this turn's configuration. */
+	fusion?: {
+		lead: TurnUsage;
+		sidekick: { provider: string; model: string; usage?: TurnUsage };
+	};
 	provider: string;
 	model: string;
 	/** What the provider actually served, when it is not the model requested. */

@@ -3,6 +3,7 @@ import type { Automation } from "../../shared/automation";
 import { pi } from "../pi";
 import { createPromptResources } from "../workflow-runtime";
 import { createStatTool } from "../file-tools";
+import { NEKOCODE_TOOL_OPTIONS } from "../shell-environment";
 import { COMPACTION_INSTRUCTIONS, toolsForMode, type PromptContext } from "../prompt-library";
 
 const SUMMARY_LIMIT = 2_000;
@@ -57,6 +58,7 @@ export class AutomationRunner {
 			resourceLoader,
 			tools: toolsForMode(context()),
 			customTools: [createStatTool(automation.cwd)],
+			toolOptions: NEKOCODE_TOOL_OPTIONS,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
 			cwd: automation.cwd,
 			sessionManager,

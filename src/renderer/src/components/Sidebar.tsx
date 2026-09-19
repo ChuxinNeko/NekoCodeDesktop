@@ -86,7 +86,7 @@ export function Sidebar(props: SidebarProps) {
 	return (
 		<aside
 			className={cn(
-				"app-sidebar-backdrop flex h-full w-[260px] min-w-[220px] shrink-0 flex-col",
+				"flex h-full w-[260px] min-w-[220px] shrink-0 flex-col",
 				"border-r border-[color:var(--sidebar-border)]",
 			)}
 		>

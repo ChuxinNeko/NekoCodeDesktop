@@ -69,6 +69,23 @@ CI 工作流、release/publish 脚本与各包的 `repository`/`author` 元数�
 - 内嵌浏览器改为手动 `createElement("webview")`（React 会丢掉 `allowpopups`），并只保留主进程
   加固与弹窗转标签页，没有搬 cookie vault、标注与 CDP 自动化。
 
+## 版本与检查更新
+
+应用启动后延迟 3 秒自动检查更新，每次启动检查一次；发现新正式版时弹窗显示当前版本、
+新版本、发布时间和 Markdown 更新说明。选择“稍后提醒”后本次运行不再弹出，下次启动重新检查。
+点击“前往 GitHub 下载”打开对应 Release 页面。后台检查失败、没有正式版或已是最新版时保持安静。
+也可在 **设置 → 关于** 查看当前版本并手动检查更新。版本号维护在根目录 `package.json` 的
+`version` 中（当前为 `0.0.1`）；开发启动也读取此版本，不使用 Electron 自身的版本号。
+发行包使用 Electron 的应用版本，打包时应保持与此字段一致。
+
+更新源为 [ChuxinNeko/NekoCodeDesktop 的 GitHub Releases](https://github.com/ChuxinNeko/NekoCodeDesktop/releases)，
+使用 GitHub 标记的最新正式 Release，忽略草稿和预发布。发布新版本时先更新 `package.json`
+的版本号并构建，再创建对应的 `vX.Y.Z` Release（例如 `v0.1.0`），上传各平台安装包并填写更新说明。
+客户端按语义版本比较，展示新版信息，并提供发布页下载入口；安装由用户完成。
+
+检查更新复用应用的代理设置和已有 GitHub 登录凭据，公开仓库可匿名检查。手动检查时，尚未发布正式版、
+无权访问仓库、网络错误与请求限流会分别提示，不会将检查失败显示成“已是最新版”。
+
 ## 环境要求
 
 - Bun 1.4+

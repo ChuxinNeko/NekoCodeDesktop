@@ -46,6 +46,7 @@ export function TitleBar({
 			>
 				<PanelLeftIcon className="size-3.5" />
 			</IconButton>
+			<img src="./icon.png" alt="" aria-hidden="true" draggable={false} className="size-5 shrink-0" />
 			<span className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)] font-medium text-foreground/85">
 				NekoCode
 			</span>

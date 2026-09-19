@@ -101,6 +101,7 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 	const [inspecting, setInspecting] = useState(false);
 	const inspectGuest = useRef<number | null>(null);
 	const lastPreview = useRef<string | null>(null);
+	const pendingAutomation = useRef(new Map<string, string>());
 	const webviews = useRef(new Map<string, WebviewTag>());
 	const stripRef = useRef<HTMLDivElement | null>(null);
 	const hostRef = useRef<HTMLDivElement | null>(null);
@@ -142,6 +143,9 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 			});
 			webviews.current.get(tabId)?.remove();
 			webviews.current.delete(tabId);
+			for (const [requestId, pendingTabId] of pendingAutomation.current) {
+				if (pendingTabId === tabId) pendingAutomation.current.delete(requestId);
+			}
 		},
 		[activeTabId, t],
 	);
@@ -154,6 +158,23 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 		});
 	}, [createTab]);
 
+	const bindAutomation = useCallback((requestId: string, tabId: string) => {
+		const element = webviews.current.get(tabId);
+		try {
+			const guestId = element?.getWebContentsId();
+			if (guestId === undefined) {
+				pendingAutomation.current.set(requestId, tabId);
+				return;
+			}
+			pendingAutomation.current.delete(requestId);
+			void api.browserBindAutomation(requestId, guestId).catch((cause) => {
+				setError(String(cause));
+			});
+		} catch {
+			pendingAutomation.current.set(requestId, tabId);
+		}
+	}, []);
+
 	useEffect(() => {
 		if (!preview || lastPreview.current === preview.id) return;
 		lastPreview.current = preview.id;
@@ -162,8 +183,12 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 		if (existing) {
 			setActiveTabId(existing.id);
 			if (preview.kind === "html") webviews.current.get(existing.id)?.reload();
-		} else createTab(preview.url);
-	}, [preview, tabs, createTab]);
+			if (preview.kind === "automation") bindAutomation(preview.id, existing.id);
+		} else {
+			const tab = createTab(preview.url);
+			if (preview.kind === "automation") pendingAutomation.current.set(preview.id, tab.id);
+		}
+	}, [preview, tabs, createTab, bindAutomation]);
 
 	useEffect(() => api.onBrowserInspectStopped(({ guestId }) => {
 		if (inspectGuest.current !== guestId) return;
@@ -249,8 +274,18 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 				updateTab(tabId, { loading: false });
 				setError(t("browser.loadFailed", { url: event.validatedURL, reason: event.errorDescription }));
 			};
+			const onDomReady = () => {
+				for (const [requestId, pendingTabId] of pendingAutomation.current) {
+					if (pendingTabId !== tabId) continue;
+					pendingAutomation.current.delete(requestId);
+					void api
+						.browserBindAutomation(requestId, element.getWebContentsId())
+						.catch((cause) => setError(String(cause)));
+				}
+			};
 
 			element.addEventListener("did-start-loading", onStart);
+			element.addEventListener("dom-ready", onDomReady);
 			element.addEventListener("did-stop-loading", onStop);
 			element.addEventListener("did-navigate", sync);
 			element.addEventListener("did-navigate-in-page", sync);

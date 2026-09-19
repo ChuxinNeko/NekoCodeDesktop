@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useTheme } from "../../hooks/useTheme";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { getAvailableCodeThemes, type ThemeMode, type ThemeVariant } from "../../theme/theme.logic";
+import { WINDOW_MATERIALS, type WindowMaterial } from "../../../../shared/window";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuGroupLabel, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
@@ -16,6 +17,12 @@ const MODES: { id: ThemeMode; labelKey: TranslationKey }[] = [
 	{ id: "system", labelKey: "theme.system" },
 ];
 
+const MATERIAL_LABEL_KEYS: Record<WindowMaterial, TranslationKey> = {
+	opaque: "settings.windowMaterial.opaque",
+	mica: "settings.windowMaterial.mica",
+	acrylic: "settings.windowMaterial.acrylic",
+};
+
 export function AppearanceSettings() {
 	const { t } = useTranslation();
 	const {
@@ -26,11 +33,19 @@ export function AppearanceSettings() {
 		setCodeThemeId,
 		systemUiFont,
 		setSystemUiFont,
+		windowMaterial,
+		setWindowMaterial,
+		supportedWindowMaterials,
 		resetAllThemes,
 	} = useTheme();
 	const codeThemes = useMemo(() => getAvailableCodeThemes(resolvedTheme), [resolvedTheme]);
 	const activeCodeThemeId = themeState.codeThemeIds[resolvedTheme as ThemeVariant];
 	const [menuOpen, setMenuOpen] = useState(false);
+	const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
+	// Windows before 11 22H2 (and every other platform) can only paint the opaque
+	// shell; the rest stay listed but unpickable, so the setting explains itself
+	// instead of silently vanishing.
+	const hasBackdrops = supportedWindowMaterials.length > 1;
 
 	return (
 		<section className="flex flex-col divide-y divide-[color:var(--app-surface-divider)]">
@@ -95,6 +110,49 @@ export function AppearanceSettings() {
 									value={option.id}
 								>
 									{option.label}
+								</MenuRadioItem>
+							))}
+						</MenuRadioGroup>
+					</ComposerPickerMenuPopup>
+				</Menu>
+			</SettingsRow>
+
+			<SettingsRow
+				hint={
+					hasBackdrops ? t("settings.windowMaterialHint") : t("settings.windowMaterialUnsupported")
+				}
+				label={t("settings.windowMaterial")}
+			>
+				<Menu open={materialMenuOpen} onOpenChange={setMaterialMenuOpen}>
+					<MenuTrigger
+						render={
+							<Button
+								className={cn(COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME, "border-transparent")}
+								size="chip"
+								variant="ghost"
+							>
+								<span className="truncate">{t(MATERIAL_LABEL_KEYS[windowMaterial])}</span>
+								<ChevronDownIcon className="size-3 opacity-60" />
+							</Button>
+						}
+					/>
+					<ComposerPickerMenuPopup align="end" side="bottom">
+						<MenuRadioGroup
+							value={windowMaterial}
+							onValueChange={(value) => {
+								void setWindowMaterial(value as WindowMaterial);
+								setMaterialMenuOpen(false);
+							}}
+						>
+							<MenuGroupLabel>{t("settings.windowMaterial")}</MenuGroupLabel>
+							{WINDOW_MATERIALS.map((material) => (
+								<MenuRadioItem
+									key={material}
+									className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
+									disabled={!supportedWindowMaterials.includes(material)}
+									value={material}
+								>
+									{t(MATERIAL_LABEL_KEYS[material])}
 								</MenuRadioItem>
 							))}
 						</MenuRadioGroup>

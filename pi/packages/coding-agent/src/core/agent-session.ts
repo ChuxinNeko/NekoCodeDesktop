@@ -109,7 +109,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
-import { createAllToolDefinitions } from "./tools/index.ts";
+import { createAllToolDefinitions, type ToolsOptions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -210,6 +210,8 @@ export interface AgentSessionConfig {
 	compactionInstructions?: string;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
+	/** Options for the built-in filesystem and shell tools. */
+	toolOptions?: ToolsOptions;
 	/** Canonical model/auth runtime used by coding-agent internals. */
 	modelRuntime: ModelRuntime;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
@@ -350,6 +352,7 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
+	private readonly _toolOptions?: ToolsOptions;
 	private readonly _compactionInstructions?: string;
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
@@ -387,6 +390,7 @@ export class AgentSession {
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
+		this._toolOptions = config.toolOptions;
 		this._compactionInstructions = config.compactionInstructions;
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
@@ -2804,8 +2808,13 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					...this._toolOptions,
+					read: { ...this._toolOptions?.read, autoResizeImages },
+					bash: {
+						...this._toolOptions?.bash,
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+					},
 				});
 
 		this._baseToolDefinitions = new Map(

@@ -8,13 +8,16 @@ import type {
 	AgentSessionEvent,
 	ModelRuntime,
 	SessionManager,
+	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExecutionMode, ThinkingLevel } from "../shared/agent";
 import type { FusionConfig } from "../shared/fusion";
 import { FUSION_ENTRY, resolveFusion, savedFusion } from "./fusion-config";
+import { FUSION_USAGE_ENTRY, type FusionUsageRecord } from "./fusion-usage";
 import { completeHelper } from "./helper-completion";
 import {
+	aggregateTurnUsage,
 	hasNonThinkingContent,
 	textOf,
 	thinkingOf,
@@ -42,6 +45,7 @@ import {
 	type PromptContext,
 } from "./prompt-library";
 import { createStatTool, STAT_TOOL_NAME } from "./file-tools";
+import { NEKOCODE_TOOL_OPTIONS } from "./shell-environment";
 import { containsPath, resolveWorkspacePath } from "./workflow-paths";
 import { readSavedWorkflow, WorkflowState } from "./workflow-state";
 import { createWorkflowTools } from "./workflow-tools";
@@ -135,17 +139,45 @@ export function savedWorkflow(manager: Pick<SessionManager, "getBranch">) {
 	}
 	return undefined;
 }
+/**
+ * The skills that ship with the app, as the resource loader needs them.
+ *
+ * Both halves are needed because they happen at different times: the paths are
+ * fixed when the loader is built, while `isEnabled` is consulted again on every
+ * reload — which is what lets a switch in settings take effect on the open
+ * session instead of on the next one.
+ */
+export interface BuiltinSkillSource {
+	/** Every built-in SKILL.md, switched on or not. */
+	paths(): string[];
+	/** Whether a loaded skill survives. Non-built-in paths always do. */
+	isEnabled(filePath: string): boolean;
+}
+
 export async function createPromptResources(
 	cwd: string,
 	getContext: () => PromptContext,
 	isolated = false,
 	agentDir?: string,
+	builtinSkills?: BuiltinSkillSource,
 ) {
 	const { DefaultResourceLoader, getAgentDir } = await pi();
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir: agentDir ?? getAgentDir(),
 		noThemes: true,
+		// Helper sessions run with `noSkills`, and the core still honours explicit
+		// paths there — so the built-ins are attached to the main session only,
+		// which is the one the user is talking to.
+		...(builtinSkills && !isolated
+			? {
+					additionalSkillPaths: builtinSkills.paths(),
+					skillsOverride: (base) => ({
+						skills: base.skills.filter((skill) => builtinSkills.isEnabled(skill.filePath)),
+						diagnostics: base.diagnostics,
+					}),
+				}
+			: {}),
 		...(isolated
 			? {
 					noExtensions: true,
@@ -181,6 +213,8 @@ interface WorkflowRuntimeOptions {
 	 * a hot install or a toggle takes effect without rebuilding the session.
 	 */
 	getPluginTools?: () => readonly string[];
+	/** The skills that ship with the app; absent in tests and helper sessions. */
+	builtinSkills?: BuiltinSkillSource;
 }
 export class WorkflowRuntime {
 	private fusionConfig: FusionConfig | null;
@@ -497,6 +531,8 @@ export class WorkflowRuntime {
 		const parent = this.session;
 		if (!parent?.model) throw new Error("Select a model before running a helper");
 		if (this.closed || signal?.aborted) throw new Error("Helper cancelled");
+		// Capture before awaiting setup: a queued prompt can arrive while the child runs.
+		const turnTimestamp = [...parent.messages].reverse().find((message) => message.role === "user")?.timestamp;
 		const { createAgentSession, SessionManager } = await pi();
 		const fusion = this.fusionConfig
 			? await resolveFusion(this.fusionConfig, this.options.modelRuntime) : null;
@@ -531,6 +567,7 @@ export class WorkflowRuntime {
 					...(allowWorkerShell ? ["bash", "powershell"] : [])].includes(name),
 			),
 			customTools: [createStatTool(this.options.cwd)],
+			toolOptions: NEKOCODE_TOOL_OPTIONS,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
 		});
 		const abort = () => {
@@ -543,6 +580,35 @@ export class WorkflowRuntime {
 		// UI show the worker working.
 		const started = new Map<string, Extract<TaskStep, { kind: "tool" }>>();
 		const reasoning = new Map<number, Reasoning>();
+		const callTiming = new Map<number, { startedAt: number; endedAt?: number }>();
+		let previousCallEnd: number | undefined;
+		const unsubscribeUsage = session.subscribe((event) => {
+			if (!fusion || role === "commit" || turnTimestamp === undefined) return;
+			if (event.type !== "message_start" && event.type !== "message_end") return;
+			if (event.message.role !== "assistant") return;
+			const timestamp = event.message.timestamp;
+			if (event.type === "message_start") {
+				callTiming.set(timestamp, { startedAt: Date.now() });
+				return;
+			}
+			const timing = callTiming.get(timestamp);
+			if (timing) timing.endedAt = Date.now();
+			const usage = aggregateTurnUsage([event.message], callTiming);
+			if (usage && timing?.endedAt !== undefined) {
+				// Include tools between calls once, while modelMs remains inference-only.
+				usage.durationMs = Math.max(0, timing.endedAt - (previousCallEnd ?? timing.startedAt));
+				previousCallEnd = timing.endedAt;
+			}
+			if (usage && !this.closed) {
+				try {
+					this.options.sessionManager.appendCustomEntry(FUSION_USAGE_ENTRY, {
+						turnTimestamp, usage,
+					} satisfies FusionUsageRecord);
+				} catch (error) {
+					this.options.onError?.("Sidekick 用量未能保存：" + String(error));
+				}
+			}
+		});
 		const pushReasoning = (entry: Reasoning, report: (step: TaskStep) => void): void => {
 			const step = sampleReasoning(entry);
 			if (step) report(step);
@@ -634,6 +700,7 @@ export class WorkflowRuntime {
 			});
 		} finally {
 			signal?.removeEventListener("abort", abort);
+			unsubscribeUsage();
 			unsubscribe?.();
 			session.dispose();
 		}
@@ -708,6 +775,7 @@ export class WorkflowRuntime {
 export interface WorkflowSessionOptions extends WorkflowRuntimeOptions {
 	model?: Model<Api>;
 	thinkingLevel?: ThinkingLevel;
+	customTools?: ToolDefinition[];
 }
 export async function createWorkflowSession(options: WorkflowSessionOptions) {
 	const workflow = new WorkflowRuntime(options);
@@ -724,6 +792,7 @@ export async function createWorkflowSession(options: WorkflowSessionOptions) {
 		() => workflow.context(),
 		false,
 		options.agentDir,
+		options.builtinSkills,
 	);
 	const { createAgentSession } = await pi();
 	try {
@@ -735,7 +804,8 @@ export async function createWorkflowSession(options: WorkflowSessionOptions) {
 			model: fusion?.lead ?? options.model,
 			thinkingLevel: fusion?.config.leadThinkingLevel ?? options.thinkingLevel,
 			resourceLoader,
-			customTools: [...workflow.tools(), createStatTool(options.cwd)],
+			customTools: [...workflow.tools(), createStatTool(options.cwd), ...(options.customTools ?? [])],
+			toolOptions: NEKOCODE_TOOL_OPTIONS,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
 		});
 		workflow.attach(result.session);

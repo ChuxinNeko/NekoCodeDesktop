@@ -1,7 +1,7 @@
-import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AgentCell, TurnUsage } from "../../../shared/agent";
+import type { AgentCell } from "../../../shared/agent";
 import type { CheckpointSummary } from "../../../shared/checkpoints";
 import type { WorkflowTask } from "../../../shared/workflow";
 import {
@@ -11,18 +11,11 @@ import {
 	type WorkItem,
 	type WorkRow,
 } from "../../../shared/transcript";
-import {
-	formatCost,
-	formatDuration,
-	formatPercent,
-	formatRate,
-	formatTokens,
-	usageStats,
-} from "../../../shared/usage";
+import { UsagePanel } from "./chat/UsagePanel";
 import { useTranslation, type TranslationKey } from "../i18n";
 import { elapsedSeconds, formatElapsed, useNow } from "../lib/elapsed";
 import { cn } from "../lib/utils";
-import { ChevronDownIcon, ChevronRightIcon, CircleAlertIcon, FileIcon, FolderIcon, GaugeIcon, Loader2Icon, SearchIcon, TerminalIcon, TriangleAlertIcon, HammerIcon, Undo2Icon } from "../lib/icons";
+import { ChevronDownIcon, ChevronRightIcon, CircleAlertIcon, FileIcon, FolderIcon, Loader2Icon, SearchIcon, TerminalIcon, TriangleAlertIcon, HammerIcon, Undo2Icon } from "../lib/icons";
 import { Spinner } from "./ui/spinner";
 import { FileTypeIcon } from "../lib/fileIcons";
 import { highlightFileToHtml } from "../lib/codeHighlight";
@@ -106,125 +99,6 @@ function CellThinking({ cell }: { cell: AssistantCellData }) {
 			startedAt={cell.thinkingStartedAt ?? cell.timestamp}
 			endedAt={cell.thinkingEndedAt}
 		/>
-	);
-}
-
-/**
- * What the finished call spent, behind an icon at the foot of the answer.
- *
- * Collapsed to a single glyph by default: this is reference material you go
- * looking for, and a row of numbers under every answer would compete with the
- * answers themselves. Rows the provider did not report are dropped rather than
- * shown as zero — "not reported" and "zero" are different claims.
- */
-function UsagePanel({ usage }: { usage: TurnUsage }) {
-	const { t } = useTranslation();
-	const [open, setOpen] = useState(false);
-	const stats = usageStats(usage);
-
-	const rows: { key: string; label: string; value: string }[] = [
-		{
-			key: "model",
-			label: t("usage.model"),
-			value: usage.provider ? `${usage.provider}/${usage.model}` : usage.model,
-		},
-		...(usage.responseModel
-			? [{ key: "servedBy", label: t("usage.servedBy"), value: usage.responseModel }]
-			: []),
-		{ key: "input", label: t("usage.input"), value: formatTokens(usage.input) },
-		{ key: "output", label: t("usage.output"), value: formatTokens(usage.output) },
-		...(usage.reasoning !== undefined
-			? [
-					{
-						key: "reasoning",
-						label: t("usage.reasoning"),
-						value: formatTokens(usage.reasoning),
-					},
-				]
-			: []),
-		{ key: "cacheRead", label: t("usage.cacheRead"), value: formatTokens(usage.cacheRead) },
-		...(usage.cacheWrite > 0
-			? [
-					{
-						key: "cacheWrite",
-						label: t("usage.cacheWrite"),
-						value: formatTokens(usage.cacheWrite),
-					},
-				]
-			: []),
-		...(stats.cacheHitRate !== null
-			? [
-					{
-						key: "cacheHitRate",
-						label: t("usage.cacheHitRate"),
-						value: formatPercent(stats.cacheHitRate),
-					},
-				]
-			: []),
-		{ key: "total", label: t("usage.total"), value: formatTokens(usage.totalTokens) },
-		{ key: "calls", label: t("usage.calls"), value: String(usage.calls) },
-		...(stats.durationSeconds !== null
-			? [
-					{
-						key: "duration",
-						label: t("usage.duration"),
-						value: formatDuration(stats.durationSeconds),
-					},
-				]
-			: []),
-		// Only worth its own row once tools have pushed the two apart; on a
-		// single-call turn it would just repeat the line above it.
-		...(stats.modelSeconds !== null &&
-		stats.durationSeconds !== null &&
-		stats.durationSeconds - stats.modelSeconds >= 0.1
-			? [
-					{
-						key: "modelTime",
-						label: t("usage.modelTime"),
-						value: formatDuration(stats.modelSeconds),
-					},
-				]
-			: []),
-		...(stats.tokensPerSecond !== null
-			? [{ key: "speed", label: t("usage.speed"), value: formatRate(stats.tokensPerSecond) }]
-			: []),
-		...(usage.costUsd !== undefined
-			? [{ key: "cost", label: t("usage.cost"), value: formatCost(usage.costUsd) }]
-			: []),
-	];
-
-	return (
-		<div className="flex flex-col gap-1">
-			<button
-				type="button"
-				aria-expanded={open}
-				aria-label={t("usage.title")}
-				title={t("usage.title")}
-				onClick={() => setOpen((value) => !value)}
-				className={cn(
-					"inline-flex w-fit items-center rounded p-0.5",
-					MUTED_LABEL_TEXT_CLASS_NAME,
-				)}
-			>
-				<GaugeIcon className="size-3.5" />
-			</button>
-			{open ? (
-				<dl
-					className={cn(
-						"grid w-fit grid-cols-[auto_auto] gap-x-6 gap-y-0.5",
-						"border-l border-border/60 pl-3",
-						"text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70",
-					)}
-				>
-					{rows.map((row) => (
-						<Fragment key={row.key}>
-							<dt>{row.label}</dt>
-							<dd className="text-right font-mono tabular-nums">{row.value}</dd>
-						</Fragment>
-					))}
-				</dl>
-			) : null}
-		</div>
 	);
 }
 

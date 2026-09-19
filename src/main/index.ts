@@ -1,8 +1,9 @@
 import type { FusionConfig } from "../shared/fusion";
+import appIconPng from "../../resources/icons/icon.png?asset";
+import appIconIco from "../../resources/icons/icon.ico?asset";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, session, shell } from "electron";
 import { existsSync, statSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { release } from "node:os";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AgentService } from "./agent-service";
 import { migrateAgentHome } from "./agent-home";
@@ -23,6 +24,9 @@ import { ProxyService } from "./proxy-service";
 import { PluginCatalogService } from "./plugin-catalog";
 import { PullRequestService } from "./pull-request-service";
 import { TerminalService } from "./terminal-service";
+import { TokenStatsService } from "./token-stats";
+import { tokenUsageCsv } from "./token-usage-export";
+import { appVersionInfo, AppUpdateService } from "./app-updates";
 import type {
 	InstallPluginRequest,
 	PluginActionRequest,
@@ -39,6 +43,7 @@ import type {
 	ThinkingLevel,
 } from "../shared/agent";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
+import type { SetSkillEnabledRequest } from "../shared/skills";
 import type { RestoreCheckpointRequest } from "../shared/checkpoints";
 import type {
 	TerminalCreateRequest,
@@ -56,7 +61,17 @@ import type {
 	PullRequestFilter,
 } from "../shared/pullRequests";
 import { FS_READ_MAX_BYTES, type FsEntry, type FsReadResult } from "../shared/files";
-import { TITLE_BAR_HEIGHT, type ShellInfo } from "../shared/window";
+import {
+	TITLE_BAR_HEIGHT,
+	isWindowMaterial,
+	type ShellInfo,
+	type WindowMaterial,
+} from "../shared/window";
+import {
+	WindowMaterialStore,
+	applyWindowMaterial,
+	supportedWindowMaterials,
+} from "./window-material";
 
 // Set before anything reads app.getPath("userData"): launched as
 // `electron out/main/index.js` the entry directory has no package.json, so Electron
@@ -72,6 +87,26 @@ let proxyService: ProxyService | null = null;
 let automationService: AutomationService | null = null;
 let githubAuth: GitHubAuthService | null = null;
 let pullRequests: PullRequestService | null = null;
+let tokenStats: TokenStatsService | null = null;
+
+/**
+ * The token panel reads the transcripts directly, so it needs no session to be
+ * open and survives the agent service being torn down with a window. It keeps
+ * its incremental parse state, which is what makes a refresh cheap.
+ */
+function tokenStatsService(): TokenStatsService {
+	if (!tokenStats) {
+		tokenStats = new TokenStatsService({
+			sessionDir: join(app.getPath("userData"), "sessions"),
+			automationDir: join(app.getPath("userData"), "automation-sessions"),
+			providerLabels: () =>
+				Object.fromEntries(
+					(modelConfig?.list() ?? []).map((profile) => [`nekocode-${profile.id}`, profile.name]),
+				),
+		});
+	}
+	return tokenStats;
+}
 
 /**
  * First CLI argument that names an existing directory. `electron . <dir>` (or a
@@ -98,20 +133,26 @@ function initialProjectDirectory(): string | null {
 }
 
 /**
- * `backgroundMaterial` only does anything from Windows 11 22H2 (build 22621) on.
- * Below that the transparent window background Mica needs would paint plain
- * black, so those builds keep the opaque shell.
+ * The window shell the renderer lays out against. Resolved once at startup so
+ * the preload can hand it over synchronously and the first paint already knows
+ * which material it is sitting on.
  */
-function supportsMica(): boolean {
-	if (process.platform !== "win32") return false;
-	const build = Number(release().split(".")[2]);
-	return Number.isFinite(build) && build >= 22621;
+const supportedMaterials = supportedWindowMaterials();
+let windowMaterialStore: WindowMaterialStore | null = null;
+let activeMaterial: WindowMaterial = "opaque";
+
+function shellInfo(): ShellInfo {
+	return {
+		material: activeMaterial,
+		materials: supportedMaterials,
+		titleBarHeight: TITLE_BAR_HEIGHT,
+	};
 }
 
-const shellInfo: ShellInfo = {
-	backdrop: supportsMica() ? "mica" : "none",
-	titleBarHeight: TITLE_BAR_HEIGHT,
-};
+/** The solid shell color, used whenever no backdrop is behind the window. */
+function opaqueBackgroundColor(): string {
+	return nativeTheme.shouldUseDarkColors ? "#1a1a19" : "#f9f9f7";
+}
 
 /**
  * The caption glyphs are drawn by Windows, not by us, so they only get a single
@@ -120,8 +161,8 @@ const shellInfo: ShellInfo = {
  */
 function captionOverlay() {
 	return {
-		// Transparent so the title bar row behind the buttons (and the Mica
-		// material behind that) shows through instead of a flat patch of color.
+		// Transparent so the title bar row behind the buttons (and whatever
+		// material backs the window) shows through instead of a flat patch of color.
 		color: "#00000000",
 		symbolColor: nativeTheme.shouldUseDarkColors ? "#ffffff" : "#1a1a19",
 		height: TITLE_BAR_HEIGHT,
@@ -129,21 +170,23 @@ function captionOverlay() {
 }
 
 function createWindow(): void {
-	const mica = shellInfo.backdrop === "mica";
+	// A system backdrop is composited behind the window by DWM, so the window's
+	// own background has to be fully transparent for it to show at all. Bound to
+	// a local so the narrowing survives into the options object below.
+	const material = activeMaterial;
+	const backdrop = material === "mica" || material === "acrylic";
 	const win = new BrowserWindow({
 		width: 1440,
 		height: 900,
 		minWidth: 1100,
 		minHeight: 700,
 		title: "NekoCode Desktop",
-		// Mica is composited behind the window by DWM, so the window's own
-		// background has to be fully transparent for it to show at all.
-		backgroundColor: mica
-			? "#00000000"
-			: nativeTheme.shouldUseDarkColors
-				? "#1a1a19"
-				: "#f9f9f7",
-		...(mica ? { backgroundMaterial: "mica" as const } : {}),
+		icon: process.platform === "win32" ? appIconIco : appIconPng,
+		backgroundColor: backdrop ? "#00000000" : opaqueBackgroundColor(),
+		// Only handed over on the platforms that understand it: elsewhere the
+		// option is inert at best, and on Windows 10 the backdrop it asks for is
+		// what turns the window into a blank rectangle.
+		...(backdrop ? { backgroundMaterial: material } : {}),
 		// The app draws its own caption strip. `hidden` rather than `frame: false`
 		// so Windows still gives the window its rounded corners, drop shadow and
 		// resize borders; the caption buttons stay system-drawn (below) so Snap
@@ -166,7 +209,8 @@ function createWindow(): void {
 		},
 	});
 
-	browserInspector = installBrowserGuards(win);
+	const inspector = installBrowserGuards(win);
+	browserInspector = inspector;
 
 	if (process.platform === "win32") {
 		// Repaint the caption glyphs when the app flips light/dark, otherwise they
@@ -193,7 +237,7 @@ function createWindow(): void {
 			openExternal: (url) => shell.openExternal(url),
 			emit: (event) => { if (!win.isDestroyed()) win.webContents.send("oauth:event", event); },
 	});
-	agentService = new AgentService(win, modelConfig, antigravity);
+	agentService = new AgentService(win, modelConfig, inspector, antigravity);
 	oauthService = new OAuthService({
 		antigravity,
 		userDataDir: app.getPath("userData"),
@@ -251,9 +295,25 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
+	const versionInfo = () => appVersionInfo(app.isPackaged, app.getVersion());
+	const appUpdates = new AppUpdateService({
+		currentVersion: () => versionInfo().version,
+		resolveToken: async () => (await githubAuth?.resolveToken())?.token ?? null,
+	});
+	ipcMain.handle("app:version", versionInfo);
+	ipcMain.handle("app:checkForUpdates", () => appUpdates.check());
+	ipcMain.handle("app:checkForUpdatesOnStartup", () => appUpdates.checkOnStartup());
+	ipcMain.handle("app:dismissStartupUpdate", () => appUpdates.dismissStartupUpdate());
 	ipcMain.handle("browser:setInspect", (event, guestId: number, enabled: boolean) => {
 		if (!Number.isInteger(guestId) || typeof enabled !== "boolean") throw new Error("Invalid inspector request");
 		return browserInspector?.setInspect(event.sender, guestId, enabled);
+	});
+	ipcMain.handle("browser:bindAutomation", (event, requestId: string, guestId: number) => {
+		if (typeof requestId !== "string" || requestId.length === 0 || requestId.length > 128 || !Number.isInteger(guestId)) {
+			throw new Error("Invalid automation bind request");
+		}
+		if (!browserInspector) throw new Error("Browser automation is unavailable");
+		return browserInspector.bindAutomation(event.sender, requestId, guestId);
 	});
 	ipcMain.handle("app:initialProjectDir", () => initialProjectDirectory());
 
@@ -261,7 +321,27 @@ function registerIpc(): void {
 	// theme can pick its shell material before the first paint, with no flash of
 	// the wrong background.
 	ipcMain.on("app:shellInfo", (event) => {
-		event.returnValue = shellInfo;
+		event.returnValue = shellInfo();
+	});
+
+	// The renderer owns the picker, so the choice arrives here to be applied and
+	// remembered; `app:shellInfo` is the read path back (on the next launch, and
+	// for the picker's own list of what this machine can render).
+	ipcMain.handle("window:setMaterial", (event, material: unknown) => {
+		if (!isWindowMaterial(material)) {
+			throw new Error(`Unknown window material: ${String(material)}`);
+		}
+		// Refuse rather than apply: below Windows 11 22H2 a backdrop leaves the
+		// window transparent over nothing.
+		if (!supportedMaterials.includes(material)) {
+			throw new Error(`Window material is not supported on this system: ${material}`);
+		}
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (!win) throw new Error("Window material can only be set from a window");
+		activeMaterial = material;
+		applyWindowMaterial(win, material, opaqueBackgroundColor());
+		windowMaterialStore?.save(material === "opaque" ? null : material);
+		return shellInfo();
 	});
 
 	// Also synchronous: it is the default working directory, so the welcome
@@ -441,6 +521,34 @@ function registerIpc(): void {
 		agentService?.testConfiguredModel(req),
 	);
 
+	ipcMain.handle("skills:list", () => agentService?.skillsSnapshot());
+	ipcMain.handle("skills:setEnabled", (_e, request: SetSkillEnabledRequest) =>
+		agentService?.setSkillEnabled(request),
+	);
+
+	ipcMain.handle("stats:tokens", () => tokenStatsService().report());
+	// A full re-parse, for when the numbers are doubted rather than merely stale.
+	ipcMain.handle("stats:rescanTokens", () => {
+		tokenStatsService().reset();
+		return tokenStatsService().report();
+	});
+	ipcMain.handle("stats:exportTokens", async (event) => {
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (!win) return null;
+		const report = await tokenStatsService().report();
+		const stamp = new Date().toISOString().slice(0, 10);
+		const result = await dialog.showSaveDialog(win, {
+			title: "导出 Token 统计",
+			defaultPath: join(app.getPath("downloads"), `nekocode-tokens-${stamp}.csv`),
+			filters: [{ name: "CSV", extensions: ["csv"] }],
+		});
+		if (result.canceled || !result.filePath) return null;
+		// A BOM so Excel opens the file as UTF-8 rather than mojibake — session
+		// titles and workspace paths are routinely not ASCII.
+		await writeFile(result.filePath, `﻿${tokenUsageCsv(report)}`, "utf8");
+		return result.filePath;
+	});
+
 	ipcMain.handle("settings:proxyStatus", () => proxyService?.current());
 	ipcMain.handle("settings:saveProxy", (_e, manual: string | null) => proxyService?.save(manual));
 
@@ -501,6 +609,7 @@ function registerIpc(): void {
 const PROXY_STARTUP_TIMEOUT_MS = 3000;
 
 app.whenReady().then(async () => {
+	if (process.platform === "darwin") app.dock?.setIcon(appIconPng);
 	if (process.platform !== "darwin") Menu.setApplicationMenu(null);
 	try {
 		// Before anything reads the agent home: the kernel is branded to
@@ -531,6 +640,10 @@ app.whenReady().then(async () => {
 	await Promise.race([proxyReady, new Promise((resolve) => setTimeout(resolve, PROXY_STARTUP_TIMEOUT_MS))]);
 
 	registerIpc();
+	// Before the window exists: the shell material is a window-construction
+	// option, so a preference saved last run has to be known by now.
+	windowMaterialStore = new WindowMaterialStore(app.getPath("userData"));
+	activeMaterial = windowMaterialStore.resolve(supportedMaterials);
 	createWindow();
 
 	app.on("activate", () => {

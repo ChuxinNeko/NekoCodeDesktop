@@ -1,0 +1,171 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the current version to GitHub Releases (off = build artifacts only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Serialize releases so an older build cannot become Latest after a newer version.
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Detect a version increase
+        id: plan
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          PUBLISH_RELEASE: ${{ inputs.publish }}
+        run: bun scripts/release-plan.ts
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: win
+            arch: x64
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+          - os: macos-15
+            platform: mac
+            arch: arm64
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Build PI runtime and model data
+        run: bun run pi:build
+      - name: Type check
+        run: bun run typecheck
+      - name: Run application tests
+        run: bun run test
+      - name: Build application
+        run: bun run build
+      - name: Build installers
+        run: bun run package --${{ matrix.platform }} --${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+
+  release:
+    needs: [plan, build]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: installers
+      - name: Publish complete release with notes and checksums
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+        with:
+          script: |
+            const fs = require('node:fs/promises');
+            const path = require('node:path');
+            const { createHash } = require('node:crypto');
+            const { owner, repo } = context.repo;
+            const version = process.env.RELEASE_VERSION;
+            const tag = process.env.RELEASE_TAG;
+            const prerelease = process.env.RELEASE_PRERELEASE === 'true';
+            const suffixes = ['win-x64.exe', 'mac-x64.dmg', 'mac-x64.zip', 'mac-arm64.dmg', 'mac-arm64.zip', 'linux-x64.AppImage', 'linux-x64.deb'];
+            const names = suffixes.map(suffix => `NekoCode-Desktop-${version}-${suffix}`);
+            // Verify every platform before creating a tag or release.
+            const sums = [];
+            for (const name of names) {
+              const data = await fs.readFile(path.join('installers', name));
+              sums.push(`${createHash('sha256').update(data).digest('hex')}  ${name}`);
+            }
+            await fs.writeFile('installers/SHA256SUMS.txt', sums.join('\n') + '\n');
+            names.push('SHA256SUMS.txt');
+
+            let existing;
+            try {
+              existing = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (existing && !existing.draft) {
+              throw new Error(`Release ${tag} is already published; increase package.json version instead of overwriting it.`);
+            }
+            // A retry may reuse a draft, but it must never move an existing tag.
+            try {
+              let object = (await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` })).data.object;
+              while (object.type === 'tag') object = (await github.rest.git.getTag({ owner, repo, tag_sha: object.sha })).data.object;
+              if (object.sha !== context.sha) throw new Error(`Tag ${tag} points to another commit`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const notes = await github.rest.repos.generateReleaseNotes({ owner, repo, tag_name: tag, target_commitish: context.sha });
+            const body = `${notes.data.body}\n\n## Downloads\nWindows: EXE installer · macOS: Intel / Apple Silicon DMG or ZIP · Linux: AppImage or DEB.\n\nSHA-256 checksums are provided in SHA256SUMS.txt.\n\nThese builds are not signed with a Windows publisher certificate or notarized by Apple.`;
+            const release = existing ?? (await github.rest.repos.createRelease({ owner, repo, tag_name: tag, target_commitish: context.sha, name: `NekoCode Desktop ${tag}`, body, draft: true, prerelease })).data;
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { owner, repo, release_id: release.id, per_page: 100 });
+            for (const name of names) {
+              const old = assets.find(asset => asset.name === name);
+              if (old) await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: old.id });
+              const data = await fs.readFile(path.join('installers', name));
+              await github.rest.repos.uploadReleaseAsset({ owner, repo, release_id: release.id, name, data, headers: { 'content-type': 'application/octet-stream', 'content-length': data.length } });
+            }
+            // Latest changes only after all seven installers and the checksum file are uploaded.
+            await github.rest.repos.updateRelease({ owner, repo, release_id: release.id, name: `NekoCode Desktop ${tag}`, body, draft: false, prerelease, make_latest: prerelease ? 'false' : 'true' });
+            core.info(`Published ${tag}: ${release.html_url}`);

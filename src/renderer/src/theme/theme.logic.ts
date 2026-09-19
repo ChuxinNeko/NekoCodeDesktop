@@ -8,10 +8,12 @@ import {
   normalizeFontFamilyCssValue,
   normalizeMonospaceFontFamilyCssValue,
 } from "../lib/fontFamily";
+import type { WindowMaterial } from "../../../shared/window";
 
 export type ThemeMode = "light" | "dark" | "system";
 export type ThemeVariant = "light" | "dark";
-export type WindowMaterial = "opaque" | "translucent";
+/** Whether the shell lets the window material through (`translucent`) or paints itself. */
+export type ShellTranslucency = "opaque" | "translucent";
 
 export interface ThemeFonts {
   ui: string | null;
@@ -60,7 +62,7 @@ export interface ThemeSharePayload {
 }
 
 export interface ThemeCssVariableBuild {
-  material: WindowMaterial;
+  material: ShellTranslucency;
   variables: Record<string, string>;
 }
 
@@ -690,7 +692,7 @@ export function buildThemeCssVariables(
   options?: {
     electron?: boolean;
     isMac?: boolean;
-    micaBackdrop?: boolean;
+    windowMaterial?: WindowMaterial;
     systemUiFont?: boolean;
   },
 ): ThemeCssVariableBuild {
@@ -698,21 +700,41 @@ export function buildThemeCssVariables(
   const codexVariables = resolvedTokens.codexVariables;
   const readCodexVariable = (name: string) => getRequiredVariable(codexVariables, name);
   // A translucent shell needs a system material behind the window: macOS
-  // vibrancy, or Windows 11 Mica (main turns that on and reports it through
-  // ShellInfo.backdrop). Anywhere without one — Linux, Windows 10, the browser —
-  // a transparent body would bleed through to nothing, so the shell stays opaque.
-  const material: WindowMaterial =
-    options?.electron === true &&
-    !pack.theme.opaqueWindows &&
-    (options?.isMac === true || options?.micaBackdrop === true)
+  // vibrancy, or a Windows 11 backdrop (mica/acrylic) that main has already
+  // confirmed this build can composite and reported through ShellInfo.material.
+  // Anywhere without one — Linux, Windows 10, the browser — a transparent body
+  // would bleed through to nothing, so the shell stays opaque whatever the user
+  // picked and whatever the theme pack asks for.
+  const hasWindowMaterial =
+    options?.isMac === true ||
+    (options?.windowMaterial !== undefined && options.windowMaterial !== "opaque");
+  const material: ShellTranslucency =
+    options?.electron === true && !pack.theme.opaqueWindows && hasWindowMaterial
       ? "translucent"
       : "opaque";
-  // Frosting is macOS-only. Vibrancy is sampled by the window, so its surfaces
-  // have to blur it themselves; Mica is already composited by DWM behind the
-  // window and needs no help. That distinction matters because on Windows a
-  // backdrop-filter promotes the surface to a GPU layer that Chromium rasterizes
-  // at the wrong scale on fractional DPI, leaving text blurry until a repaint.
-  const frosted = material === "translucent" && options?.isMac === true;
+  // Mica is composited by DWM at full strength, so the surfaces over it only
+  // have to be sheer. Desktop acrylic is a different shape of material: it blurs
+  // what is behind it, so the surface over it must stay sheer enough for that
+  // blur to read — denser fill would just hide the material it is there to show.
+  // Acrylic therefore keeps a sheerer fill than the rest. Its blur is added by
+  // `--app-window-backdrop-filter` below, not by the sidebar: see the layer note
+  // there. That blur is also what makes acrylic degrade gracefully when Windows
+  // falls back to a solid color (battery saver, "Transparency effects" off)
+  // instead of turning into flat glass.
+  const acrylic = options?.windowMaterial === "acrylic" && material === "translucent";
+  // Frosting is macOS-only, and belongs to the window material rather than to any
+  // one surface: vibrancy is sampled by the window and Mica is composited by DWM,
+  // so only macOS's vibrancy has to be blurred by the page itself. That
+  // distinction matters because on Windows a backdrop-filter promotes the surface
+  // to a GPU layer that Chromium rasterizes at the wrong scale on fractional DPI,
+  // leaving text blurry until a repaint.
+  //
+  // Acrylic is the exception that proves the rule — it is a *blurring* material
+  // in its own right, so it is filtered too. It is filtered as the window
+  // backdrop instead of per surface, so the sidebar and the caption strip stay
+  // the same color: see `--app-window-backdrop-filter` below.
+  const windowBackdropFilter =
+    material === "translucent" ? (options?.isMac === true ? "blur(4px) saturate(130%)" : acrylic ? "blur(30px) saturate(130%)" : "none") : "none";
   const warningColor = WARNING_COLOR_BY_VARIANT[variant];
   // Codex paints the app sidebar with the PRIMARY surface (--color-background-surface,
   // mapped through --color-token-side-bar-background), not the darker "under" surface.
@@ -747,29 +769,44 @@ export function buildThemeCssVariables(
         : readCodexVariable("--color-background-surface-under"),
     "--app-composer-focus-border": composerFocusBorder,
     // Frosted blur only where the window material has to be blurred by the page
-    // itself (macOS vibrancy) — see the `frosted` note above.
+    // itself — see the `windowBackdropFilter` note above.
     // NOTE: this gates window-vibrancy frosting only. The composer's own glass
     // (`.chat-composer-surface`, index.css) frosts page content, not the window
     // material, so — like the floating menus — it stays on across platforms.
-    "--app-composer-picker-backdrop-filter": frosted ? "blur(32px)" : "none",
+    "--app-composer-picker-backdrop-filter":
+      material === "translucent" && options?.isMac === true ? "blur(32px)" : "none",
     "--app-composer-picker-surface": composerPickerMenuSurface,
     "--app-chat-code-surface": chatCodeSurface,
     "--app-user-message-background": chatCodeSurface,
-    "--app-sidebar-backdrop-filter": frosted ? "blur(4px) saturate(130%)" : "none",
+    // Applied by `.app-window-backdrop` (index.css) to the full-window element
+    // behind both the sidebar and the caption strip. It is one layer, filtered
+    // once, rather than a filter per surface, because a filter on one surface and
+    // not its neighbour is what made the two read as different colors: a backdrop
+    // filter blurs what is behind the element, so a filtered sidebar would be
+    // blurring the very tint it is supposed to match the title bar on. One
+    // filtered layer under one shared tint keeps them identical by construction.
+    "--app-window-backdrop-filter": windowBackdropFilter,
     // Settings mirrors the chat surface (opaque --color-background-surface) so every
     // settings element reads as outline-only. With an opaque page there is nothing to
     // frost, so we skip the backdrop blur (and its compositing cost) entirely.
     "--app-settings-backdrop-filter": "none",
     // Translucent shell: a sheer fill so the window material (macOS vibrancy, or
-    // Windows 11 Mica) clearly shows through — on macOS paired with a very light
-    // blur that only takes the edge off the backdrop. Dark themes
-    // deepen the fill toward black and keep it denser so the sidebar reads as
-    // charcoal glass. Keep in sync with the `:root` / `.dark` fallbacks in index.css.
+    // a Windows 11 backdrop) clearly shows through — on macOS paired with a very
+    // light blur that only takes the edge off the backdrop. Dark themes
+    // deepen the fill toward black so the sidebar reads as charcoal glass.
+    // Acrylic carries its own blur and is meant to read as glass, so it keeps a
+    // sheerer fill than the rest in both variants rather than the denser one it
+    // would otherwise inherit: see the `acrylic` note above. Keep in sync with
+    // the `:root` / `.dark` fallbacks in index.css.
     "--app-sidebar-surface":
       material === "translucent"
         ? variant === "dark"
-          ? `color-mix(in srgb, color-mix(in srgb, ${sidebarSurface} 80%, black) 72%, transparent)`
-          : `color-mix(in srgb, ${sidebarSurface} 38%, transparent)`
+          ? acrylic
+            ? `color-mix(in srgb, color-mix(in srgb, ${sidebarSurface} 80%, black) 55%, transparent)`
+            : `color-mix(in srgb, color-mix(in srgb, ${sidebarSurface} 80%, black) 72%, transparent)`
+          : acrylic
+            ? `color-mix(in srgb, ${sidebarSurface} 45%, transparent)`
+            : `color-mix(in srgb, ${sidebarSurface} 38%, transparent)`
         : sidebarSurface,
     // Always opaque so the settings page background matches the chat surface exactly,
     // regardless of window material.

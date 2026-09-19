@@ -3,6 +3,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { isMacNavigatorPlatform } from "../lib/utils";
+import { DEFAULT_SHELL_INFO, type WindowMaterial } from "../../../shared/window";
 import {
 	DEFAULT_THEME_STATE,
 	type ChromeTheme,
@@ -43,7 +44,22 @@ const isElectronRuntime = typeof window !== "undefined" && "nekocode" in window;
 // Read straight off the bridge rather than through `api`: the theme is applied at
 // module load, before React mounts, and this only needs the one synchronous value
 // the preload already resolved.
-const hasMicaBackdrop = isElectronRuntime && window.nekocode?.shell?.backdrop === "mica";
+//
+// A module-level value, not a hook one, because the first paint happens here —
+// before any component runs. Changing the material re-runs `applyThemeState`,
+// which is what turns the new shell on.
+const initialShell = isElectronRuntime ? window.nekocode?.shell : undefined;
+let windowMaterial: WindowMaterial = initialShell?.material ?? DEFAULT_SHELL_INFO.material;
+/** What this machine can composite; the picker greys out the rest. */
+const supportedMaterials: readonly WindowMaterial[] =
+	initialShell?.materials ?? DEFAULT_SHELL_INFO.materials;
+
+function setWindowMaterialState(material: WindowMaterial) {
+	if (windowMaterial === material) return;
+	windowMaterial = material;
+	applyThemeState(readStoredThemeState(), true);
+	emitChange();
+}
 
 function emitChange() {
 	for (const listener of listeners) {
@@ -134,7 +150,7 @@ function applyThemeState(state: ThemeState, suppressTransitions = false) {
 	const cssVariableBuild = buildThemeCssVariables(activeTheme, variant, {
 		electron: isElectronRuntime,
 		isMac: isMacNavigatorPlatform(),
-		micaBackdrop: hasMicaBackdrop,
+		windowMaterial,
 		systemUiFont: state.systemUiFont,
 	});
 
@@ -184,6 +200,25 @@ function setTheme(nextTheme: ThemeMode) {
 
 function setSystemUiFont(enabled: boolean) {
 	updateStoredThemeState((state) => ({ ...state, systemUiFont: enabled }));
+}
+
+/**
+ * Ask main for a new window material. The bridge is the one that knows what the
+ * machine can render, so the value it echoes back is what gets applied — a
+ * rejected material leaves the shell exactly as it was rather than half-applied.
+ */
+async function setWindowMaterial(material: WindowMaterial) {
+	if (!isElectronRuntime) {
+		setWindowMaterialState(material);
+		return;
+	}
+	try {
+		const shell = await window.nekocode?.setWindowMaterial?.(material);
+		setWindowMaterialState(shell?.material ?? material);
+	} catch {
+		// Unsupported on this build, or the window went away mid-flight; the
+		// picker keeps showing whatever the shell is actually using.
+	}
 }
 
 function resetThemeVariant(variant: ThemeVariant) {
@@ -248,6 +283,9 @@ export function useTheme() {
 		canImportThemeString,
 		systemUiFont: snapshot.state.systemUiFont,
 		setSystemUiFont,
+		windowMaterial,
+		setWindowMaterial,
+		supportedWindowMaterials: supportedMaterials,
 		darkTheme,
 		defaultActiveTheme,
 		exportThemeString,

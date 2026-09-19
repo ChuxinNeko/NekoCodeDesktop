@@ -28,6 +28,7 @@ import {
 	createReadTool,
 	createWriteTool,
 	type ToolName,
+	type ToolsOptions,
 	withFileMutationQueue,
 } from "./tools/index.ts";
 
@@ -74,6 +75,8 @@ export interface CreateAgentSessionOptions {
 	excludeTools?: string[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
+	/** Options for the built-in filesystem and shell tools. */
+	toolOptions?: ToolsOptions;
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
@@ -395,6 +398,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,
+		toolOptions: options.toolOptions,
 		compactionInstructions: options.compactionInstructions,
 		modelRuntime,
 		initialActiveToolNames,

@@ -34,6 +34,15 @@ export function describeSelectedElement(this: Element) {
 export class BrowserInspector {
 	private guests = new Map<number, WebContents>();
 	private active?: WebContents;
+	private automation?: WebContents;
+	private automationPending = new Map<
+		string,
+		{
+			resolve: (guest: WebContents) => void;
+			reject: (error: Error) => void;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>();
 	private generation = 0;
 	constructor(private win: BrowserWindow) {}
 	register(guest: WebContents): void {
@@ -41,6 +50,7 @@ export class BrowserInspector {
 		guest.once("destroyed", () => {
 			this.guests.delete(guest.id);
 			if (this.active === guest) void this.stop();
+			if (this.automation === guest) this.automation = undefined;
 		});
 		guest.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
 			if (mainFrame && !inPlace && this.active === guest) void this.stop();
@@ -104,6 +114,70 @@ export class BrowserInspector {
 	private notifyStopped(guestId: number): void {
 		if (!this.win.isDestroyed()) this.win.webContents.send("browser:inspectStopped", { guestId });
 	}
+
+	private failAutomation(requestId: string, error: Error): void {
+		const pending = this.automationPending.get(requestId);
+		if (!pending) return;
+		this.automationPending.delete(requestId);
+		clearTimeout(pending.timer);
+		pending.reject(error);
+	}
+
+	requestAutomation(requestId: string, open: () => void, signal?: AbortSignal): Promise<WebContents> {
+		if (signal?.aborted) return Promise.reject(new Error("Automation request aborted"));
+		if (this.automationPending.has(requestId)) {
+			return Promise.reject(new Error(`Duplicate automation request: ${requestId}`));
+		}
+		const promise = new Promise<WebContents>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.automationPending.delete(requestId);
+				reject(new Error("Timed out waiting for the browser panel to bind the page"));
+			}, 30_000);
+			this.automationPending.set(requestId, { resolve, reject, timer });
+		});
+		const onAbort = () => this.failAutomation(requestId, new Error("Automation request aborted"));
+		signal?.addEventListener("abort", onAbort, { once: true });
+		const cleanup = () => signal?.removeEventListener("abort", onAbort);
+		void promise.then(cleanup, cleanup);
+		try {
+			open();
+		} catch (error) {
+			this.failAutomation(requestId, error instanceof Error ? error : new Error(String(error)));
+		}
+		return promise;
+	}
+
+	bindAutomation(sender: WebContents, requestId: string, guestId: number): void {
+		if (sender !== this.win.webContents) throw new Error("Invalid browser owner");
+		const pending = this.automationPending.get(requestId);
+		if (!pending) throw new Error(`Unknown or expired automation request: ${requestId}`);
+		const guest = this.guests.get(guestId);
+		if (!guest || guest.isDestroyed()) {
+			this.failAutomation(requestId, new Error("Browser tab is no longer available"));
+			throw new Error("Browser tab is no longer available");
+		}
+		this.automationPending.delete(requestId);
+		clearTimeout(pending.timer);
+		this.automation = guest;
+		pending.resolve(guest);
+	}
+
+	automationGuest(): WebContents {
+		const guest = this.automation;
+		if (!guest || guest.isDestroyed()) {
+			throw new Error("No page is bound for automation; call browser_navigate first");
+		}
+		return guest;
+	}
+
+	async dispose(): Promise<void> {
+		for (const requestId of [...this.automationPending.keys()]) {
+			this.failAutomation(requestId, new Error("Browser automation is shutting down"));
+		}
+		this.automation = undefined;
+		await this.stop();
+	}
+
 	async stop(): Promise<void> {
 		const guest = this.active;
 		this.active = undefined;

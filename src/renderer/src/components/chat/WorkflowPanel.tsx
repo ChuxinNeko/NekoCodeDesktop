@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -18,14 +18,40 @@ import {
 } from "./composerPickerStyles";
 import { cn } from "../../lib/utils";
 
+/**
+ * Has this question been answered — by picking an option, or by typing instead?
+ *
+ * The free-text field is a real answer, not a footnote to one: a user who finds
+ * none of the options right says so there, and the card must not hold them back
+ * for refusing to pick.
+ */
+export function isAnswered(answers: WorkflowAnswer["answers"], id: string): boolean {
+	return Boolean(answers[id]?.optionId || answers[id]?.text?.trim());
+}
+
 function QuestionCard({ request }: { request: WorkflowRequest }) {
 	const { t } = useTranslation();
 	const [answers, setAnswers] = useState<WorkflowAnswer["answers"]>({});
+	const [page, setPage] = useState(0);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
-	const complete = request.questions.every(
-		(q) => answers[q.id]?.optionId || answers[q.id]?.text?.trim(),
-	);
+	const options = useRef<HTMLDivElement | null>(null);
+
+	const total = request.questions.length;
+	// One question per page, but only once there is more than one: a "1/1" and a
+	// Next button on a single question is chrome that says nothing.
+	const paged = total > 1;
+	const index = Math.min(page, total - 1);
+	const question = request.questions[index];
+	const last = index >= total - 1;
+	const complete = request.questions.every((entry) => isAnswered(answers, entry.id));
+
+	// A new page starts at its own top; inheriting the previous page's scroll
+	// would open question two halfway down its options.
+	useEffect(() => {
+		options.current?.scrollTo({ top: 0 });
+	}, [index]);
+
 	const send = async (cancelled = false) => {
 		setBusy(true);
 		setError("");
@@ -38,17 +64,45 @@ function QuestionCard({ request }: { request: WorkflowRequest }) {
 		}
 	};
 	return (
+		// Three bands: what is being asked, the choices, and the reply. Only the
+		// middle one scrolls — with a dozen options the question being answered and
+		// the button that answers it are exactly what must not scroll away, and a
+		// card that moves as one block loses both at once.
 		<form
 			aria-label={request.title}
-			className="rounded-lg border border-border bg-muted/30 p-3"
+			className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-muted/30"
 			onSubmit={(event) => {
 				event.preventDefault();
 				void send();
 			}}
 		>
-			<h3 className="mb-2 font-medium">{request.title}</h3>
-			{request.questions.map((question) => (
-				<fieldset key={question.id} disabled={busy} className="mb-3 min-w-0 space-y-2">
+			<div
+				data-slot="question-header"
+				className="flex shrink-0 items-center gap-3 border-b border-border bg-muted/40 px-3 py-2"
+			>
+				<h3 className="min-w-0 flex-1 truncate font-medium">{request.title}</h3>
+				{paged ? (
+					<span
+						data-slot="question-pager"
+						aria-label={t("workflow.stepOf", { current: index + 1, total })}
+						className="shrink-0 tabular-nums text-muted-foreground"
+					>
+						{index + 1}/{total}
+					</span>
+				) : null}
+			</div>
+
+			{/* `min-h-0` is what lets this shrink below its content so the bands
+			    above and below it stay put; without it a flex child refuses to go
+			    under its intrinsic height and the whole card grows instead. */}
+			<div
+				ref={options}
+				data-slot="question-options"
+				className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2.5"
+			>
+				{/* One question at a time. Answers live outside this render, keyed by
+				    question id, so paging back and forth never loses a pick. */}
+				<fieldset key={question.id} disabled={busy} className="min-w-0 space-y-2">
 					<legend className="sr-only">{question.question}</legend>
 					<div className="chat-markdown">
 						<ReactMarkdown remarkPlugins={[remarkGfm]}>{question.question}</ReactMarkdown>
@@ -95,13 +149,19 @@ function QuestionCard({ request }: { request: WorkflowRequest }) {
 						/>
 					) : null}
 				</fieldset>
-			))}
-			{error ? (
-				<p role="alert" className="mb-2 text-destructive">
-					{error}
-				</p>
-			) : null}
-			<div className="flex justify-end gap-2">
+			</div>
+
+			<div
+				data-slot="question-actions"
+				className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-muted/40 px-3 py-2"
+			>
+				{error ? (
+					// Beside the buttons rather than above them: it is the reason the
+					// reply did not go through, and this row is where the eye already is.
+					<p role="alert" className="mr-auto min-w-0 truncate text-destructive">
+						{error}
+					</p>
+				) : null}
 				<Button
 					type="button"
 					size="xs"
@@ -111,9 +171,35 @@ function QuestionCard({ request }: { request: WorkflowRequest }) {
 				>
 					{t("common.cancel")}
 				</Button>
-				<Button type="submit" size="xs" variant="prominent" disabled={busy || !complete}>
-					{t("workflow.submit")}
-				</Button>
+				{paged && index > 0 ? (
+					<Button
+						type="button"
+						size="xs"
+						variant="outline"
+						disabled={busy}
+						onClick={() => setPage(index - 1)}
+					>
+						{t("workflow.previous")}
+					</Button>
+				) : null}
+				{last ? (
+					<Button type="submit" size="xs" variant="prominent" disabled={busy || !complete}>
+						{t("workflow.submit")}
+					</Button>
+				) : (
+					// Gated on this page's answer, not on the whole card: the next
+					// question may depend on this one, and letting someone skip ahead
+					// would land them on the last page with a dead submit button.
+					<Button
+						type="button"
+						size="xs"
+						variant="prominent"
+						disabled={busy || !isAnswered(answers, question.id)}
+						onClick={() => setPage(index + 1)}
+					>
+						{t("workflow.next")}
+					</Button>
+				)}
 			</div>
 		</form>
 	);
@@ -216,26 +302,39 @@ export function WorkflowPanel({
 	if (!workflow.request && !workflow.todos.length && !workflow.tasks.length) return null;
 	return (
 		<div className={cn("shrink-0 pb-1", CHAT_COLUMN_GUTTER_CLASS_NAME)}>
+			{/* A column rather than one scrolling box: each section below owns its
+			    own overflow, which is what keeps the question card's header and
+			    buttons pinned instead of scrolling out with everything else. */}
 			<div
 				className={cn(
 					CHAT_COLUMN_FRAME_CLASS_NAME,
-					"max-h-[40vh] space-y-2 overflow-y-auto text-[length:var(--app-font-size-ui,12px)]",
+					"flex max-h-[40vh] flex-col gap-2 text-[length:var(--app-font-size-ui,12px)]",
 				)}
 			>
 				{workflow.request ? (
 					<QuestionCard key={workflow.request.id} request={workflow.request} />
 				) : null}
 				{workflow.todos.length || workflow.tasks.length ? (
-					<ProgressSection
-						workflow={workflow}
-						onOpenTask={onOpenTask}
-						onCancel={(id) => {
-							void api.agentCancelTask(id).catch((cause) => setError(errorMessage(cause)));
-						}}
-					/>
+					// Progress steps back while a question is waiting: the answer is
+					// what unblocks the run, so it gets the height and this gets a
+					// fixed sliver it can scroll inside.
+					<div
+						className={cn(
+							"min-h-0 overflow-y-auto",
+							workflow.request ? "max-h-24 shrink-0" : "flex-1",
+						)}
+					>
+						<ProgressSection
+							workflow={workflow}
+							onOpenTask={onOpenTask}
+							onCancel={(id) => {
+								void api.agentCancelTask(id).catch((cause) => setError(errorMessage(cause)));
+							}}
+						/>
+					</div>
 				) : null}
 				{error ? (
-					<p role="alert" className="text-destructive">
+					<p role="alert" className="shrink-0 text-destructive">
 						{error}
 					</p>
 				) : null}

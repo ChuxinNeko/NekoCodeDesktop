@@ -7,6 +7,8 @@ const rendererSrc = resolve("src/renderer/src");
 
 export default defineConfig({
   main: {
+    // Bundle imported native icons into out/main instead of leaving paths to resources/.
+    publicDir: "resources/public",
     plugins: [externalizeDepsPlugin()],
   },
   preload: {

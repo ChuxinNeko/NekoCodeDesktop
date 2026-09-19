@@ -1,0 +1,63 @@
+appId: com.chuxinneko.nekocode-desktop
+productName: NekoCode Desktop
+directories:
+  output: dist
+  buildResources: resources/icons
+artifactName: NekoCode-Desktop-${version}-${os}-${arch}.${ext}
+asar: true
+# node-pty 1.1 uses stable Node-API: official Windows/macOS prebuilds and the
+# Linux binary built by bun install work in Electron without another ABI rebuild.
+# Each architecture is built on a matching native runner.
+npmRebuild: false
+files:
+  - out/**/*
+  - package.json
+  - licenses/**/*
+  # Workspace packages are followed through node_modules by electron-builder.
+  # Keep their compiled distributions; source-only workspaces are not runnable.
+  - '!node_modules/**/{test,tests,__tests__,benchmark,benchmarks}/**/*'
+  - '!node_modules/**/*.map'
+asarUnpack:
+  - node_modules/node-pty/**/*
+  - node_modules/@esbuild/**/*
+  - node_modules/@silvia-odwyer/photon-node/**/*
+extraResources:
+  - from: resources/skills
+    to: skills
+  - from: resources/templates
+    to: templates
+    filter:
+      - '**/*'
+      - '!**/node_modules/**/*'
+      - '!**/.git/**/*'
+      - '!**/.next/**/*'
+  - from: licenses
+    to: licenses
+win:
+  icon: resources/icons/icon.ico
+  target: nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NekoCode Desktop
+mac:
+  icon: resources/icons/icon.icns
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  # Ad-hoc signing works without distributing a developer certificate to CI.
+  identity: '-'
+  hardenedRuntime: false
+  notarize: false
+linux:
+  icon: resources/icons/icon.png
+  category: Development
+  maintainer: ChuxinNeko
+  target:
+    - AppImage
+    - deb
+publish: null

@@ -113,10 +113,11 @@
     -webkit-app-region: drag;
     app-region: drag;
     /* WinUI 3-style: the caption strip shares the sidebar's surface token so
-       the title bar and the navigation column read as one continuous material. */
+       the title bar and the navigation column read as one continuous material.
+       The blur is NOT repeated here — `.app-window-backdrop` already filtered the
+       layer this tint sits on, and filtering again would tint the strip
+       differently from the sidebar. */
     background: var(--app-sidebar-surface, var(--card));
-    -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter, none);
-    backdrop-filter: var(--app-sidebar-backdrop-filter, none);
     padding-left: 0.75rem;
     padding-right: calc(
       100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
@@ -136,6 +137,22 @@
     app-region: no-drag;
   }
 
+  /* ─── Window material backdrop ────────────────────────────────────────────────
+     One filtered layer spanning the whole window, behind the caption strip and
+     the sidebar alike. Acrylic (and macOS vibrancy) has to be blurred by the page
+     itself, and doing that per surface is what made the sidebar and the title bar
+     disagree: a backdrop filter blurs what is *behind* the element, so a filtered
+     sidebar ends up blurring the very tint it is meant to match the title bar on.
+     Filtering once, here, keeps every surface that tints itself with
+     --app-sidebar-surface identical by construction.
+
+     Must stay free of transform/filter/contain that would make it a containing
+     block: fixed-position overlays are portalled inside this element. */
+  .app-window-backdrop {
+    -webkit-backdrop-filter: var(--app-window-backdrop-filter, none);
+    backdrop-filter: var(--app-window-backdrop-filter, none);
+  }
+
   .sidebar-icon-button {
     @apply items-center justify-center rounded-sm p-0.5 text-muted-foreground/60 transition-colors hover:text-foreground/82 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
     background: transparent;
@@ -146,11 +163,11 @@
   }
 
   /* Let the renderer switch between Codex-style translucent and opaque shells
-     without duplicating sidebar markup or class strings. */
+     without duplicating sidebar markup or class strings. Tint only: the window
+     material's blur lives on `.app-window-backdrop`, one layer down, so every
+     surface painted with this token renders the same color. */
   .app-sidebar-surface {
     background: var(--app-sidebar-surface, var(--card));
-    -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter, none);
-    backdrop-filter: var(--app-sidebar-backdrop-filter, none);
   }
 
   /* Flat chrome tint without the blur pass: used for the content ROW behind the
@@ -159,14 +176,6 @@
      create a containing block and misplace fixed-position overlays inside the row. */
   .app-chrome-surface {
     background: var(--app-sidebar-surface, var(--card));
-  }
-
-  /* Blur pass only: the sidebar sits on top of the row's chrome tint, so it must
-     not apply the tint a second time — blur alone lands it on the exact same
-     rendered color as the title bar (tint over blurred window material). */
-  .app-sidebar-backdrop {
-    -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter, none);
-    backdrop-filter: var(--app-sidebar-backdrop-filter, none);
   }
 
   /* Small circular icon badges that sit directly on the sidebar surface inside
@@ -495,7 +504,7 @@
   --font-chat-code-family: var(--theme-font-code-family, var(--font-mono-family));
   --terminal-font-family: "JetBrainsMono NFM", "JetBrainsMono NF", "JetBrains Mono", monospace;
   --app-shell-background: transparent;
-  --app-sidebar-backdrop-filter: blur(4px) saturate(130%);
+  --app-window-backdrop-filter: blur(4px) saturate(130%);
   --app-sidebar-surface: color-mix(in srgb, var(--card) 38%, transparent);
   --background: #fcfcfc;
   --foreground: var(--color-neutral-800);
@@ -558,8 +567,36 @@
   --warning-foreground: var(--color-amber-700);
   --claude: #d97757;
 
+  /* Token statistics ---------------------------------------------------------
+     A sequential ramp for the usage heatmaps (contribution calendar, activity
+     clock) and a four-slot categorical set for the composition bar that splits
+     a total into input / output / cache read / cache write.
+
+     One hue, light -> dark, with the near-surface step held above 2:1 so the
+     quietest active day still reads as a square rather than as a gap. Dark mode
+     gets its own steps of the same hue rather than an inverted light ramp — the
+     direction flips (low sits nearest the dark surface) but the hue does not. */
+  --usage-heat-0: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --usage-heat-1: #86b6ef;
+  --usage-heat-2: #5598e7;
+  --usage-heat-3: #2a78d6;
+  --usage-heat-4: #184f95;
+  --usage-input: #2a78d6;
+  --usage-output: #eb6834;
+  --usage-cache-read: #1baf7a;
+  --usage-cache-write: #eda100;
+
   @variant dark {
     color-scheme: dark;
+    --usage-heat-0: color-mix(in srgb, var(--foreground) 10%, transparent);
+    --usage-heat-1: #184f95;
+    --usage-heat-2: #256abf;
+    --usage-heat-3: #3987e5;
+    --usage-heat-4: #86b6ef;
+    --usage-input: #3987e5;
+    --usage-output: #d95926;
+    --usage-cache-read: #199e70;
+    --usage-cache-write: #c98500;
     --background: #0e0e0e;
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 99%, var(--color-white));
@@ -607,7 +644,7 @@
     --sidebar-accent-foreground: var(--color-text-foreground, var(--foreground));
     --sidebar-border: var(--border);
     --sidebar-ring: var(--ring);
-    --app-sidebar-backdrop-filter: blur(4px) saturate(130%);
+    --app-window-backdrop-filter: blur(4px) saturate(130%);
     /* Deepened toward black before thinning: a dense charcoal glass that still lets
        the desktop bleed through rather than a thin dark tint. */
     --app-sidebar-surface: color-mix(

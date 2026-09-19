@@ -26,7 +26,7 @@ export interface BrowserPreviewRequest {
 	sessionId: string;
 	cwd: string;
 	url: string;
-	kind: "html" | "server";
+	kind: "html" | "server" | "automation";
 }
 
 export interface BrowserElementSelection {

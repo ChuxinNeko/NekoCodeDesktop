@@ -1,7 +1,7 @@
 # Third-party notices
 
-This project contains code derived from two MIT-licensed upstream projects. The
-full license texts are in this directory.
+This project contains code derived from upstream projects licensed under MIT and
+Apache-2.0. The full license texts are in this directory.
 
 ## pi — the agent core (`pi/`)
 
@@ -41,3 +41,28 @@ from Synara's `apps/web/src/` and adapted:
 Changes made here: icon paths are relative (the packaged renderer loads over `file://`),
 `lib/utils.ts` was reduced to `cn` plus platform helpers, and the browser panel was
 reimplemented against Electron `<webview>` rather than Synara's browser runtime.
+
+## OpenDesign — curated design workflow (`resources/skills/design/`)
+
+Apache-2.0 — see [OpenDesign-LICENSE.txt](./OpenDesign-LICENSE.txt).
+
+Upstream: <https://github.com/nexu-io/open-design>, pinned to version 0.22.2
+(commit `73953213a6fec2c8092e8e77d229a3074aa828a9`). Only selected
+filesystem-first references and templates are copied into
+`resources/skills/design/references/open-design/` and adapted for NekoCode's
+in-chat `design` skill — the OpenDesign daemon, web and desktop apps, and media
+dispatcher are not bundled. The bundled `frontend-design` reference is itself
+adapted from an upstream source and retains its own
+`resources/skills/design/references/open-design/frontend-design/LICENSE.txt`.
+
+## ai-website-cloner-template — the built-in clone skill and scaffold (`resources/skills/clone-website/`, `resources/templates/website-cloner/`)
+
+MIT — see [WebsiteCloner-LICENSE.txt](./WebsiteCloner-LICENSE.txt).
+
+Upstream: `JCodesMore/ai-website-cloner-template` 0.5.0. The upstream skill
+workflow is bundled verbatim at `resources/skills/clone-website/references/` and
+the Next.js scaffold is bundled at `resources/templates/website-cloner/`, both
+behind the built-in `clone-website` skill invoked with `/clone-website`. The
+platform assumptions — Browser MCP, Git worktrees, and parallel builders on
+separate branches — were adapted to NekoCode's native visible browser tools and
+shared-workspace workers; the upstream documents themselves are unchanged.

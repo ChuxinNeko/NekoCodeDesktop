@@ -40,7 +40,7 @@ function installBrowserPermissionPolicy(): void {
 export function installBrowserGuards(win: BrowserWindow): BrowserInspector {
 	installBrowserPermissionPolicy();
 	const inspector = new BrowserInspector(win);
-	win.once("closed", () => { void inspector.stop(); });
+	win.once("closed", () => { void inspector.dispose(); });
 
 	win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
 		if (params.partition !== BROWSER_PARTITION) {

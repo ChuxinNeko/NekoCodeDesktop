@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	CellProjector,
+	expandNekoSlashAlias,
 	parseSlashCommand,
 	projectMessages,
 	toolOutputText,
@@ -190,6 +191,62 @@ describe("projectMessages", () => {
 			status: "done",
 		});
 		expect(cells[1]).toMatchObject({ type: "notice", text: "heads up" });
+	});
+});
+
+describe("expanded skill commands in user messages", () => {
+	test("a design expansion projects as the /design command, not the skill body", () => {
+		const expanded =
+			'<skill name="design" location="D:\\skills\\design\\SKILL.md">\n' +
+			"References are relative...\n\nFULL PRIVATE SKILL BODY\n</skill>\n\n" +
+			"写一个html来介绍一下你自己";
+		const cells = projectMessages([userMsg(expanded)]);
+		expect(cells).toHaveLength(1);
+		expect(cells[0]).toMatchObject({
+			type: "user",
+			text: "/design 写一个html来介绍一下你自己",
+		});
+		expect((cells[0] as { text: string }).text).not.toContain(
+			"FULL PRIVATE SKILL BODY",
+		);
+	});
+
+	test("a design expansion without args projects as bare /design", () => {
+		const expanded =
+			'<skill name="design" location="D:\\skills\\design\\SKILL.md">\n' +
+			"References are relative...\n\nFULL PRIVATE SKILL BODY\n</skill>";
+		const cells = projectMessages([userMsg(expanded)]);
+		expect(cells).toHaveLength(1);
+		expect(cells[0]).toMatchObject({ type: "user", text: "/design" });
+	});
+
+	test("another skill expansion projects as /skill:<name>", () => {
+		const expanded =
+			'<skill name="code-review" location="D:\\skills\\code-review\\SKILL.md">\n' +
+			"References are relative...\n\nFULL PRIVATE SKILL BODY\n</skill>\n\n" +
+			"review this";
+		const cells = projectMessages([userMsg(expanded)]);
+		expect(cells).toHaveLength(1);
+		expect(cells[0]).toMatchObject({
+			type: "user",
+			text: "/skill:code-review review this",
+		});
+	});
+
+	test("a clone-website expansion projects as the /clone-website command", () => {
+		const expanded =
+			'<skill name="clone-website" location="D:\\skills\\clone-website\\SKILL.md">\n' +
+			"References are relative...\n\nFULL PRIVATE SKILL BODY\n</skill>\n\n" +
+			"https://example.com";
+		const cells = projectMessages([userMsg(expanded)]);
+		expect(cells).toHaveLength(1);
+		expect(cells[0]).toMatchObject({
+			type: "user",
+			text: "/clone-website https://example.com",
+		});
+		expect((cells[0] as { text: string }).text).not.toContain(
+			"FULL PRIVATE SKILL BODY",
+		);
 	});
 });
 
@@ -507,6 +564,40 @@ describe("parseSlashCommand", () => {
 	test("returns null for non-slash input", () => {
 		expect(parseSlashCommand("hello /model")).toBeNull();
 		expect(parseSlashCommand("")).toBeNull();
+	});
+});
+
+describe("expandNekoSlashAlias", () => {
+	test("expands /design into the built-in skill command", () => {
+		expect(expandNekoSlashAlias("/design")).toBe("/skill:design");
+		expect(expandNekoSlashAlias("/design a finance dashboard")).toBe(
+			"/skill:design a finance dashboard",
+		);
+		expect(expandNekoSlashAlias("  /design   a finance dashboard  ")).toBe(
+			"/skill:design a finance dashboard",
+		);
+	});
+
+	test("expands /clone-website into the built-in skill command", () => {
+		expect(expandNekoSlashAlias("/clone-website https://example.com")).toBe(
+			"/skill:clone-website https://example.com",
+		);
+		expect(
+			expandNekoSlashAlias(
+				"/clone-website https://example.com https://example.com/about",
+			),
+		).toBe("/skill:clone-website https://example.com https://example.com/about");
+		expect(expandNekoSlashAlias("  /clone-website   https://example.com  ")).toBe(
+			"/skill:clone-website https://example.com",
+		);
+	});
+
+	test("leaves other input unchanged", () => {
+		expect(expandNekoSlashAlias("/design-system")).toBe("/design-system");
+		expect(expandNekoSlashAlias("/clone-website-extras")).toBe(
+			"/clone-website-extras",
+		);
+		expect(expandNekoSlashAlias("hello /design")).toBe("hello /design");
 	});
 });
 

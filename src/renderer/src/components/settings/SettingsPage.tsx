@@ -3,22 +3,34 @@ import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { AboutSettings } from "./AboutSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { ProviderModelSettings } from "./ProviderModelSettings";
 import { PluginSettings } from "./PluginSettings";
+import { TokenUsageSettings } from "./TokenUsageSettings";
+import { SkillSettings } from "./SkillSettings";
 import { ArrowLeftIcon } from "../../lib/icons";
 
 const SECTIONS = [
 	{ id: "general", labelKey: "settings.section.general" },
 	{ id: "appearance", labelKey: "settings.section.appearance" },
 	{ id: "providers", labelKey: "settings.section.providers" },
+	{ id: "tokens", labelKey: "settings.section.tokens" },
+	{ id: "skills", labelKey: "settings.section.skills" },
 	{ id: "plugins", labelKey: "settings.section.plugins" },
 	{ id: "github", labelKey: "settings.section.github" },
 	{ id: "about", labelKey: "settings.section.about" },
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey }>;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
+
+/**
+ * Settings pages are a single reading column, but the token dashboard is a grid
+ * of tiles over a 53-week calendar — at the shared width its weeks would scroll
+ * sideways, which is the one thing a year-at-a-glance view cannot do.
+ */
+const SECTION_WIDTH: Partial<Record<SectionId, string>> = { tokens: "max-w-[58rem]" };
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
 	const { t } = useTranslation();
@@ -53,26 +65,23 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 			</nav>
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-5">
-				<div className="mx-auto flex w-full max-w-[42rem] flex-col gap-4">
+				<div
+					className={cn(
+						"mx-auto flex w-full flex-col gap-4",
+						SECTION_WIDTH[section] ?? "max-w-[42rem]",
+					)}
+				>
 					<h2 className="text-[length:var(--app-font-size-ui-lg,13px)] font-medium">
 						{t(SECTIONS.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
 					</h2>
 					{section === "general" ? <GeneralSettings /> : null}
 					{section === "appearance" ? <AppearanceSettings /> : null}
 					{section === "providers" ? <ProviderModelSettings /> : null}
+					{section === "tokens" ? <TokenUsageSettings /> : null}
+					{section === "skills" ? <SkillSettings /> : null}
 					{section === "plugins" ? <PluginSettings /> : null}
 					{section === "github" ? <GitHubSettings /> : null}
-					{section === "about" ? (
-						<div className="flex flex-col gap-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-							<p>{t("settings.about.p1")}</p>
-							<p>
-								{t("settings.about.p2a")} <code>vendor/pi</code> {t("settings.about.p2b")}{" "}
-								<code>bun run pi:setup</code>
-								{t("settings.about.p2c")}
-							</p>
-							<p>{t("settings.about.p3")}</p>
-						</div>
-					) : null}
+					{section === "about" ? <AboutSettings /> : null}
 				</div>
 			</div>
 		</div>
