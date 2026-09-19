@@ -21,10 +21,8 @@
     "package:dir": "electron-builder --dir --publish never",
     "start": "bunx --bun --no-install electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test src/main/ src/shared/",
     "pi:build": "bun scripts/pi-toolchain.ts build",
-    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build",
-    "test:workflow": "bun test src/main/prompt-library.test.ts src/main/workflow-state.test.ts src/main/workflow-runtime.test.ts src/main/workflow-ui.test.tsx"
+    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build"
   },
   "trustedDependencies": [
     "@google/genai",

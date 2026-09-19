@@ -1,6 +1,6 @@
 # NekoCode Desktop
 
-基于 [pi](https://github.com/earendil-works/pi) 内核的 Electron 桌面编码 Agent。界面沿用 Synara 的设计系统（主题令牌、组件基元、样式表），内核替换为 pi。
+基于 [pi](https://github.com/earendil-works/pi) 内核的 Electron 桌面编码 Agent。
 
 ## 架构
 
@@ -19,72 +19,6 @@ pi/                      -> pi agent 内核源码（本项目的一部分，可�
 
 pi 的 `AgentSession` 在 Electron 主进程中运行，事件经 IPC 推送到渲染进程，由
 `agent-projection` 投影成 UI 单元（user / assistant / tool / notice）。
-
-## 目录
-
-```text
-.
-├── src/main/                 # 主进程：AgentService、投影、模型配置、终端、git、IPC
-├── src/preload/              # contextBridge 类型化 API
-├── src/renderer/src/         # React UI
-│   ├── theme/                # 主题令牌生成（来自 Synara）
-│   ├── components/ui/        # shadcn/base-ui 基元（来自 Synara）
-│   └── components/           # 应用外壳、侧栏、会话流、Composer、Review、终端、设置
-├── src/shared/               # 主/渲染共享类型
-├── scripts/pi-toolchain.ts   # pi 安装与构建（无需全局 node/npm）
-├── pi/                       # pi agent 内核源码（in-tree，可魔改）
-├── core/                     # 上游 pi 干净克隆（仅作参考，已 gitignore，可删除）
-└── demo/                     # Synara 参考克隆（仅作参考，已 gitignore，可删除）
-```
-
-`core/` 与 `demo/` 都是只读的上游参考，**不参与构建**，删掉不影响任何功能：pi 源码就在
-`pi/`，与本项目一起提交，因此可以直接修改 pi 并重新构建；界面文件也已经复制进 `src/renderer`。
-
-`pi/` 是上游 pi 的源码，已经去掉上游的 monorepo 清单（嵌套 `package.json` 的 workspaces）、
-CI 工作流、release/publish 脚本与各包的 `repository`/`author` 元数据，作为本项目的 workspace
-成员存在（见根 `package.json` 的 `workspaces`）。上游的 MIT `LICENSE` 保留在 `pi/LICENSE`。
-
-## 界面来源
-
-界面不是重写的样式，而是把 [Synara](https://github.com/Emanuele-web04/synara) 的设计系统复制进
-本项目（MIT）。文件已在本仓库内，不再依赖 `demo/`：
-
-| 本项目文件 | 对应 Synara（`apps/web/src/`） |
-| --- | --- |
-| `src/renderer/src/index.css` | `index.css` |
-| `src/renderer/src/theme/theme.logic.ts`、`theme.seed.generated.ts` | `theme/` |
-| `src/renderer/src/components/ui/*` | `components/ui/` |
-| `src/renderer/src/lib/icons.tsx`、`central-icons.tsx`、`sidebarRowStyles.ts`、`appDensity.ts`、`chatWidth.ts`、`fontFamily.ts` | 同名文件 |
-| `src/renderer/src/surfaceStyles.ts`、`components/chat/composerPickerStyles.ts` | 同名文件 |
-| `src/renderer/public/central-icons-*/` | 静态图标资源（只搬了当前用到的 8 个） |
-
-主题令牌由 `theme.logic.ts` 在运行时计算并写入 `:root`，因此浅色/深色与代码主题切换与 Synara 一致。
-`components/ui` 只保留了当前用到的基元；需要更多时从上游仓库对应目录复制，`~/` 别名已指向
-`src/renderer/src`，复制进来的文件无需改 import。
-
-三处有意的改动：
-
-- `central-icons.tsx` 的图标路径改为相对路径，因为打包后的渲染进程走 `file://`。
-- `lib/utils.ts` 重写为只含 `cn` 与平台判断，去掉 Synara 的 contracts/effect 依赖。
-- 内嵌浏览器改为手动 `createElement("webview")`（React 会丢掉 `allowpopups`），并只保留主进程
-  加固与弹窗转标签页，没有搬 cookie vault、标注与 CDP 自动化。
-
-## 版本与检查更新
-
-应用启动后延迟 3 秒自动检查更新，每次启动检查一次；发现新正式版时弹窗显示当前版本、
-新版本、发布时间和 Markdown 更新说明。选择“稍后提醒”后本次运行不再弹出，下次启动重新检查。
-点击“前往 GitHub 下载”打开对应 Release 页面。后台检查失败、没有正式版或已是最新版时保持安静。
-也可在 **设置 → 关于** 查看当前版本并手动检查更新。版本号维护在根目录 `package.json` 的
-`version` 中（当前为 `0.0.1`）；开发启动也读取此版本，不使用 Electron 自身的版本号。
-发行包使用 Electron 的应用版本，打包时应保持与此字段一致。
-
-更新源为 [ChuxinNeko/NekoCodeDesktop 的 GitHub Releases](https://github.com/ChuxinNeko/NekoCodeDesktop/releases)，
-使用 GitHub 标记的最新正式 Release，忽略草稿和预发布。发布新版本时先更新 `package.json`
-的版本号并构建，再创建对应的 `vX.Y.Z` Release（例如 `v0.1.0`），上传各平台安装包并填写更新说明。
-客户端按语义版本比较，展示新版信息，并提供发布页下载入口；安装由用户完成。
-
-检查更新复用应用的代理设置和已有 GitHub 登录凭据，公开仓库可匿名检查。手动检查时，尚未发布正式版、
-无权访问仓库、网络错误与请求限流会分别提示，不会将检查失败显示成“已是最新版”。
 
 ## 环境要求
 
@@ -125,7 +59,6 @@ ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ bun node_modules/electro
 | `bun run build` | 构建 main / preload / renderer 到 `out/` |
 | `bun run start` | 预览已构建产物 |
 | `bun run typecheck` | TypeScript 检查 |
-| `bun run test` | 内核纯逻辑单测（投影、端点校验、配置校验） |
 | `bun run pi:build` | 构建 `pi/` 各包（改完 pi 源码后运行） |
 
 ## 使用
@@ -240,13 +173,8 @@ bun run build
 
 ```bash
 bun run typecheck   # 类型检查
-bun run test        # 单测：投影、端点校验、cron 调度、自动化存储/调度、PR 解析
 bun run build       # 构建
 ```
-
-单测覆盖：内核投影（`agent-projection`）、模型端点校验、cron 解析与下次触发时间、自动化定义与
-运行历史的持久化（含损坏文件与断行处理）、调度器到期判定与重启语义、PR remote 解析与错误映射。
-自动化执行链路另有一组测试用本地 mock provider 跑真实 PI 会话，验证摘要、工具调用计数与中止。
 
 ## 疑难
 
@@ -263,26 +191,9 @@ bun run build       # 构建
   ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ bun run pi:build
   ```
 
-## 已知限制
-
-- 单窗口、每个窗口一个活跃 AgentSession（自动化运行是额外的无头会话）。
-- 无安装包与自动更新。
-- PR 面板只支持 github.com；只读展示，不支持在应用内合并或 review。
-- Browser 面板没有 cookie vault、页面标注与 CDP 自动化；agent 不能驱动浏览器。
-- Automation 是「定时跑提示词 + 记录结果」，没有 Synara 的 proposal/审批流程。
-
 ## 致谢
 
-- [earendil-works/pi](https://github.com/earendil-works/pi) — Agent 内核与工具集，源码在 `pi/`。
-- [Synara](https://github.com/Emanuele-web04/synara) — 界面设计系统与组件基元，源码在 `src/renderer/`。
-
-两者的 MIT 许可证原文与改动说明见 [licenses/](./licenses/)。
-
-## License
-
-本项目的许可证尚未确定。`pi/`（pi agent 内核）与界面基元分别遵循其上游 MIT 许可证，
-原文与改动说明见 [licenses/](./licenses/)。
-
+- [earendil-works/pi](https://github.com/earendil-works/pi) — Agent 内核与工具集。
 
 ## PI 原生工作模式
 
@@ -293,5 +204,3 @@ bun run build       # 构建
 - Multitask 支持最多四个后台 PI worker、状态展示、取消、结果回传；写入 worker 有独立的路径范围，无 shell 或递归委派。
 - Debug 使用每会话 NDJSON 日志及真实复现问答，不依赖不存在的 HTTP 服务或 XML 按钮。
 - /commit-message 仅为暂存区生成建议提交信息；/compact 与自动压缩均应用本项目的摘要约束。
-
-提示词及完整约定见 [工作模式提示词说明](pi/packages/prompt/README.md)。运行 bun run test:workflow 可执行使用回环模拟模型的集成测试。

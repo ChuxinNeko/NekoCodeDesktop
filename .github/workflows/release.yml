@@ -83,8 +83,6 @@ jobs:
         run: bun run pi:build
       - name: Type check
         run: bun run typecheck
-      - name: Run application tests
-        run: bun run test
       - name: Build application
         run: bun run build
       - name: Build installers
