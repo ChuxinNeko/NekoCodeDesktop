@@ -15,7 +15,7 @@ Use NekoCode's built-in tools rather than Browser MCP:
 
 - `browser_navigate` opens the target in the visible right-side browser panel and waits for its page guest.
 - `browser_viewport` sets the emulated CSS viewport.
-- `browser_evaluate` runs a JavaScript expression in the inspected page and returns bounded JSON/text. Use it for DOM, computed-style, content, asset, and interaction-model extraction.
+- `browser_evaluate` runs a JavaScript expression in the inspected page and returns bounded JSON/text. Use it for DOM, computed-style, content, asset, and interaction-model extraction. The expression must never navigate the page — `location.reload()`, assigning `location.href`, and form submits destroy the context the result would return through, and the call fails. To pick up an edit the dev server has rebuilt, call `browser_navigate` on the same URL again, then evaluate.
 - `browser_screenshot` is optional and only for an explicitly image-capable workflow or a user-requested human reference; the default cloning workflow does not call it.
 - `browser_action` performs click, hover, scroll, text entry, or a bounded wait.
 - `website_clone_scaffold` copies NekoCode's bundled Next.js template into a new workspace subdirectory without overwriting files.

@@ -43,6 +43,7 @@ export class BrowserInspector {
 			timer: ReturnType<typeof setTimeout>;
 		}
 	>();
+	private automationWatchers = new Set<(reason: string) => void>();
 	private generation = 0;
 	constructor(private win: BrowserWindow) {}
 	register(guest: WebContents): void {
@@ -50,10 +51,19 @@ export class BrowserInspector {
 		guest.once("destroyed", () => {
 			this.guests.delete(guest.id);
 			if (this.active === guest) void this.stop();
-			if (this.automation === guest) this.automation = undefined;
+			if (this.automation === guest) {
+				this.automation = undefined;
+				this.invalidateAutomation("The page bound for automation was closed");
+			}
 		});
 		guest.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
-			if (mainFrame && !inPlace && this.active === guest) void this.stop();
+			if (!mainFrame || inPlace) return;
+			if (this.active === guest) void this.stop();
+			if (this.automation === guest) {
+				this.invalidateAutomation(
+					"The page navigated while the call was in flight, so it can no longer answer it. Never navigate or reload from inside an expression — use browser_navigate, then call again.",
+				);
+			}
 		});
 		guest.on("before-input-event", (_event, input) => {
 			if (input.key === "Escape" && this.active === guest) void this.stop();
@@ -113,6 +123,25 @@ export class BrowserInspector {
 
 	private notifyStopped(guestId: number): void {
 		if (!this.win.isDestroyed()) this.win.webContents.send("browser:inspectStopped", { guestId });
+	}
+
+	private invalidateAutomation(reason: string): void {
+		for (const watcher of [...this.automationWatchers]) watcher(reason);
+	}
+
+	/**
+	 * Called when the page bound for automation stops being able to answer: it was
+	 * closed, or it navigated out from under the call in flight.
+	 *
+	 * Electron settles `executeJavaScript` from a callback owned by the page's
+	 * execution context, so a reload started by the very expression being evaluated
+	 * drops that callback and leaves a promise that can never settle. A tool that
+	 * waits on it wedges the agent run — and with it the stop button — so the tools
+	 * watch for the page going away instead of trusting it to reply.
+	 */
+	watchAutomation(onInvalidate: (reason: string) => void): () => void {
+		this.automationWatchers.add(onInvalidate);
+		return () => this.automationWatchers.delete(onInvalidate);
 	}
 
 	private failAutomation(requestId: string, error: Error): void {
@@ -175,6 +204,7 @@ export class BrowserInspector {
 			this.failAutomation(requestId, new Error("Browser automation is shutting down"));
 		}
 		this.automation = undefined;
+		this.invalidateAutomation("Browser automation is shutting down");
 		await this.stop();
 	}
 

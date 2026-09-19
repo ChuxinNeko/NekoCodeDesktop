@@ -20,10 +20,19 @@ const EVALUATE_MAX_CHARS = 100_000;
 const SCREENSHOT_MAX_WIDTH = 2560;
 const SCREENSHOT_MAX_HEIGHT = 20_000;
 const WAIT_MAX_MS = 10_000;
+/**
+ * A page call still unanswered by now is wedged rather than slow: across a full
+ * clone run the slowest `browser_evaluate` took 3.5s and the slowest viewport
+ * change took under a second.
+ */
+const GUEST_TIMEOUT_MS = 30_000;
+/** Capturing a tall page in one frame is legitimately slower than any evaluate. */
+const SCREENSHOT_TIMEOUT_MS = 120_000;
 
 export interface WebsiteCloneGuest {
 	getURL(): string;
 	getTitle(): string;
+	isDestroyed(): boolean;
 	executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 	capturePage(): Promise<{ toPNG(): Buffer; getSize(): { width: number; height: number } }>;
 	sendInputEvent(
@@ -52,6 +61,22 @@ export interface WebsiteCloneBrowserHost {
 		signal?: AbortSignal,
 	): Promise<WebsiteCloneGuest>;
 	automationGuest(): WebsiteCloneGuest;
+	watchAutomation(onInvalidate: (reason: string) => void): () => void;
+}
+
+/**
+ * The page stopped being able to answer, as opposed to answering with a failure.
+ *
+ * Worth its own type because a click that navigates is a success the caller
+ * should hear about, while the same interruption during an evaluate is not.
+ */
+class GuestUnavailableError extends Error {
+	/** The page went away, rather than merely never getting round to replying. */
+	readonly pageGone: boolean;
+	constructor(message: string, pageGone: boolean) {
+		super(message);
+		this.pageGone = pageGone;
+	}
 }
 
 interface LayoutMetrics {
@@ -162,19 +187,85 @@ export function createWebsiteCloneTools(options: {
 
 	let viewportOverride: { width: number; height: number; deviceScaleFactor: number } | null = null;
 
-	const withViewport = async <T>(guest: WebsiteCloneGuest, operation: () => Promise<T>): Promise<T> => {
+	/**
+	 * Give up on a page call the moment it can no longer be answered.
+	 *
+	 * Nothing below this line may be trusted to settle on its own: the agent loop
+	 * awaits a tool call unconditionally, so one promise the page will never
+	 * resolve stalls the whole run, and because the session reports itself busy
+	 * until the run settles, the composer's stop button goes dead with it. Losing
+	 * the page, the caller's abort, and a deadline all end the wait here instead.
+	 */
+	const guarded = <T>(
+		limits: { signal?: AbortSignal; timeoutMs?: number },
+		operation: () => Promise<T>,
+	): Promise<T> => {
+		const { signal, timeoutMs = GUEST_TIMEOUT_MS } = limits;
+		if (signal?.aborted) return Promise.reject(new Error("Tool call cancelled"));
+		return new Promise<T>((resolve, reject) => {
+			let unwatch: (() => void) | undefined;
+			let done = false;
+			const settle = (finish: () => void) => {
+				if (done) return;
+				done = true;
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				unwatch?.();
+				finish();
+			};
+			const onAbort = () => settle(() => reject(new Error("Tool call cancelled")));
+			const timer = setTimeout(
+				() =>
+					settle(() =>
+						reject(
+							new GuestUnavailableError(
+								`The page did not answer within ${Math.round(timeoutMs / 1000)}s`,
+								false,
+							),
+						),
+					),
+				timeoutMs,
+			);
+			unwatch = browser.watchAutomation((reason) =>
+				settle(() => reject(new GuestUnavailableError(reason, true))),
+			);
+			signal?.addEventListener("abort", onAbort, { once: true });
+			operation().then(
+				(value) => settle(() => resolve(value)),
+				(error: unknown) =>
+					settle(() => reject(error instanceof Error ? error : new Error(String(error)))),
+			);
+		});
+	};
+
+	const withViewport = async <T>(
+		guest: WebsiteCloneGuest,
+		limits: { signal?: AbortSignal; timeoutMs?: number },
+		operation: () => Promise<T>,
+	): Promise<T> => {
 		const attached = guest.debugger.isAttached();
 		if (!attached) guest.debugger.attach("1.3");
 		try {
-			if (viewportOverride) {
-				await guest.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
-					...viewportOverride,
-					mobile: false,
-				});
-			}
-			return await operation();
+			return await guarded(limits, async () => {
+				if (viewportOverride) {
+					await guest.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
+						...viewportOverride,
+						mobile: false,
+					});
+				}
+				return operation();
+			});
 		} finally {
-			if (!attached) guest.debugger.detach();
+			// Runs even when `guarded` walked away from a call still pending, so a
+			// wedged page cannot leave the debugger pinned to the guest and lock the
+			// user out of DevTools and element picking for the rest of the session.
+			if (!attached && !guest.isDestroyed()) {
+				try {
+					guest.debugger.detach();
+				} catch {
+					/* The page took the debugger session with it. */
+				}
+			}
 		}
 	};
 
@@ -218,11 +309,11 @@ export function createWebsiteCloneTools(options: {
 			"Set the emulated CSS viewport of the page bound by browser_navigate. Use 1440x900 desktop, 768x900 tablet, 390x844 mobile.",
 		parameters: viewportSchema,
 		executionMode: "sequential",
-		async execute(_id, params) {
+		async execute(_id, params, signal) {
 			const { width, height, deviceScaleFactor } = params as Static<typeof viewportSchema>;
 			const guest = browser.automationGuest();
 			viewportOverride = { width, height, deviceScaleFactor: deviceScaleFactor ?? 1 };
-			const measured = await withViewport(guest, async () => {
+			const measured = await withViewport(guest, { signal }, async () => {
 				return (await guest.executeJavaScript(
 					"({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })",
 					true,
@@ -253,13 +344,15 @@ export function createWebsiteCloneTools(options: {
 		name: "browser_evaluate",
 		label: "browser_evaluate",
 		description:
-			"Run a JavaScript expression in the inspected page and return its JSON-serialized result, capped at 100k characters. Use for DOM, computed-style, content, asset, and interaction extraction.",
+			"Run a JavaScript expression in the inspected page and return its JSON-serialized result, capped at 100k characters. Use for DOM, computed-style, content, asset, and interaction extraction. The expression must not navigate the page: location.reload(), assigning location.href, and submitting a form all destroy the context the result would come back through. Use browser_navigate to load or reload a page, then evaluate against it.",
 		parameters: evaluateSchema,
 		executionMode: "sequential",
-		async execute(_id, params) {
+		async execute(_id, params, signal) {
 			const { expression } = params as Static<typeof evaluateSchema>;
 			const guest = browser.automationGuest();
-			const result = await withViewport(guest, () => guest.executeJavaScript(expression, true));
+			const result = await withViewport(guest, { signal }, () =>
+				guest.executeJavaScript(expression, true),
+			);
 			const { text, truncated } = serializeEvaluation(result);
 			return {
 				content: [{ type: "text", text }],
@@ -275,13 +368,14 @@ export function createWebsiteCloneTools(options: {
 			"Save a PNG screenshot of the inspected page inside the workspace. fullPage captures the whole scroll height, capped at 2560x20000.",
 		parameters: screenshotSchema,
 		executionMode: "sequential",
-		async execute(_id, params) {
+		async execute(_id, params, signal) {
 			const { path, fullPage } = params as Static<typeof screenshotSchema>;
 			if (!/\.png$/i.test(path)) throw new Error("Screenshot path must end in .png");
 			const target = resolveWorkspacePath(cwd, path);
 			const guest = browser.automationGuest();
 			const captured = await withViewport(
 				guest,
+				{ signal, timeoutMs: SCREENSHOT_TIMEOUT_MS },
 				async (): Promise<{ bytes: Buffer; width: number; height: number; capped: boolean }> => {
 					if (fullPage) {
 						const metrics = (await guest.debugger.sendCommand("Page.getLayoutMetrics")) as LayoutMetrics;
@@ -352,7 +446,11 @@ export function createWebsiteCloneTools(options: {
 		async execute(_id, params, signal) {
 			const { action, selector, scrollY, text, waitMs } = params as Static<typeof actionSchema>;
 			const guest = browser.automationGuest();
-			return withViewport(guest, async () => {
+			// A click that follows a link tears the page down mid-call. The interaction
+			// itself landed; only the scroll probe behind it can no longer come back, so
+			// report the navigation rather than the probe that was lost to it.
+			let interacted = false;
+			const interact = async () => {
 				switch (action) {
 					case "click":
 					case "hover": {
@@ -418,12 +516,28 @@ export function createWebsiteCloneTools(options: {
 						break;
 					}
 				}
+				interacted = true;
 				const position = await guest.executeJavaScript("window.scrollY", true);
 				return {
-					content: [{ type: "text", text: `${action} done on ${guest.getURL()}` }],
+					content: [{ type: "text" as const, text: `${action} done on ${guest.getURL()}` }],
 					details: { action, url: guest.getURL(), scrollY: typeof position === "number" ? position : 0 },
 				};
-			});
+			};
+			try {
+				return await withViewport(
+					guest,
+					{ signal, timeoutMs: GUEST_TIMEOUT_MS + WAIT_MAX_MS },
+					interact,
+				);
+			} catch (error) {
+				const navigatedAway =
+					interacted && !guest.isDestroyed() && error instanceof GuestUnavailableError && error.pageGone;
+				if (!navigatedAway) throw error;
+				return {
+					content: [{ type: "text", text: `${action} done, then the page navigated to ${guest.getURL()}` }],
+					details: { action, url: guest.getURL(), scrollY: 0, navigated: true },
+				};
+			}
 		},
 	};
 
