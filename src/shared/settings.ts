@@ -33,6 +33,9 @@ export interface OAuthProviderSummary {
 	signedInAt?: number;
 	/** Empty for providers whose current integration is login-only. */
 	modelIds: string[];
+	/** The imported models with their catalog limits — read-only; a
+	 *  subscription's real ceilings are the provider's to decide. */
+	models: OAuthModelSummary[];
 }
 
 /**
@@ -58,11 +61,21 @@ export type OAuthLoginEvent =
  * accepts fails every request outright, which is worse than truncation — a
  * profile that knows its model's real ceiling raises them itself.
  */
-export const DEFAULT_CONTEXT_WINDOW = 128_000;
-export const DEFAULT_MAX_TOKENS = 16_384;
+export const DEFAULT_CONTEXT_WINDOW = 256_000;
+export const DEFAULT_MAX_TOKENS = 32_768;
 export const MIN_TOKEN_LIMIT = 1_024;
 export const MAX_CONTEXT_WINDOW = 10_000_000;
 export const MAX_OUTPUT_TOKENS = 1_000_000;
+
+export interface ModelTokenLimits {
+	contextWindow: number;
+	maxTokens: number;
+}
+
+export interface OAuthModelSummary extends ModelTokenLimits {
+	id: string;
+	name: string;
+}
 
 export interface ModelProfileSummary {
 	id: string;
@@ -82,6 +95,9 @@ export interface ModelProfileSummary {
 	 * fails outright — so it follows the model, not the file being edited.
 	 */
 	maxTokens: number;
+	/** Explicit per-model ceilings only; a model without an entry inherits
+	 *  this profile's `contextWindow`/`maxTokens`. */
+	modelOverrides: Record<string, ModelTokenLimits>;
 	hasApiKey: boolean;
 	createdAt: number;
 	updatedAt: number;
@@ -126,6 +142,8 @@ export interface SaveModelProfileRequest {
 	/** Omitted keeps the stored value; the store's default applies if unset. */
 	contextWindow?: number;
 	maxTokens?: number;
+	/** Omitted keeps the stored overrides; keys outside `modelIds` are dropped. */
+	modelOverrides?: Record<string, ModelTokenLimits>;
 }
 
 export interface FetchModelsRequest {

@@ -582,7 +582,7 @@ export default function App() {
 							tasks={liveTasks}
 							checkpoints={snapshot?.checkpoints ?? []}
 							checkpointsBusy={busy || (snapshot?.streaming ?? false)}
-							onSelect={setDockActive}
+							onSelect={(tab) => (tab === null ? setDockActive(null) : openDockTab(tab))}
 							onCloseTab={closeDockTab}
 							onCancelTask={(id) => void api.agentCancelTask(id)}
 							onRestoreCheckpoint={setRestoreTarget}

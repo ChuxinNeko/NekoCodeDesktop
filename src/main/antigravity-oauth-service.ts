@@ -14,7 +14,7 @@ export interface AntigravityRequestContext {
 }
 
 export const ANTIGRAVITY_SIGNED_OUT: OAuthProviderSummary = {
-	id: "antigravity", providerId: "antigravity", name: "Antigravity (Google)", signedIn: false, modelIds: [],
+	id: "antigravity", providerId: "antigravity", name: "Antigravity (Google)", signedIn: false, modelIds: [], models: [],
 };
 
 /** Owns the encrypted account and the lifetime of requests using it. */
@@ -37,12 +37,21 @@ export class AntigravityOAuthService {
 
 	list(): OAuthProviderSummary {
 		const account = this.options.store.account("antigravity");
+		const models = account
+			? ANTIGRAVITY_CATALOG.map((model) => ({
+					id: model.id,
+					name: model.name,
+					contextWindow: model.contextWindow,
+					maxTokens: model.maxTokens,
+				}))
+			: [];
 		return {
 			...ANTIGRAVITY_SIGNED_OUT,
 			...(account ? {
 				signedIn: true, email: account.email, projectId: account.projectId,
 				expiresAt: account.expiresAt, signedInAt: account.signedInAt,
-				modelIds: ANTIGRAVITY_CATALOG.map((model) => model.id),
+				modelIds: models.map((model) => model.id),
+				models,
 			} : {}),
 		};
 	}

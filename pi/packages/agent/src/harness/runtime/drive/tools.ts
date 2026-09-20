@@ -173,7 +173,7 @@ function truncatedOutcome(toolCall: AgentToolCall): ToolOutcome {
 		message: syntheticMessage(toolCall, [
 			{
 				type: "text",
-				text: `Tool call ${JSON.stringify(toolCall.name)} was not executed because the assistant response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
+				text: `Tool call ${JSON.stringify(toolCall.name)} was not executed because the assistant response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments. For long files, split the change into smaller complete edits instead of retrying the same oversized write.`,
 			},
 		]),
 		terminate: false,

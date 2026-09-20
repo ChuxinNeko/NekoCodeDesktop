@@ -6,6 +6,7 @@ import {
 	MIN_TOKEN_LIMIT,
 	type ModelApiProtocol,
 	type ModelProfileSummary,
+	type ModelTokenLimits,
 	type ProviderKind,
 } from "../shared/settings";
 import { resolveEndpoints } from "./model-endpoint";
@@ -52,6 +53,8 @@ export interface StoredProfile {
 	/** Optional overrides; absent means the conservative defaults above. */
 	contextWindow?: number;
 	maxTokens?: number;
+	/** Optional per-model ceilings; a missing key inherits the profile values. */
+	modelOverrides?: Record<string, ModelTokenLimits>;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -79,6 +82,31 @@ export function isValidTokenLimit(value: unknown, max: number): boolean {
 			Number.isInteger(value) &&
 			value >= MIN_TOKEN_LIMIT &&
 			value <= max)
+	);
+}
+
+/**
+ * Both limits are required inside an override — unlike the profile-level
+ * fields, a half-written override cannot lean on "absent means default".
+ */
+export function isValidModelOverrides(value: unknown): value is Record<string, ModelTokenLimits> {
+	if (value === undefined) return true;
+	if (!isPlainObject(value)) return false;
+	const entries = Object.entries(value);
+	if (entries.length > MAX_MODELS) return false;
+	return entries.every(
+		([modelId, limits]) =>
+			isNonEmptyString(modelId) &&
+			modelId.length <= MAX_MODEL_ID &&
+			isPlainObject(limits) &&
+			typeof limits.contextWindow === "number" &&
+			Number.isInteger(limits.contextWindow) &&
+			limits.contextWindow >= MIN_TOKEN_LIMIT &&
+			limits.contextWindow <= MAX_CONTEXT_WINDOW &&
+			typeof limits.maxTokens === "number" &&
+			Number.isInteger(limits.maxTokens) &&
+			limits.maxTokens >= MIN_TOKEN_LIMIT &&
+			limits.maxTokens <= MAX_OUTPUT_TOKENS,
 	);
 }
 
@@ -140,6 +168,15 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (
+			!isValidModelOverrides(p.modelOverrides) ||
+			(p.modelOverrides !== undefined &&
+				!Object.keys(p.modelOverrides).every((id) =>
+					(p.modelIds as string[]).includes(id),
+				))
+		) {
+			throw new Error(SHAPE_ERROR);
+		}
+		if (
 			p.kind !== undefined &&
 			!PROVIDER_KINDS.includes(p.kind as ProviderKind)
 		) {
@@ -178,6 +215,9 @@ export function toSummary(p: StoredProfile): ModelProfileSummary {
 		reasoning: p.reasoning === true,
 		contextWindow: p.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 		maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
+		modelOverrides: Object.fromEntries(
+			Object.entries(p.modelOverrides ?? {}).map(([id, limits]) => [id, { ...limits }]),
+		),
 		hasApiKey: p.encryptedApiKey.length > 0,
 		createdAt: p.createdAt,
 		updatedAt: p.updatedAt,

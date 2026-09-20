@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
-import type {
-	FetchedModel,
-	ModelProfileSummary,
-	OAuthProviderSummary,
+import {
+	MAX_CONTEXT_WINDOW,
+	MAX_OUTPUT_TOKENS,
+	MIN_TOKEN_LIMIT,
+	type FetchedModel,
+	type ModelProfileSummary,
+	type ModelTokenLimits,
+	type OAuthProviderSummary,
 } from "../../../../shared/settings";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
@@ -22,20 +26,21 @@ const SEARCH_THRESHOLD = 8;
 export function ModelsTab({
 	profiles,
 	accounts,
-	profile,
+	selectedId,
 	busy,
 	autoFetchId,
 	onSelect,
 	onAutoFetchHandled,
 	onFetch,
 	onSaveModels,
+	onSaveModelLimits,
 	onTest,
 	onAddProvider,
 }: {
 	profiles: ModelProfileSummary[];
-	/** Signed-in subscriptions: listed, not picked from — see the note below. */
+	/** Signed-in OAuth accounts with imported models — each is its own read-only provider category. */
 	accounts: OAuthProviderSummary[];
-	profile: ModelProfileSummary | null;
+	selectedId: string | null;
 	busy: boolean;
 	/** A provider that was just created: pull its list without being asked. */
 	autoFetchId: string | null;
@@ -43,6 +48,8 @@ export function ModelsTab({
 	onAutoFetchHandled: () => void;
 	onFetch: (profile: ModelProfileSummary) => Promise<FetchedModel[] | null>;
 	onSaveModels: (profile: ModelProfileSummary, modelIds: string[]) => void;
+	/** `null` clears the override; the model falls back to the provider defaults. */
+	onSaveModelLimits: (profile: ModelProfileSummary, modelId: string, limits: ModelTokenLimits | null) => void;
 	onTest: (profileId: string, modelId: string) => void;
 	onAddProvider: () => void;
 }) {
@@ -51,11 +58,27 @@ export function ModelsTab({
 	const [fetched, setFetched] = useState<Record<string, FetchedModel[]>>({});
 	const [query, setQuery] = useState("");
 	const [manual, setManual] = useState("");
+	/** The one expanded per-model limits editor; drafts stay strings until saved. */
+	const [limitsEditor, setLimitsEditor] = useState<{
+		modelId: string;
+		contextWindow: string;
+		maxTokens: string;
+	} | null>(null);
 
 	const load = async (target: ModelProfileSummary) => {
 		const result = await onFetch(target);
 		if (result) setFetched((prev) => ({ ...prev, [target.id]: result }));
 	};
+
+	// The selection names either a custom profile or an OAuth account; a
+	// profile wins on an id collision so existing saved selections keep working.
+	const oauthAccounts = accounts.filter(
+		(account) => account.signedIn && account.modelIds.length > 0,
+	);
+	const profile = profiles.find((entry) => entry.id === selectedId) ?? null;
+	const oauthAccount = profile
+		? null
+		: (oauthAccounts.find((entry) => entry.id === selectedId) ?? null);
 
 	// Clearing the request first is what keeps this to one fetch: the effect
 	// re-runs on the cleared id and falls straight out.
@@ -66,35 +89,11 @@ export function ModelsTab({
 		void load(profile);
 	}, [autoFetchId, profileId]);
 
-	// A subscription's model list is the provider's to decide, so it is stated
-	// here rather than offered as a choice this page cannot honour.
-	const subscriptions = accounts.filter((account) => account.signedIn && account.modelIds.length > 0);
-	const subscriptionNote =
-		subscriptions.length > 0 ? (
-			<div className="flex flex-col gap-2 rounded-lg border border-border px-2.5 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-				<p>
-				{t("models.oauthNote", {
-					providers: subscriptions.map((account) => account.name).join(" · "),
-					count: subscriptions.reduce((total, account) => total + account.modelIds.length, 0),
-				})}
-				</p>
-				{subscriptions.filter((account) => account.id === "antigravity").map((account) => (
-					<div key={account.id} className="flex flex-col gap-1">
-						{account.modelIds.map((modelId) => (
-							<div key={modelId} className="flex items-center gap-2 py-1">
-								<span className="min-w-0 flex-1 truncate font-mono">{modelId}</span>
-								<Button size="xs" variant="chrome-outline" disabled={busy} onClick={() => onTest(account.id, modelId)}>{t("models.test")}</Button>
-							</div>
-						))}
-					</div>
-				))}
-			</div>
-		) : null;
-
-	if (profiles.length === 0 || !profile) {
+	// An OAuth subscription's model list is the provider's to decide, so those
+	// categories render read-only below — add/remove/fetch are profile-only tools.
+	if (profiles.length === 0 && oauthAccounts.length === 0) {
 		return (
 			<div className="flex flex-col gap-3">
-				{subscriptionNote}
 				<div className="flex flex-col items-start gap-3 rounded-xl border border-border px-3 py-4">
 					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 						{t("models.noProviders")}
@@ -108,8 +107,8 @@ export function ModelsTab({
 		);
 	}
 
-	const enabled = profile.modelIds;
-	const available = fetched[profile.id] ?? null;
+	const enabled = profile?.modelIds ?? [];
+	const available = profile ? (fetched[profile.id] ?? null) : null;
 	const needle = query.trim().toLowerCase();
 	const filtered = (available ?? []).filter(
 		(model) =>
@@ -120,13 +119,25 @@ export function ModelsTab({
 
 	const add = (modelId: string) => {
 		const id = modelId.trim();
-		if (!id || enabled.includes(id)) return;
+		if (!profile || !id || enabled.includes(id)) return;
 		onSaveModels(profile, [...enabled, id]);
 	};
 
+	const parseLimit = (raw: string, max: number): number | null => {
+		const value = Number(raw.trim());
+		return Number.isInteger(value) && value >= MIN_TOKEN_LIMIT && value <= max
+			? value
+			: null;
+	};
+
+	const effectiveLimits = (modelId: string): ModelTokenLimits =>
+		profile?.modelOverrides?.[modelId] ?? {
+			contextWindow: profile?.contextWindow ?? 0,
+			maxTokens: profile?.maxTokens ?? 0,
+		};
+
 	return (
 		<div className="flex flex-col gap-3">
-			{subscriptionNote}
 			<div className="flex flex-col gap-1.5">
 				<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 					{t("models.provider")}
@@ -139,10 +150,11 @@ export function ModelsTab({
 							onClick={() => {
 								onSelect(entry.id);
 								setQuery("");
+								setLimitsEditor(null);
 							}}
 							className={cn(
 								"flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[length:var(--app-font-size-ui-sm,11px)] transition-colors",
-								entry.id === profile.id
+								profile?.id === entry.id
 									? "border-transparent bg-[var(--color-background-button-secondary)] text-foreground"
 									: "border-border text-muted-foreground hover:text-foreground",
 							)}
@@ -153,165 +165,348 @@ export function ModelsTab({
 							</span>
 						</button>
 					))}
+					{oauthAccounts.map((account) => (
+						<button
+							key={`oauth-${account.id}`}
+							type="button"
+							onClick={() => {
+								onSelect(account.id);
+								setQuery("");
+								setLimitsEditor(null);
+							}}
+							className={cn(
+								"flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[length:var(--app-font-size-ui-sm,11px)] transition-colors",
+								oauthAccount?.id === account.id
+									? "border-transparent bg-[var(--color-background-button-secondary)] text-foreground"
+									: "border-border text-muted-foreground hover:text-foreground",
+							)}
+						>
+							<span className="max-w-40 truncate">{`${account.name} OAuth`}</span>
+							<span className="text-[length:var(--app-font-size-ui-2xs,9px)] opacity-60">
+								{account.modelIds.length}
+							</span>
+						</button>
+					))}
 				</div>
 			</div>
 
-			<div className="flex flex-col gap-2 rounded-xl border border-border p-3">
-				<div className="flex items-center gap-2">
-					<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
-						{t("models.enabled")}
-					</span>
-					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-						{enabled.length}
-					</span>
-					<div className="flex-1" />
-					<Button onClick={() => void load(profile)} size="xs" variant="chrome-outline" disabled={busy}>
-						<RefreshCwIcon className="size-3.5" />
-						{t(available ? "models.refetch" : "models.fetch")}
-					</Button>
-				</div>
-
-				{enabled.length === 0 ? (
-					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						{t("models.enabledEmpty")}
-					</p>
-				) : (
-					<div className="flex flex-col divide-y divide-[color:var(--app-surface-divider)]">
-						{enabled.map((modelId) => (
-							<div key={modelId} className="flex items-center gap-2 py-1">
-								<span className="min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
-									{modelId}
-								</span>
-								<Button
-									onClick={() => onTest(profile.id, modelId)}
-									size="xs"
-									variant="ghost"
-									disabled={busy}
-									title={t("models.testTooltip")}
-								>
-									{t("models.test")}
-								</Button>
-								<Button
-									onClick={() =>
-										onSaveModels(
-											profile,
-											enabled.filter((entry) => entry !== modelId),
-										)
-									}
-									size="icon-xs"
-									variant="ghost"
-									disabled={busy}
-									title={t("models.remove")}
-								>
-									<XIcon className="size-3.5" />
-								</Button>
-							</div>
-						))}
-					</div>
-				)}
-			</div>
-
-			{available ? (
+			{oauthAccount ? (
 				<div className="flex flex-col gap-2 rounded-xl border border-border p-3">
 					<div className="flex items-center gap-2">
 						<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
-							{t("models.available")}
+							{t("models.enabled")}
 						</span>
 						<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-							{available.length}
+							{oauthAccount.modelIds.length}
 						</span>
 					</div>
 
-					{available.length === 0 ? (
-						<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-							{t("models.fetchEmpty")}
-						</p>
-					) : (
-						<>
-							{available.length > SEARCH_THRESHOLD ? (
-								<Input
-									type="search"
-									placeholder={t("models.search")}
-									value={query}
-									onChange={(event) => setQuery(event.target.value)}
-								/>
-							) : null}
-							{filtered.length === 0 ? (
-								<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-									{t("models.noMatch", { query: query.trim() })}
-								</p>
-							) : (
-								<div className="flex max-h-72 flex-col divide-y divide-[color:var(--app-surface-divider)] overflow-y-auto">
-									{filtered.map((model) => {
-										const added = enabled.includes(model.id);
-										return (
-											<div key={model.id} className="flex items-center gap-2 py-1">
-												<div className="flex min-w-0 flex-1 flex-col">
-													<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
-														{model.id}
-													</span>
-													{model.name !== model.id ? (
-														<span className="truncate text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
-															{model.name}
-														</span>
-													) : null}
-												</div>
-												{added ? (
-													<span className="flex items-center gap-1 px-1.5 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-														<CheckIcon className="size-3.5" />
-														{t("models.added")}
-													</span>
-												) : (
-													<Button
-														onClick={() => add(model.id)}
-														size="xs"
-														variant="chrome-outline"
-														disabled={busy}
-													>
-														{t("models.add")}
-													</Button>
-												)}
-											</div>
-										);
-									})}
+					<div className="flex flex-col divide-y divide-[color:var(--app-surface-divider)]">
+						{oauthAccount.modelIds.map((modelId) => {
+							const model = oauthAccount.models?.find((entry) => entry.id === modelId);
+							return (
+								<div key={modelId} className="flex items-center gap-2 py-1">
+									<div className="flex min-w-0 flex-1 flex-col">
+										<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
+											{modelId}
+										</span>
+										{model ? (
+											<span className="truncate text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+												{t("models.limitSummary", {
+													contextWindow: model.contextWindow,
+													maxTokens: model.maxTokens,
+												})}
+											</span>
+										) : null}
+									</div>
+									{oauthAccount.id === "antigravity" ? (
+										<Button
+											onClick={() => onTest(oauthAccount.id, modelId)}
+											size="xs"
+											variant="ghost"
+											disabled={busy}
+											title={t("models.testTooltip")}
+										>
+											{t("models.test")}
+										</Button>
+									) : null}
 								</div>
-							)}
-						</>
-					)}
+							);
+						})}
+					</div>
 				</div>
 			) : null}
 
-			{/* Not every OpenAI-compatible endpoint serves /models, so an id can
-			    always be typed in by hand. */}
-			<div className="flex flex-col gap-1">
-				<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					{t("models.manual")}
-				</span>
-				<div className="flex items-center gap-2">
-					<Input
-						className="min-w-0 flex-1"
-						placeholder="gpt-4o-mini"
-						value={manual}
-						onChange={(event) => setManual(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key !== "Enter" || busy) return;
-							add(manual);
-							setManual("");
-						}}
-					/>
-					<Button
-						onClick={() => {
-							add(manual);
-							setManual("");
-						}}
-						size="sm"
-						variant="chrome-outline"
-						disabled={busy || !manual.trim() || enabled.includes(manual.trim())}
-					>
-						{t("models.add")}
-					</Button>
+			{profile ? (
+				<>
+				<div className="flex flex-col gap-2 rounded-xl border border-border p-3">
+					<div className="flex items-center gap-2">
+						<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
+							{t("models.enabled")}
+						</span>
+						<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+							{enabled.length}
+						</span>
+						<div className="flex-1" />
+						<Button onClick={() => void load(profile)} size="xs" variant="chrome-outline" disabled={busy}>
+							<RefreshCwIcon className="size-3.5" />
+							{t(available ? "models.refetch" : "models.fetch")}
+						</Button>
+					</div>
+
+					{enabled.length === 0 ? (
+						<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+							{t("models.enabledEmpty")}
+						</p>
+					) : (
+						<div className="flex flex-col divide-y divide-[color:var(--app-surface-divider)]">
+							{enabled.map((modelId) => {
+								const limits = effectiveLimits(modelId);
+								const editing = limitsEditor?.modelId === modelId;
+								const draftContext = editing
+									? parseLimit(limitsEditor.contextWindow, MAX_CONTEXT_WINDOW)
+									: null;
+								const draftOutput = editing
+									? parseLimit(limitsEditor.maxTokens, MAX_OUTPUT_TOKENS)
+									: null;
+								return (
+									<div key={modelId} className="flex flex-col gap-1.5 py-1">
+										<div className="flex items-center gap-2">
+											<div className="flex min-w-0 flex-1 flex-col">
+												<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
+													{modelId}
+												</span>
+												<span className="truncate text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+													{t("models.limitSummary", {
+														contextWindow: limits.contextWindow,
+														maxTokens: limits.maxTokens,
+													})}
+												</span>
+											</div>
+											<Button
+												onClick={() =>
+													setLimitsEditor(
+														editing
+															? null
+															: {
+																	modelId,
+																	contextWindow: String(limits.contextWindow),
+																	maxTokens: String(limits.maxTokens),
+																},
+													)
+												}
+												size="xs"
+												variant="ghost"
+												disabled={busy}
+											>
+												{t("models.configureLimits")}
+											</Button>
+											<Button
+												onClick={() => onTest(profile.id, modelId)}
+												size="xs"
+												variant="ghost"
+												disabled={busy}
+												title={t("models.testTooltip")}
+											>
+												{t("models.test")}
+											</Button>
+											<Button
+												onClick={() => {
+													if (editing) setLimitsEditor(null);
+													onSaveModels(
+														profile,
+														enabled.filter((entry) => entry !== modelId),
+													);
+												}}
+												size="icon-xs"
+												variant="ghost"
+												disabled={busy}
+												title={t("models.remove")}
+											>
+												<XIcon className="size-3.5" />
+											</Button>
+										</div>
+										{editing && limitsEditor ? (
+											<div className="flex flex-col gap-1.5 rounded-lg border border-border px-2 py-2">
+												<div className="flex items-start gap-2">
+													<label className="flex min-w-0 flex-1 flex-col gap-1 text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+														{t("providers.contextWindow")}
+														<Input
+															value={limitsEditor.contextWindow}
+															aria-invalid={draftContext === null}
+															onChange={(event) =>
+																setLimitsEditor((current) =>
+																	current ? { ...current, contextWindow: event.target.value } : current,
+																)
+															}
+														/>
+													</label>
+													<label className="flex min-w-0 flex-1 flex-col gap-1 text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+														{t("providers.maxTokens")}
+														<Input
+															value={limitsEditor.maxTokens}
+															aria-invalid={draftOutput === null}
+															onChange={(event) =>
+																setLimitsEditor((current) =>
+																	current ? { ...current, maxTokens: event.target.value } : current,
+																)
+															}
+														/>
+													</label>
+												</div>
+												<p className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+													{t("models.modelLimitsHint")}
+												</p>
+												<div className="flex items-center gap-2">
+													<Button
+														onClick={() => setLimitsEditor(null)}
+														size="xs"
+														variant="ghost"
+													>
+														{t("common.cancel")}
+													</Button>
+													{profile.modelOverrides?.[modelId] ? (
+														<Button
+															onClick={() => {
+																onSaveModelLimits(profile, modelId, null);
+																setLimitsEditor(null);
+															}}
+															size="xs"
+															variant="ghost"
+															disabled={busy}
+														>
+															{t("common.reset")}
+														</Button>
+													) : null}
+													<div className="flex-1" />
+													<Button
+														onClick={() => {
+															if (draftContext === null || draftOutput === null) return;
+															onSaveModelLimits(profile, modelId, {
+																contextWindow: draftContext,
+																maxTokens: draftOutput,
+															});
+															setLimitsEditor(null);
+														}}
+														size="xs"
+														variant="chrome-outline"
+														disabled={busy || draftContext === null || draftOutput === null}
+													>
+														{t("common.save")}
+													</Button>
+												</div>
+											</div>
+										) : null}
+									</div>
+								);
+							})}
+						</div>
+					)}
 				</div>
-			</div>
+
+				{available ? (
+					<div className="flex flex-col gap-2 rounded-xl border border-border p-3">
+						<div className="flex items-center gap-2">
+							<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
+								{t("models.available")}
+							</span>
+							<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+								{available.length}
+							</span>
+						</div>
+
+						{available.length === 0 ? (
+							<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+								{t("models.fetchEmpty")}
+							</p>
+						) : (
+							<>
+								{available.length > SEARCH_THRESHOLD ? (
+									<Input
+										type="search"
+										placeholder={t("models.search")}
+										value={query}
+										onChange={(event) => setQuery(event.target.value)}
+									/>
+								) : null}
+								{filtered.length === 0 ? (
+									<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+										{t("models.noMatch", { query: query.trim() })}
+									</p>
+								) : (
+									<div className="flex max-h-72 flex-col divide-y divide-[color:var(--app-surface-divider)] overflow-y-auto">
+										{filtered.map((model) => {
+											const added = enabled.includes(model.id);
+											return (
+												<div key={model.id} className="flex items-center gap-2 py-1">
+													<div className="flex min-w-0 flex-1 flex-col">
+														<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
+															{model.id}
+														</span>
+														{model.name !== model.id ? (
+															<span className="truncate text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+																{model.name}
+															</span>
+														) : null}
+													</div>
+													{added ? (
+														<span className="flex items-center gap-1 px-1.5 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+															<CheckIcon className="size-3.5" />
+															{t("models.added")}
+														</span>
+													) : (
+														<Button
+															onClick={() => add(model.id)}
+															size="xs"
+															variant="chrome-outline"
+															disabled={busy}
+														>
+															{t("models.add")}
+														</Button>
+													)}
+												</div>
+											);
+										})}
+									</div>
+								)}
+							</>
+						)}
+					</div>
+				) : null}
+
+				{/* Not every OpenAI-compatible endpoint serves /models, so an id can
+				    always be typed in by hand. */}
+				<div className="flex flex-col gap-1">
+					<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+						{t("models.manual")}
+					</span>
+					<div className="flex items-center gap-2">
+						<Input
+							className="min-w-0 flex-1"
+							placeholder="gpt-4o-mini"
+							value={manual}
+							onChange={(event) => setManual(event.target.value)}
+							onKeyDown={(event) => {
+								if (event.key !== "Enter" || busy) return;
+								add(manual);
+								setManual("");
+							}}
+						/>
+						<Button
+							onClick={() => {
+								add(manual);
+								setManual("");
+							}}
+							size="sm"
+							variant="chrome-outline"
+							disabled={busy || !manual.trim() || enabled.includes(manual.trim())}
+						>
+							{t("models.add")}
+						</Button>
+					</div>
+				</div>
+				</>
+			) : null}
 		</div>
 	);
 }

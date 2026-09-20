@@ -55,6 +55,19 @@ dispatcher are not bundled. The bundled `frontend-design` reference is itself
 adapted from an upstream source and retains its own
 `resources/skills/design/references/open-design/frontend-design/LICENSE.txt`.
 
+## Taste Skill — frontend craft layer (`resources/skills/design/references/taste-skill/`)
+
+MIT — see [TasteSkill-LICENSE.txt](./TasteSkill-LICENSE.txt).
+
+Upstream: <https://github.com/Leonxlnx/taste-skill>, pinned to commit
+`4843a7fdb4fb7320d4e3c021df72ee393d1dcf3e`. The default
+`design-taste-frontend` v2 experimental `SKILL.md` is bundled verbatim as a
+contextual craft and pre-flight reference behind NekoCode's existing `/design`
+skill. The NekoCode wrapper selects applicable routes and reconciles upstream
+framework, dependency, image-generation, and block-library assumptions with the
+current workspace and available native tools; no separate Taste Skill command or
+plugin metadata is bundled.
+
 ## ai-website-cloner-template — the built-in clone skill and scaffold (`resources/skills/clone-website/`, `resources/templates/website-cloner/`)
 
 MIT — see [WebsiteCloner-LICENSE.txt](./WebsiteCloner-LICENSE.txt).

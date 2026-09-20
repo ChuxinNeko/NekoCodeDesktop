@@ -22,6 +22,14 @@ export interface ModelOption {
 	name: string;
 }
 
+export function modelName(option: Pick<ModelOption, "id" | "name">): string {
+	// A built-in model carries a written-out name ("Claude Sonnet 4.5"); a
+	// configured one is registered under its id, and that is what gets trimmed.
+	return option.name.trim() && option.name !== option.id
+		? option.name
+		: (option.id.split("/").pop() ?? option.id);
+}
+
 /**
  * What the pickers call a model: `provider/model`, e.g. `zai/glm-4.6`.
  *
@@ -34,13 +42,7 @@ export function modelLabel(
 	option: Pick<ModelOption, "provider" | "providerName" | "id" | "name">,
 ): string {
 	const provider = option.providerName.trim() || option.provider;
-	// A built-in model carries a written-out name ("Claude Sonnet 4.5"); a
-	// configured one is registered under its id, and that is what gets trimmed.
-	const model =
-		option.name.trim() && option.name !== option.id
-			? option.name
-			: (option.id.split("/").pop() ?? option.id);
-	return `${provider}/${model}`;
+	return `${provider}/${modelName(option)}`;
 }
 
 /**

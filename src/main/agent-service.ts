@@ -174,28 +174,6 @@ function modelKeyOf(model: { provider: string; id: string }): string {
 	return `${model.provider}/${model.id}`;
 }
 
-/** The transcript line a finished restore leaves behind. */
-function describeRestore(outcome: {
-	scope: RestoreCheckpointRequest["scope"];
-	label: string;
-	restored: number;
-	deleted: number;
-	conversationRewound: boolean;
-}): string {
-	const parts: string[] = [];
-	if (outcome.scope !== "conversation") {
-		parts.push(
-			outcome.restored || outcome.deleted
-				? `恢复 ${outcome.restored} 个文件，删除 ${outcome.deleted} 个新增文件`
-				: "代码无需改动",
-		);
-	}
-	if (outcome.scope !== "code") {
-		parts.push(outcome.conversationRewound ? "对话已回退到这一轮之前" : "对话未回退");
-	}
-	return `已回退到检查点「${outcome.label}」：${parts.join("；")}`;
-}
-
 /** What an assistant message said, with thinking and tool calls left out. */
 function assistantText(message: AssistantMessage): string {
 	if (!Array.isArray(message.content)) return "";
@@ -509,21 +487,25 @@ export class AgentService {
 				apiKey: profile.apiKey,
 				api: profile.api,
 				authHeader: profile.api === "openai-completions" || profile.api === "openai-responses",
-				models: profile.modelIds.map((id) => ({
-					id,
-					name: id,
-					api: profile.api,
-					// PI clamps every thinking level to "off" on a model that is not
-					// flagged as reasoning, so this is what makes the picker do anything.
-					reasoning: profile.reasoning,
-					input: ["text"],
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					// A custom endpoint advertises neither limit, and PI clamps every
-					// response to the one declared here — too low and long writes are
-					// truncated mid-argument, so the profile owns both numbers.
-					contextWindow: profile.contextWindow,
-					maxTokens: profile.maxTokens,
-				})),
+				models: profile.modelIds.map((id) => {
+					const limits = profile.modelOverrides[id];
+					return {
+						id,
+						name: id,
+						api: profile.api,
+						// PI clamps every thinking level to "off" on a model that is not
+						// flagged as reasoning, so this is what makes the picker do anything.
+						reasoning: profile.reasoning,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						// A custom endpoint advertises neither limit, and PI clamps every
+						// response to the one declared here — too low and long writes are
+						// truncated mid-argument. A model's explicit override wins; the
+						// profile values are the defaults it falls back to.
+						contextWindow: limits?.contextWindow ?? profile.contextWindow,
+						maxTokens: limits?.maxTokens ?? profile.maxTokens,
+					};
+				}),
 			});
 			this.customProviderIds.add(profile.providerId);
 		}
@@ -1024,10 +1006,6 @@ export class AgentService {
 			this.projector.rebuild(session.messages, session.isStreaming);
 			this.emitSessionsChanged();
 		}
-		this.projector.notice(
-			warnings.length ? "warning" : "info",
-			describeRestore({ scope: request.scope, label: found.label, restored, deleted, conversationRewound }),
-		);
 		this.emit();
 		return { restored, deleted, conversationRewound, editorText, warnings };
 	}

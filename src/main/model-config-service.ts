@@ -14,6 +14,7 @@ import type {
 	FetchedModel,
 	ModelApiProtocol,
 	ModelProfileSummary,
+	ModelTokenLimits,
 	ModelStoreStatus,
 	SaveModelProfileRequest,
 } from "../shared/settings";
@@ -36,6 +37,7 @@ import {
 	MAX_URL,
 	MIN_TOKEN_LIMIT,
 	PROVIDER_KINDS,
+	isValidModelOverrides,
 	isValidTokenLimit,
 	toSummary,
 	validateProfileFile,
@@ -58,6 +60,7 @@ export interface RegistrationProfile {
 	reasoning: boolean;
 	contextWindow: number;
 	maxTokens: number;
+	modelOverrides: Record<string, ModelTokenLimits>;
 }
 
 export class ModelConfigService {
@@ -181,6 +184,16 @@ export class ModelConfigService {
 			throw new Error("Profile limit reached");
 		}
 
+		if (req.modelOverrides !== undefined && !isValidModelOverrides(req.modelOverrides)) {
+			throw new Error("模型限制覆盖格式不正确");
+		}
+		// Overrides for models that were just removed die with the model.
+		const modelOverrides = Object.fromEntries(
+			Object.entries(req.modelOverrides ?? existing?.modelOverrides ?? {})
+				.filter(([id]) => modelIds.includes(id))
+				.map(([id, limits]) => [id, { ...limits }]),
+		);
+
 		const submittedKey = req.apiKey?.trim() ?? "";
 		let encryptedApiKey: string;
 		if (submittedKey) {
@@ -209,9 +222,10 @@ export class ModelConfigService {
 					modelIds,
 					reasoning: req.reasoning === true,
 					// Omitted means "leave the stored limit alone": the models tab
-					// saves a profile without ever showing these fields.
+					// edits per-model overrides but still omits the provider defaults.
 					contextWindow: req.contextWindow ?? existing.contextWindow,
 					maxTokens: req.maxTokens ?? existing.maxTokens,
+					modelOverrides,
 					updatedAt: now,
 				}
 			: {
@@ -226,6 +240,7 @@ export class ModelConfigService {
 					reasoning: req.reasoning === true,
 					contextWindow: req.contextWindow,
 					maxTokens: req.maxTokens,
+					modelOverrides,
 					createdAt: now,
 					updatedAt: now,
 				};
@@ -316,6 +331,9 @@ export class ModelConfigService {
 					reasoning: p.reasoning === true,
 					contextWindow: p.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 					maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
+					modelOverrides: Object.fromEntries(
+						Object.entries(p.modelOverrides ?? {}).map(([id, limits]) => [id, { ...limits }]),
+					),
 				};
 			});
 	}

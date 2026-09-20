@@ -1,11 +1,11 @@
 ---
 name: design
-description: Create polished design artifacts inside the current NekoCode workspace using a curated, filesystem-first OpenDesign workflow. Use for landing pages, web prototypes, dashboards, mobile screens, HTML slide decks, posters, visual assets, and motion studies. Invoke directly with /design [brief].
+description: Create polished, non-generic design artifacts inside the current NekoCode workspace using OpenDesign workflows and a contextual Taste Skill craft layer. Use for landing pages, web prototypes, dashboards, mobile screens, HTML slide decks, posters, visual assets, motion studies, and frontend redesigns. Invoke directly with /design [brief].
 ---
 
 # Design
 
-Build the design requested in the user brief that follows this skill block inside the current NekoCode workspace. This is NekoCode's curated in-chat adaptation of OpenDesign: use the current model, filesystem tools, and browser preview rather than launching a separate OpenDesign daemon or desktop app.
+Build the design requested in the user brief that follows this skill block inside the current NekoCode workspace. This is NekoCode's curated in-chat adaptation of OpenDesign with Taste Skill as a contextual frontend craft layer: use the current model, filesystem tools, and browser preview rather than launching a separate design daemon, desktop app, or plugin.
 
 ## Discovery
 
@@ -24,6 +24,10 @@ Read `references/open-design/frontend-design/SKILL.md` for every route, then rea
 - A vague brief that needs concrete tokens: `references/open-design/design-brief/SKILL.md`
 - Poster, cover, or static visual: use the frontend craft rules to create an editable SVG or a self-contained HTML poster. Do not claim to have generated PNG/JPEG pixels unless an available tool actually did so.
 - Video, reel, animation, or motion study: create a self-contained animated HTML/CSS/JS artifact that the NekoCode browser can preview. Do not claim MP4 export unless an available renderer actually produced the file.
+
+For landing pages, marketing sites, portfolios, editorial or blog surfaces, and redesigns of those experiences, also read `references/taste-skill/SKILL.md` completely before planning. Treat it as a contextual quality and pre-flight layer, not as a second skill or a replacement for the selected OpenDesign route. Do not apply it wholesale to dashboards, dense product UI, data tables, multi-step flows, native mobile, decks, posters, or motion-only artifacts; its own out-of-scope section explains those boundaries.
+
+The Taste Skill reference describes defaults for many frameworks and optional image-generation environments. The user's brief, the repository's existing stack and conventions, these wrapper instructions, and the design contract below take precedence. Never add a package merely because the reference lists it: first verify the dependency and prefer the project's established system. Use image generation only when an actual image tool is available; otherwise follow this skill's editable-asset and honest-limitation rules. Ignore the upstream block-library authoring path unless the user explicitly asks to build reusable Taste Skill blocks.
 
 The OpenDesign references describe their native project root. Resolve every path against the user's chosen destination in this workspace, not against this skill directory. Treat OpenDesign-only host features such as injected design systems, `data-od-id` comment mode, `<artifact>` wrappers, `OD_BIN`, media dispatch, and daemon metadata as optional context, not available NekoCode tools.
 
@@ -57,3 +61,5 @@ PNG/JPEG model generation and MP4/PPTX/PDF export are not bundled with this cura
 ## Attribution
 
 Adapted from OpenDesign 0.22.2 by nexu-io under Apache-2.0. The selected upstream references are bundled under `references/open-design/`; see the repository's `licenses/OpenDesign-LICENSE.txt` and third-party notices.
+
+The frontend craft layer bundles Taste Skill's `design-taste-frontend` v2 experimental reference by Leonxlnx under MIT, pinned to commit `4843a7fdb4fb7320d4e3c021df72ee393d1dcf3e`; see `references/taste-skill/SKILL.md`, the repository's `licenses/TasteSkill-LICENSE.txt`, and third-party notices.

@@ -3,6 +3,7 @@ import type {
 	FetchedModel,
 	ModelProfileSummary,
 	ModelStoreStatus,
+	ModelTokenLimits,
 	OAuthProviderId,
 	OAuthProviderSummary,
 } from "../../../../shared/settings";
@@ -69,10 +70,15 @@ export function ProviderModelSettings() {
 		setProfiles(nextProfiles);
 		setStatus(nextStatus);
 		setAccounts(nextAccounts);
+		const nextOAuthAccounts = nextAccounts.filter(
+			(account) => account.signedIn && account.modelIds.length > 0,
+		);
 		setSelectedId((previous) =>
-			previous && nextProfiles.some((entry) => entry.id === previous)
+			previous &&
+			(nextProfiles.some((entry) => entry.id === previous) ||
+				nextOAuthAccounts.some((entry) => entry.id === previous))
 				? previous
-				: (nextProfiles[0]?.id ?? null),
+				: (nextProfiles[0]?.id ?? nextOAuthAccounts[0]?.id ?? null),
 		);
 	};
 
@@ -214,6 +220,29 @@ export function ProviderModelSettings() {
 		return models;
 	};
 
+	const saveModelLimits = (
+		profile: ModelProfileSummary,
+		modelId: string,
+		limits: ModelTokenLimits | null,
+	) =>
+		void run(async () => {
+			const modelOverrides = { ...(profile.modelOverrides ?? {}) };
+			if (limits === null) delete modelOverrides[modelId];
+			else modelOverrides[modelId] = { ...limits };
+			await api.modelSave({
+				id: profile.id,
+				kind: profile.kind,
+				name: profile.name,
+				baseUrl: profile.baseUrl,
+				route: profile.route,
+				api: profile.api,
+				modelIds: profile.modelIds,
+				reasoning: profile.reasoning,
+				modelOverrides,
+			});
+			await reload();
+		});
+
 	const testModel = (profileId: string, modelId: string) =>
 		void run(async () => {
 			const result = await api.modelTest({ profileId, modelId });
@@ -221,8 +250,6 @@ export function ProviderModelSettings() {
 				`${result.ok ? t("models.testOk") : t("models.testFailed")} · ${String(result.latencyMs)}ms · ${result.message}`,
 			);
 		});
-
-	const selected = profiles.find((entry) => entry.id === selectedId) ?? profiles[0] ?? null;
 
 	return (
 		<section className="flex flex-col gap-3">
@@ -287,13 +314,14 @@ export function ProviderModelSettings() {
 				<ModelsTab
 					profiles={profiles}
 					accounts={accounts}
-					profile={selected}
+					selectedId={selectedId}
 					busy={busy}
 					autoFetchId={autoFetchId}
 					onSelect={setSelectedId}
 					onAutoFetchHandled={() => setAutoFetchId(null)}
 					onFetch={fetchModels}
 					onSaveModels={saveModels}
+					onSaveModelLimits={saveModelLimits}
 					onTest={testModel}
 					onAddProvider={() => {
 						setDraft(emptyProviderDraft());

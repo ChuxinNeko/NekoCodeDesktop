@@ -145,6 +145,12 @@ export class OAuthService {
 		account: CachedAccount | undefined,
 	): OAuthProviderSummary {
 		const signedIn = runtime.getProviderAuthStatus(def.providerId).configured;
+		const models = runtime.getModels(def.providerId).map((model) => ({
+			id: model.id,
+			name: model.name,
+			contextWindow: model.contextWindow,
+			maxTokens: model.maxTokens,
+		}));
 		return {
 			id: def.id,
 			providerId: def.providerId,
@@ -152,7 +158,8 @@ export class OAuthService {
 			signedIn,
 			// Details describe the signed-in account; a signed-out row shows none.
 			...(signedIn ? account : {}),
-			modelIds: runtime.getModels(def.providerId).map((model) => model.id),
+			modelIds: models.map((model) => model.id),
+			models,
 		};
 	}
 

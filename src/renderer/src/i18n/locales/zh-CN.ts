@@ -284,6 +284,7 @@ export const zhCN: Record<TranslationKey, string> = {
 	"commands.argsPlaceholder": "补充说明（可留空）…",
 	"picker.noModel": "无模型",
 	"picker.model": "模型",
+	"picker.provider": "供应商",
 	"picker.noModels": "未配置模型",
 	"picker.thinking": "思考",
 	"picker.thinkingUnsupported":
@@ -514,6 +515,9 @@ export const zhCN: Record<TranslationKey, string> = {
 	"models.remove": "移除",
 	"models.manual": "手动添加模型 ID",
 	"models.test": "测试",
+	"models.limitSummary": "上下文 {contextWindow} · 输出 {maxTokens}",
+	"models.configureLimits": "上下文",
+	"models.modelLimitsHint": "未设置覆盖时使用供应商默认值。输出上限过低会截断长文件 write 调用；超过模型真实能力的值可能被上游拒绝。",
 	"models.testTooltip": "发送一个小的测试请求",
 	"models.testOk": "成功",
 	"models.testFailed": "失败",

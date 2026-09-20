@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { FusionConfig } from "../../../../shared/fusion";
 import { FusionPicker } from "./FusionPicker";
 import {
@@ -8,6 +9,7 @@ import {
 } from "../../../../shared/workflow";
 import {
 	modelLabel,
+	modelName,
 	type ExecutionMode,
 	type ModelOption,
 	type ThinkingLevel,
@@ -18,17 +20,21 @@ import { BrainIcon, ChevronDownIcon, ZapIcon } from "../../lib/icons";
 import { Button } from "../ui/button";
 import {
 	Menu,
+	MenuGroup,
 	MenuGroupLabel,
 	MenuItem,
 	MenuRadioGroup,
 	MenuRadioItem,
 	MenuSeparator,
+	MenuSub,
+	MenuSubTrigger,
 	MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { ComposerPickerMenuPopup } from "./ComposerPickerMenuPopup";
+import { ComposerPickerMenuPopup, ComposerPickerMenuSubPopup } from "./ComposerPickerMenuPopup";
 import {
 	COMPOSER_PICKER_MENU_OPTION_CLASS_NAME,
+	COMPOSER_PICKER_MODEL_SUBMENU_HEIGHT_CLASS_NAME,
 	COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME,
 } from "./composerPickerStyles";
 
@@ -85,8 +91,22 @@ export function ComposerPickers(props: ComposerPickersProps) {
 	// A model with nothing but "off" cannot think at all; say so instead of
 	// offering a menu whose every entry would snap back.
 	const thinkingSupported = thinkingLevels.length > 1;
+	const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
 	const active = models.find((option) => option.key === modelKey);
+	const providerGroups = Array.from(
+		models.reduce((groups, model) => {
+			const group = groups.get(model.provider);
+			if (group) group.models.push(model);
+			else groups.set(model.provider, {
+				id: model.provider,
+				name: model.providerName.trim() || model.provider,
+				models: [model],
+			});
+			return groups;
+		}, new Map<string, { id: string; name: string; models: ModelOption[] }>()),
+		([, group]) => group,
+	);
 	const triggerLabel = props.fusion ? "Fusion" : active ? modelLabel(active) : t("picker.noModel");
 
 	const trigger = (label: string, icon: React.ReactNode, active = false) => (
@@ -180,30 +200,61 @@ export function ComposerPickers(props: ComposerPickersProps) {
 
 			<div className="flex-1" />
 
-			<Menu keepOpenOnSubmenuInteraction>
+			<Menu
+				open={modelMenuOpen}
+				onOpenChange={setModelMenuOpen}
+				keepOpenOnSubmenuInteraction
+			>
 				<MenuTrigger render={trigger(triggerLabel, <ZapIcon className="size-3.5" />)} />
-				<ComposerPickerMenuPopup align="start" side="top" fixedWidth>
-					{/* The label belongs inside the radio group: Base UI takes the group
-					    context from MenuRadioGroup, and a label outside one throws as
-					    soon as the menu opens. */}
-					<MenuRadioGroup value={props.fusion ? "" : modelKey ?? ""} onValueChange={(value) => props.onSetModel(value)}>
-						<MenuGroupLabel>{t("picker.model")}</MenuGroupLabel>
-						{models.length === 0 ? (
+				<ComposerPickerMenuPopup
+					align="start"
+					side="top"
+					fixedWidth
+					className={COMPOSER_PICKER_MODEL_SUBMENU_HEIGHT_CLASS_NAME}
+				>
+					<MenuGroup>
+						<MenuGroupLabel>{t("picker.provider")}</MenuGroupLabel>
+						{providerGroups.length === 0 ? (
 							<MenuItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} disabled>
 								{t("picker.noModels")}
 							</MenuItem>
 						) : (
-							models.map((option) => (
-								<MenuRadioItem
-									key={option.key}
-									className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
-									value={option.key}
-								>
-									<span className="truncate">{modelLabel(option)}</span>
-								</MenuRadioItem>
+							providerGroups.map((provider) => (
+								<MenuSub key={provider.id} keepOpenOnFocusOut>
+									<MenuSubTrigger className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}>
+										<span className="min-w-0 flex-1 truncate">{provider.name}</span>
+									</MenuSubTrigger>
+									<ComposerPickerMenuSubPopup
+										fixedWidth
+										side="inline-end"
+										className={COMPOSER_PICKER_MODEL_SUBMENU_HEIGHT_CLASS_NAME}
+									>
+										{/* The label belongs inside the radio group: Base UI takes the group
+										    context from MenuRadioGroup, and a label outside one throws as
+										    soon as the menu opens. */}
+										<MenuRadioGroup
+											value={props.fusion ? "" : modelKey ?? ""}
+											onValueChange={(value) => {
+												props.onSetModel(value);
+												setModelMenuOpen(false);
+											}}
+										>
+											<MenuGroupLabel>{provider.name}</MenuGroupLabel>
+											{provider.models.map((option) => (
+												<MenuRadioItem
+													key={option.key}
+													className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
+													value={option.key}
+												>
+													<span className="truncate">{modelName(option)}</span>
+												</MenuRadioItem>
+											))}
+										</MenuRadioGroup>
+									</ComposerPickerMenuSubPopup>
+								</MenuSub>
 							))
 						)}
-					</MenuRadioGroup>
+					</MenuGroup>
 					<MenuSeparator />
 					<FusionPicker models={models} modelKey={modelKey} fusion={props.fusion} onApply={props.onSetFusion} />
 				</ComposerPickerMenuPopup>

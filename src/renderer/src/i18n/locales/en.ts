@@ -287,6 +287,7 @@ export const en = {
 	"composer.stop": "Stop",
 	"picker.noModel": "No model",
 	"picker.model": "Model",
+	"picker.provider": "Provider",
 	"picker.noModels": "No models configured",
 	"picker.thinking": "Thinking",
 	"picker.thinkingUnsupported":
@@ -525,6 +526,9 @@ export const en = {
 	"models.remove": "Remove",
 	"models.manual": "Add a model id by hand",
 	"models.test": "Test",
+	"models.limitSummary": "Context {contextWindow} · Output {maxTokens}",
+	"models.configureLimits": "Context",
+	"models.modelLimitsHint": "Without an override, this model uses the provider defaults. A low output limit can truncate long write calls; values above the model's real capability may fail upstream.",
 	"models.testTooltip": "Send a tiny test request",
 	"models.testOk": "OK",
 	"models.testFailed": "Failed",
