@@ -279,6 +279,9 @@ export const zhCN: Record<TranslationKey, string> = {
 	"composer.placeholder": "让 NekoCode 构建、修复或解释些什么…",
 	"composer.send": "发送",
 	"composer.stop": "停止",
+	"commands.empty": "没有可用的技能或命令",
+	"commands.remove": "移除命令",
+	"commands.argsPlaceholder": "补充说明（可留空）…",
 	"picker.noModel": "无模型",
 	"picker.model": "模型",
 	"picker.noModels": "未配置模型",
@@ -469,6 +472,10 @@ export const zhCN: Record<TranslationKey, string> = {
 	"providers.apiKeyKeep": "（留空则保留已保存的密钥）",
 	"providers.reasoning": "支持推理",
 	"providers.reasoningHint": "为该供应商的模型启用输入框的思考级别。",
+	"providers.contextWindow": "上下文窗口 (tokens)",
+	"providers.maxTokens": "单次输出上限 (tokens)",
+	"providers.tokenLimitsHint":
+		"自定义接口不会上报这两个值。单次输出上限决定模型能否在一次回复里写完一个长文件——太低会让 write 参数被截断并作废；超过接口实际支持的上限则会让每次请求直接失败，请填模型的真实数值。",
 	"providers.saved": "已保存。",
 
 	// OAuth sign-in ---------------------------------------------------------------

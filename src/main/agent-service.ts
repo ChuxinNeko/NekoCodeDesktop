@@ -46,6 +46,7 @@ import {
 	type ReversalPlan,
 } from "./file-journal";
 import { FileJournalRecorder } from "./file-journal-recorder";
+import { attachTruncationRecovery } from "./truncation-recovery";
 import { applyReversal, fileDiffSince, previewReversal } from "./file-restore";
 import { cellIdForMessage, findTurnEntry } from "./checkpoint-anchor";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
@@ -53,7 +54,14 @@ import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import { PluginService } from "./plugin-service";
 import { BuiltinSkillStore, resolveBuiltinSkillsDir } from "./builtin-skills";
 import type { SetSkillEnabledRequest, SkillOrigin, SkillSummary, SkillsSnapshot } from "../shared/skills";
-import { CellProjector, expandNekoSlashAlias, parseSlashCommand, type ProjectionEvent } from "./agent-projection";
+import type { SlashCommandSummary } from "../shared/commands";
+import {
+	CellProjector,
+	DIRECT_SKILL_ALIASES,
+	expandNekoSlashAlias,
+	parseSlashCommand,
+	type ProjectionEvent,
+} from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
 import { decideModelAfterReload } from "./model-refresh";
 import { registerOAuthClientIdentity } from "./oauth-service";
@@ -379,6 +387,39 @@ export class AgentService {
 	}
 
 	/**
+	 * What the composer's slash menu offers.
+	 *
+	 * Deliberately only the two things `AgentSession.prompt` actually expands:
+	 * skills as `/skill:<name>` and prompt templates as `/<name>`. Offering
+	 * anything else would complete into text that reaches the model verbatim.
+	 *
+	 * Before a session exists the loader has not run — it needs a working
+	 * directory — so this falls back to the built-in catalog. Those skills ship
+	 * with the app and will be loaded by the session the welcome screen's first
+	 * prompt creates, which is exactly when the command is expanded.
+	 */
+	slashCommands(): SlashCommandSummary[] {
+		const loaded = this.resourceLoader?.getSkills().skills;
+		const available = loaded ?? this.builtinSkills.list().filter((skill) => skill.enabled);
+		const skills: SlashCommandSummary[] = available.map((skill) => ({
+			name: DIRECT_SKILL_ALIASES.has(skill.name) ? skill.name : `skill:${skill.name}`,
+			description: skill.description,
+			kind: "skill",
+		}));
+		const prompts: SlashCommandSummary[] = (this.session?.promptTemplates ?? []).map(
+			(template) => ({
+				name: template.name,
+				description: template.description,
+				kind: "prompt",
+				...(template.argumentHint ? { argumentHint: template.argumentHint } : {}),
+			}),
+		);
+		const byName = (a: SlashCommandSummary, b: SlashCommandSummary) =>
+			a.name.localeCompare(b.name);
+		return [...prompts.sort(byName), ...skills.sort(byName)];
+	}
+
+	/**
 	 * Switch a built-in skill on or off.
 	 *
 	 * A skill is nothing but a name and a description in the system prompt until
@@ -477,8 +518,11 @@ export class AgentService {
 					reasoning: profile.reasoning,
 					input: ["text"],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: 128000,
-					maxTokens: 16384,
+					// A custom endpoint advertises neither limit, and PI clamps every
+					// response to the one declared here — too low and long writes are
+					// truncated mid-argument, so the profile owns both numbers.
+					contextWindow: profile.contextWindow,
+					maxTokens: profile.maxTokens,
 				})),
 			});
 			this.customProviderIds.add(profile.providerId);
@@ -1314,6 +1358,9 @@ export class AgentService {
 		// wakes up when a tool call names a file.
 		this.journal = new FileJournalRecorder(sessionManager.getCwd());
 		this.journal.attach(session);
+		attachTruncationRecovery(session, (message) => {
+			if (generation === this.generation) this.projector.notice("warning", message);
+		});
 		this.unsubscribe = session.subscribe((event: AgentSessionEvent) => {
 			this.onSessionEvent(event);
 		});

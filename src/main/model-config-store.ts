@@ -1,7 +1,12 @@
-import type {
-	ModelApiProtocol,
-	ModelProfileSummary,
-	ProviderKind,
+import {
+	DEFAULT_CONTEXT_WINDOW,
+	DEFAULT_MAX_TOKENS,
+	MAX_CONTEXT_WINDOW,
+	MAX_OUTPUT_TOKENS,
+	MIN_TOKEN_LIMIT,
+	type ModelApiProtocol,
+	type ModelProfileSummary,
+	type ProviderKind,
 } from "../shared/settings";
 import { resolveEndpoints } from "./model-endpoint";
 
@@ -20,6 +25,15 @@ export const PROVIDER_KINDS: ProviderKind[] = ["custom-api", "oauth"];
 /** What a profile written before provider types existed has to be. */
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "custom-api";
 
+// The token limits live in the shared contract: the provider form edits them.
+export {
+	DEFAULT_CONTEXT_WINDOW,
+	DEFAULT_MAX_TOKENS,
+	MAX_CONTEXT_WINDOW,
+	MAX_OUTPUT_TOKENS,
+	MIN_TOKEN_LIMIT,
+};
+
 const SHAPE_ERROR =
 	"model-profiles.json has an unexpected shape and will not be overwritten";
 
@@ -35,6 +49,9 @@ export interface StoredProfile {
 	modelIds: string[];
 	/** Optional: profiles written before the flag existed count as non-reasoning. */
 	reasoning?: boolean;
+	/** Optional overrides; absent means the conservative defaults above. */
+	contextWindow?: number;
+	maxTokens?: number;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -52,6 +69,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
 	return typeof value === "string" && value.trim().length > 0;
+}
+
+/** An absent limit is the default; a present one has to be a usable integer. */
+export function isValidTokenLimit(value: unknown, max: number): boolean {
+	return (
+		value === undefined ||
+		(typeof value === "number" &&
+			Number.isInteger(value) &&
+			value >= MIN_TOKEN_LIMIT &&
+			value <= max)
+	);
 }
 
 /**
@@ -106,6 +134,12 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (
+			!isValidTokenLimit(p.contextWindow, MAX_CONTEXT_WINDOW) ||
+			!isValidTokenLimit(p.maxTokens, MAX_OUTPUT_TOKENS)
+		) {
+			throw new Error(SHAPE_ERROR);
+		}
+		if (
 			p.kind !== undefined &&
 			!PROVIDER_KINDS.includes(p.kind as ProviderKind)
 		) {
@@ -142,6 +176,8 @@ export function toSummary(p: StoredProfile): ModelProfileSummary {
 		api: p.api,
 		modelIds: [...p.modelIds],
 		reasoning: p.reasoning === true,
+		contextWindow: p.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+		maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
 		hasApiKey: p.encryptedApiKey.length > 0,
 		createdAt: p.createdAt,
 		updatedAt: p.updatedAt,

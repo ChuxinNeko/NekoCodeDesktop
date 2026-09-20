@@ -207,6 +207,12 @@ export function buildModePrompt(context: PromptContext): string {
 			? "硬性只读：不能执行 shell、修改文件或委派具有写权限的 worker。"
 			: "仅在用户任务范围内使用写入工具；这不是操作系统级沙箱，谨慎对待外部副作用。",
 		"本会话可用工具（其他工具均不可调用）：" + tools.join(", ") + "。",
+		// A response cut off by the output token limit has every tool call in it
+		// rejected, arguments and all. A whole-file `write` is the one call that
+		// routinely hits that ceiling, and picking `edit` avoids it outright.
+		tools.includes("edit") && tools.includes("write")
+			? "修改已存在的文件用 edit 做局部替换；write 只用于新建文件或整体重写短文件。单次回复的输出 token 有硬上限，一旦超出，该回复内的全部工具调用都会作废且文件不会被改动：长文件先 write 一个较短骨架再用多次 edit 补全，不要在一次回复里同时长篇推理、生成整份文件和解释。"
+			: "",
 		tools.includes("switch_mode")
 			? automatic
 				? "switch_mode 自动匹配内部工作阶段，立即生效，不询问用户，始终保持 Agent 全自动模式。它不提升执行权限；新工具在下一步模型调用才可用。"

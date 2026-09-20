@@ -1,7 +1,9 @@
+import { useState } from "react";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { AgentPhase, WorkMode } from "../../../shared/workflow";
 import type { ExecutionMode, ModelOption, ThinkingLevel } from "../../../shared/agent";
+import { api } from "../api";
 import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
 
@@ -29,6 +31,9 @@ interface ComposerProps {
 
 /** Composer for an open session: the shared input shell plus the model/thinking/mode pickers. */
 export function Composer(props: ComposerProps) {
+	// Bumped to ask the shell to open its slash menu. A counter rather than a
+	// boolean so the toolbar entry still works after the menu is dismissed.
+	const [openCommands, setOpenCommands] = useState(0);
 	return (
 		<ComposerShell
 			insertion={props.insertion}
@@ -37,6 +42,8 @@ export function Composer(props: ComposerProps) {
 			onAbort={props.onAbort}
 			onSend={props.onSend}
 			streaming={props.streaming}
+			loadCommands={() => api.agentCommands()}
+			openCommandsSignal={openCommands}
 			toolbar={
 				<ComposerPickers
 					models={props.models}
@@ -53,7 +60,7 @@ export function Composer(props: ComposerProps) {
 					onSetThinking={props.onSetThinking}
 					onSetMode={props.onSetMode}
 					onSetWorkMode={props.onSetWorkMode}
-					onSlashCommands={() => props.onSend("/help")}
+					onSlashCommands={() => setOpenCommands((n) => n + 1)}
 				/>
 			}
 		/>

@@ -521,6 +521,10 @@ function registerIpc(): void {
 		agentService?.testConfiguredModel(req),
 	);
 
+	// Read straight off the open session's loaders, so the composer's menu can
+	// be fetched on every open rather than pushed and cached in the renderer.
+	ipcMain.handle("agent:commands", () => agentService?.slashCommands() ?? []);
+
 	ipcMain.handle("skills:list", () => agentService?.skillsSnapshot());
 	ipcMain.handle("skills:setEnabled", (_e, request: SetSkillEnabledRequest) =>
 		agentService?.setSkillEnabled(request),

@@ -1,6 +1,7 @@
 import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ThinkingOrb } from "thinking-orbs";
 import type { AgentCell } from "../../../shared/agent";
 import type { CheckpointSummary } from "../../../shared/checkpoints";
 import type { WorkflowTask } from "../../../shared/workflow";
@@ -641,6 +642,7 @@ function WorkingBlock({
 				) : (
 					<ChevronRightIcon className="size-4" />
 				)}
+				{active ? <ThinkingOrb state="solving" size={20} /> : null}
 				<span className={active ? "shimmer" : undefined}>
 					{active
 						? `Working for ${formatElapsed(seconds)}`

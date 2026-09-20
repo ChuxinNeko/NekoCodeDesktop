@@ -112,7 +112,7 @@ jobs:
           merge-multiple: true
           path: installers
       - name: Publish complete release with notes and checksums
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
@@ -126,9 +126,15 @@ jobs:
             const version = process.env.RELEASE_VERSION;
             const tag = process.env.RELEASE_TAG;
             const prerelease = process.env.RELEASE_PRERELEASE === 'true';
-            const suffixes = ['win-x64.exe', 'mac-x64.dmg', 'mac-x64.zip', 'mac-arm64.dmg', 'mac-arm64.zip', 'linux-x64.AppImage', 'linux-x64.deb'];
+            // electron-builder uses format-specific architecture names for Linux artifacts.
+            const suffixes = ['win-x64.exe', 'mac-x64.dmg', 'mac-x64.zip', 'mac-arm64.dmg', 'mac-arm64.zip', 'linux-x86_64.AppImage', 'linux-amd64.deb'];
             const names = suffixes.map(suffix => `NekoCode-Desktop-${version}-${suffix}`);
             // Verify every platform before creating a tag or release.
+            const available = await fs.readdir('installers');
+            const missing = names.filter(name => !available.includes(name));
+            if (missing.length > 0) {
+              throw new Error(`Missing release installers: ${missing.join(', ')}. Downloaded files: ${available.sort().join(', ')}`);
+            }
             const sums = [];
             for (const name of names) {
               const data = await fs.readFile(path.join('installers', name));

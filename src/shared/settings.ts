@@ -48,6 +48,22 @@ export type OAuthLoginEvent =
 	| { kind: "error"; provider: OAuthProviderId; message: string }
 	| { kind: "cancelled"; provider: OAuthProviderId };
 
+/**
+ * Token limits for a custom endpoint, which does not advertise its own.
+ *
+ * The output ceiling is what decides whether a model can finish a `write` call
+ * in one response: a response truncated by the limit has all of its tool calls
+ * rejected, because salvaged JSON arguments parse but carry half a file. The
+ * defaults stay conservative because a `max_tokens` above what the endpoint
+ * accepts fails every request outright, which is worse than truncation — a
+ * profile that knows its model's real ceiling raises them itself.
+ */
+export const DEFAULT_CONTEXT_WINDOW = 128_000;
+export const DEFAULT_MAX_TOKENS = 16_384;
+export const MIN_TOKEN_LIMIT = 1_024;
+export const MAX_CONTEXT_WINDOW = 10_000_000;
+export const MAX_OUTPUT_TOKENS = 1_000_000;
+
 export interface ModelProfileSummary {
 	id: string;
 	kind: ProviderKind;
@@ -58,6 +74,14 @@ export interface ModelProfileSummary {
 	modelIds: string[];
 	/** The endpoint serves reasoning models, so thinking levels apply to them. */
 	reasoning: boolean;
+	/** Always resolved: a profile that stored no override reports the default. */
+	contextWindow: number;
+	/**
+	 * Output ceiling for one response. Too low and a long `write` is truncated
+	 * mid-argument and rejected; above what the endpoint accepts, every request
+	 * fails outright — so it follows the model, not the file being edited.
+	 */
+	maxTokens: number;
 	hasApiKey: boolean;
 	createdAt: number;
 	updatedAt: number;
@@ -99,6 +123,9 @@ export interface SaveModelProfileRequest {
 	/** May be empty: a provider is saved before its models are picked. */
 	modelIds: string[];
 	reasoning?: boolean;
+	/** Omitted keeps the stored value; the store's default applies if unset. */
+	contextWindow?: number;
+	maxTokens?: number;
 }
 
 export interface FetchModelsRequest {

@@ -111,6 +111,75 @@ export function ComposerPickers(props: ComposerPickersProps) {
 
 	return (
 		<>
+			<Menu>
+				<MenuTrigger
+					disabled={props.disabled}
+					render={trigger(t(MODE_LABEL_KEYS[mode]), null, mode !== "auto")}
+				/>
+				<ComposerPickerMenuPopup align="start" side="top">
+					<MenuRadioGroup
+						value={mode}
+						onValueChange={(value) => props.onSetMode(value as ExecutionMode)}
+					>
+						<MenuGroupLabel>{t("picker.mode")}</MenuGroupLabel>
+						{(["read-only", "auto", "full-access"] as ExecutionMode[]).map((entry) => (
+							<MenuRadioItem
+								key={entry}
+								value={entry}
+								className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
+							>
+								{t(MODE_LABEL_KEYS[entry])}
+							</MenuRadioItem>
+						))}
+					</MenuRadioGroup>
+					{props.onSlashCommands ? (
+						<>
+							<MenuSeparator />
+							<MenuItem
+								className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
+								onClick={props.onSlashCommands}
+							>
+								{t("picker.slashCommands")}
+							</MenuItem>
+						</>
+					) : null}
+				</ComposerPickerMenuPopup>
+			</Menu>
+
+			<Menu>
+				<MenuTrigger
+					disabled={props.disabled}
+					render={trigger(
+						// Agent picks its own phase as it works, so the trigger reports the
+						// discipline in force rather than just the mode the user pinned.
+						props.workMode === "agent"
+							? t("workMode.agent") + " · " + t(AGENT_PHASE_KEYS[props.agentPhase])
+							: t(WORK_MODE_KEYS[props.workMode]),
+						null,
+						props.workMode !== "agent" || props.agentPhase !== DEFAULT_AGENT_PHASE,
+					)}
+				/>
+				<ComposerPickerMenuPopup align="start" side="top">
+					<MenuRadioGroup
+						value={props.workMode}
+						onValueChange={(value) => props.onSetWorkMode(value as WorkMode)}
+					>
+						<MenuGroupLabel>{t("picker.workMode")}</MenuGroupLabel>
+						{WORK_MODES.map((entry) => (
+							<MenuRadioItem
+								key={entry}
+								value={entry}
+								className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
+							>
+								{t(entry === "agent" ? "workMode.agentAuto" : WORK_MODE_KEYS[entry])}
+							</MenuRadioItem>
+						))}
+					</MenuRadioGroup>
+				</ComposerPickerMenuPopup>
+			</Menu>
+
+			<div className="flex-1" />
+
 			<Menu keepOpenOnSubmenuInteraction>
 				<MenuTrigger render={trigger(triggerLabel, <ZapIcon className="size-3.5" />)} />
 				<ComposerPickerMenuPopup align="start" side="top" fixedWidth>
@@ -185,73 +254,6 @@ export function ComposerPickers(props: ComposerPickersProps) {
 					<TooltipPopup side="top">{t("picker.thinkingUnsupported")}</TooltipPopup>
 				</Tooltip>
 			)}
-
-			<Menu>
-				<MenuTrigger
-					disabled={props.disabled}
-					render={trigger(
-						// Agent picks its own phase as it works, so the trigger reports the
-						// discipline in force rather than just the mode the user pinned.
-						props.workMode === "agent"
-							? t("workMode.agent") + " · " + t(AGENT_PHASE_KEYS[props.agentPhase])
-							: t(WORK_MODE_KEYS[props.workMode]),
-						null,
-						props.workMode !== "agent" || props.agentPhase !== DEFAULT_AGENT_PHASE,
-					)}
-				/>
-				<ComposerPickerMenuPopup align="start" side="top">
-					<MenuRadioGroup
-						value={props.workMode}
-						onValueChange={(value) => props.onSetWorkMode(value as WorkMode)}
-					>
-						<MenuGroupLabel>{t("picker.workMode")}</MenuGroupLabel>
-						{WORK_MODES.map((entry) => (
-							<MenuRadioItem
-								key={entry}
-								value={entry}
-								className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
-							>
-								{t(entry === "agent" ? "workMode.agentAuto" : WORK_MODE_KEYS[entry])}
-							</MenuRadioItem>
-						))}
-					</MenuRadioGroup>
-				</ComposerPickerMenuPopup>
-			</Menu>
-
-			<Menu>
-				<MenuTrigger
-					disabled={props.disabled}
-					render={trigger(t(MODE_LABEL_KEYS[mode]), null, mode !== "auto")}
-				/>
-				<ComposerPickerMenuPopup align="start" side="top">
-					<MenuRadioGroup
-						value={mode}
-						onValueChange={(value) => props.onSetMode(value as ExecutionMode)}
-					>
-						<MenuGroupLabel>{t("picker.mode")}</MenuGroupLabel>
-						{(["read-only", "auto", "full-access"] as ExecutionMode[]).map((entry) => (
-							<MenuRadioItem
-								key={entry}
-								className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
-								value={entry}
-							>
-								{t(MODE_LABEL_KEYS[entry])}
-							</MenuRadioItem>
-						))}
-					</MenuRadioGroup>
-					{props.onSlashCommands ? (
-						<>
-							<MenuSeparator />
-							<MenuItem
-								className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
-								onClick={props.onSlashCommands}
-							>
-								{t("picker.slashCommands")}
-							</MenuItem>
-						</>
-					) : null}
-				</ComposerPickerMenuPopup>
-			</Menu>
 		</>
 	);
 }

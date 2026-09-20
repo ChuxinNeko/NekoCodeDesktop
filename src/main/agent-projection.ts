@@ -107,7 +107,15 @@ export function parseSlashCommand(text: string): SlashCommand | null {
 	};
 }
 
-const DIRECT_SKILL_ALIASES = new Set(["design", "clone-website"]);
+/**
+ * Skills that also answer to their bare name, without the `skill:` prefix.
+ *
+ * The transcript renders an expanded skill block back as the alias for these,
+ * so the composer's slash menu has to offer the same spelling — a menu that
+ * inserted `/skill:design` for something the transcript then calls `/design`
+ * would read as two different commands.
+ */
+export const DIRECT_SKILL_ALIASES = new Set(["design", "clone-website"]);
 
 export function expandNekoSlashAlias(text: string): string {
 	const slash = parseSlashCommand(text);

@@ -2,6 +2,7 @@ import type { ComposerInsertion } from "../../../shared/browser";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode } from "../../../shared/workflow";
 import type { AgentDefaults, ExecutionMode, ThinkingLevel } from "../../../shared/agent";
+import { api } from "../api";
 import { useTranslation } from "../i18n";
 import { XIcon } from "../lib/icons";
 import { ComposerPickers } from "./chat/ComposerPickers";
@@ -72,6 +73,9 @@ export function WelcomeView(props: WelcomeViewProps) {
 				disabled={busy || !cwd}
 				onSend={props.onStart}
 				placeholder={t("composer.placeholder")}
+				// No session yet, so this lists the built-in skills; the session the
+				// first prompt creates is what expands whatever gets picked here.
+				loadCommands={() => api.agentCommands()}
 				toolbar={
 					<>
 						{defaults ? (

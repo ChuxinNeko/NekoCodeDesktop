@@ -280,6 +280,9 @@ export const en = {
 
 	// Composer ------------------------------------------------------------------
 	"composer.placeholder": "Ask NekoCode to build, fix, or explain something…",
+	"commands.empty": "No skills or commands available",
+	"commands.remove": "Remove command",
+	"commands.argsPlaceholder": "Add details (optional)…",
 	"composer.send": "Send",
 	"composer.stop": "Stop",
 	"picker.noModel": "No model",
@@ -478,6 +481,10 @@ export const en = {
 	"providers.apiKeyKeep": "(leave blank to keep the saved key)",
 	"providers.reasoning": "Supports reasoning",
 	"providers.reasoningHint": "Enables the composer's thinking levels for this provider's models.",
+	"providers.contextWindow": "Context window (tokens)",
+	"providers.maxTokens": "Max output per response (tokens)",
+	"providers.tokenLimitsHint":
+		"A custom endpoint reports neither. The output ceiling decides whether a long file can be written in one response — too low and a write call is truncated and discarded; above what the endpoint accepts, every request fails outright. Use the model's real numbers.",
 	"providers.saved": "Saved.",
 
 	// OAuth sign-in ---------------------------------------------------------------

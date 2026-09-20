@@ -24,13 +24,19 @@ import {
 } from "./model-endpoint";
 import {
 	API_PROTOCOLS,
+	DEFAULT_CONTEXT_WINDOW,
+	DEFAULT_MAX_TOKENS,
 	DEFAULT_PROVIDER_KIND,
+	MAX_CONTEXT_WINDOW,
 	MAX_MODEL_ID,
 	MAX_MODELS,
 	MAX_NAME,
+	MAX_OUTPUT_TOKENS,
 	MAX_PROFILES,
 	MAX_URL,
+	MIN_TOKEN_LIMIT,
 	PROVIDER_KINDS,
+	isValidTokenLimit,
 	toSummary,
 	validateProfileFile,
 	type ProfileFile,
@@ -50,6 +56,8 @@ export interface RegistrationProfile {
 	apiKey: string;
 	modelIds: string[];
 	reasoning: boolean;
+	contextWindow: number;
+	maxTokens: number;
 }
 
 export class ModelConfigService {
@@ -156,6 +164,17 @@ export class ModelConfigService {
 			if (id.length > MAX_MODEL_ID) throw new Error(`Model id too long: ${id}`);
 		}
 
+		if (!isValidTokenLimit(req.contextWindow, MAX_CONTEXT_WINDOW)) {
+			throw new Error(
+				`上下文窗口需为 ${MIN_TOKEN_LIMIT}–${MAX_CONTEXT_WINDOW} 之间的整数`,
+			);
+		}
+		if (!isValidTokenLimit(req.maxTokens, MAX_OUTPUT_TOKENS)) {
+			throw new Error(
+				`单次输出上限需为 ${MIN_TOKEN_LIMIT}–${MAX_OUTPUT_TOKENS} 之间的整数`,
+			);
+		}
+
 		const existing = req.id ? profiles.find((p) => p.id === req.id) : undefined;
 		if (req.id && !existing) throw new Error("Profile not found");
 		if (!existing && profiles.length >= MAX_PROFILES) {
@@ -189,6 +208,10 @@ export class ModelConfigService {
 					encryptedApiKey,
 					modelIds,
 					reasoning: req.reasoning === true,
+					// Omitted means "leave the stored limit alone": the models tab
+					// saves a profile without ever showing these fields.
+					contextWindow: req.contextWindow ?? existing.contextWindow,
+					maxTokens: req.maxTokens ?? existing.maxTokens,
 					updatedAt: now,
 				}
 			: {
@@ -201,6 +224,8 @@ export class ModelConfigService {
 					encryptedApiKey,
 					modelIds,
 					reasoning: req.reasoning === true,
+					contextWindow: req.contextWindow,
+					maxTokens: req.maxTokens,
 					createdAt: now,
 					updatedAt: now,
 				};
@@ -289,6 +314,8 @@ export class ModelConfigService {
 					apiKey: this.decryptApiKey(p),
 					modelIds: [...p.modelIds],
 					reasoning: p.reasoning === true,
+					contextWindow: p.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+					maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
 				};
 			});
 	}

@@ -1,11 +1,16 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { useState } from "react";
-import type {
-	ModelApiProtocol,
-	ModelProfileSummary,
-	OAuthProviderId,
-	OAuthProviderSummary,
-	ProviderKind,
+import {
+	DEFAULT_CONTEXT_WINDOW,
+	DEFAULT_MAX_TOKENS,
+	MAX_CONTEXT_WINDOW,
+	MAX_OUTPUT_TOKENS,
+	MIN_TOKEN_LIMIT,
+	type ModelApiProtocol,
+	type ModelProfileSummary,
+	type OAuthProviderId,
+	type OAuthProviderSummary,
+	type ProviderKind,
 } from "../../../../shared/settings";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
@@ -56,8 +61,30 @@ export interface ProviderDraft {
 	api: ModelApiProtocol;
 	apiKey: string;
 	reasoning: boolean;
+	/**
+	 * Token limits, held as typed text so a half-deleted number does not snap
+	 * back to a default mid-edit. Parsed on save.
+	 */
+	contextWindow: string;
+	maxTokens: string;
 	/** The route field stays folded away until an endpoint needs a custom path. */
 	advanced: boolean;
+}
+
+/** A limit the backend would accept — blank is not one, the field is required. */
+function parseTokenLimit(value: string, max: number): number | null {
+	const parsed = Number(value.trim());
+	return Number.isInteger(parsed) && parsed >= MIN_TOKEN_LIMIT && parsed <= max
+		? parsed
+		: null;
+}
+
+export function draftContextWindow(draft: ProviderDraft): number | null {
+	return parseTokenLimit(draft.contextWindow, MAX_CONTEXT_WINDOW);
+}
+
+export function draftMaxTokens(draft: ProviderDraft): number | null {
+	return parseTokenLimit(draft.maxTokens, MAX_OUTPUT_TOKENS);
 }
 
 export function emptyProviderDraft(): ProviderDraft {
@@ -70,6 +97,8 @@ export function emptyProviderDraft(): ProviderDraft {
 		api: "openai-completions",
 		apiKey: "",
 		reasoning: false,
+		contextWindow: String(DEFAULT_CONTEXT_WINDOW),
+		maxTokens: String(DEFAULT_MAX_TOKENS),
 		advanced: false,
 	};
 }
@@ -85,9 +114,14 @@ export function providerDraftFrom(profile: ModelProfileSummary): ProviderDraft {
 		api: profile.api,
 		apiKey: "",
 		reasoning: profile.reasoning,
+		contextWindow: String(profile.contextWindow),
+		maxTokens: String(profile.maxTokens),
 		// A saved endpoint whose route is not the protocol default only got there
 		// on purpose, so keep it in sight while editing.
-		advanced: profile.route !== PROTOCOL_DEFAULT_ROUTE[profile.api],
+		advanced:
+			profile.route !== PROTOCOL_DEFAULT_ROUTE[profile.api] ||
+			profile.contextWindow !== DEFAULT_CONTEXT_WINDOW ||
+			profile.maxTokens !== DEFAULT_MAX_TOKENS,
 	};
 }
 
@@ -97,6 +131,8 @@ export function isDraftComplete(draft: ProviderDraft): boolean {
 		draft.name.trim().length > 0 &&
 		draft.baseUrl.trim().length > 0 &&
 		draft.route.trim().length > 0 &&
+		draftContextWindow(draft) !== null &&
+		draftMaxTokens(draft) !== null &&
 		// Editing keeps the stored key when the field is left blank; creating
 		// cannot, because there is nothing stored yet.
 		(draft.id !== undefined || draft.apiKey.trim().length > 0)
@@ -532,13 +568,45 @@ function ProviderForm({
 									{draft.advanced ? t("providers.hideAdvanced") : t("providers.showAdvanced")}
 								</button>
 								{draft.advanced ? (
-									<div className="flex flex-col gap-1">
-										<Label>{t("providers.route")}</Label>
-										<Input
-											value={draft.route}
-											onChange={(event) => onDraftChange({ ...draft, route: event.target.value })}
-										/>
-									</div>
+									<>
+										<div className="flex flex-col gap-1">
+											<Label>{t("providers.route")}</Label>
+											<Input
+												value={draft.route}
+												onChange={(event) => onDraftChange({ ...draft, route: event.target.value })}
+											/>
+										</div>
+										{/* A custom endpoint advertises neither limit, so both are
+										    declared here. The output ceiling is the one that decides
+										    whether a long file can be written in a single response. */}
+										<div className="flex gap-2">
+											<div className="flex min-w-0 flex-1 flex-col gap-1">
+												<Label>{t("providers.contextWindow")}</Label>
+												<Input
+													inputMode="numeric"
+													value={draft.contextWindow}
+													aria-invalid={draftContextWindow(draft) === null}
+													onChange={(event) =>
+														onDraftChange({ ...draft, contextWindow: event.target.value })
+													}
+												/>
+											</div>
+											<div className="flex min-w-0 flex-1 flex-col gap-1">
+												<Label>{t("providers.maxTokens")}</Label>
+												<Input
+													inputMode="numeric"
+													value={draft.maxTokens}
+													aria-invalid={draftMaxTokens(draft) === null}
+													onChange={(event) =>
+														onDraftChange({ ...draft, maxTokens: event.target.value })
+													}
+												/>
+											</div>
+										</div>
+										<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+											{t("providers.tokenLimitsHint")}
+										</span>
+									</>
 								) : null}
 
 								{/* PI clamps every thinking level to "off" unless the model is flagged

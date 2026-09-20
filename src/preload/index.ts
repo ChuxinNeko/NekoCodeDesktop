@@ -34,6 +34,7 @@ import type {
 	SessionSummary,
 	ThinkingLevel,
 } from "../shared/agent";
+import type { SlashCommandSummary } from "../shared/commands";
 import type { FsEntry, FsReadResult } from "../shared/files";
 import type { SetSkillEnabledRequest, SkillsSnapshot } from "../shared/skills";
 import type { TokenUsageReport } from "../shared/tokenStats";
@@ -144,6 +145,8 @@ const api = {
 	agentSend: (req: SendPromptRequest): Promise<SendPromptResult> =>
 		ipcRenderer.invoke("agent:send", req),
 	agentAbort: (): Promise<void> => ipcRenderer.invoke("agent:abort"),
+	agentCommands: (): Promise<SlashCommandSummary[]> =>
+		ipcRenderer.invoke("agent:commands"),
 	// Picker state for the welcome screen — a session snapshot before one exists.
 	agentDefaults: (cwd: string): Promise<AgentDefaults> =>
 		ipcRenderer.invoke("agent:defaults", cwd),

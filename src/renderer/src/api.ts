@@ -67,6 +67,7 @@ import type {
 	TerminalResizeRequest,
 	TerminalSession,
 } from "../../shared/terminal";
+import type { SlashCommandSummary } from "../../shared/commands";
 import type { SetSkillEnabledRequest, SkillsSnapshot } from "../../shared/skills";
 import type { TokenUsageReport } from "../../shared/tokenStats";
 import type { ShellInfo, WindowMaterial } from "../../shared/window";
@@ -120,6 +121,8 @@ export interface AgentApi {
 	agentSnapshot(): Promise<AgentSnapshot | null>;
 	agentSend(req: SendPromptRequest): Promise<SendPromptResult>;
 	agentAbort(): Promise<void>;
+	/** Skills and prompt templates the composer's slash menu offers. */
+	agentCommands(): Promise<SlashCommandSummary[]>;
 	/** Picker state for the welcome screen — a session snapshot before one exists. */
 	agentDefaults(cwd: string): Promise<AgentDefaults>;
 	onAgentDefaults(listener: (defaults: AgentDefaults) => void): () => void;

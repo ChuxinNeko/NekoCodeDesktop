@@ -11,7 +11,13 @@ import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Spinner } from "../ui/spinner";
 import { ModelsTab } from "./ModelsTab";
-import { emptyProviderDraft, ProvidersTab, type ProviderDraft } from "./ProvidersTab";
+import {
+	draftContextWindow,
+	draftMaxTokens,
+	emptyProviderDraft,
+	ProvidersTab,
+	type ProviderDraft,
+} from "./ProvidersTab";
 
 const TABS = [
 	{ id: "providers", labelKey: "providers.tab" },
@@ -118,6 +124,9 @@ export function ProviderModelSettings() {
 			if (!draft) return;
 			const isNew = draft.id === undefined;
 			const existing = profiles.find((entry) => entry.id === draft.id);
+			// Save is disabled while either field is unparseable, so both resolve.
+			const contextWindow = draftContextWindow(draft);
+			const maxTokens = draftMaxTokens(draft);
 			const summary = await api.modelSave({
 				...(draft.id ? { id: draft.id } : {}),
 				kind: draft.kind,
@@ -129,6 +138,8 @@ export function ProviderModelSettings() {
 				...(draft.apiKey.trim() ? { apiKey: draft.apiKey } : {}),
 				modelIds: existing?.modelIds ?? [],
 				reasoning: draft.reasoning,
+				...(contextWindow === null ? {} : { contextWindow }),
+				...(maxTokens === null ? {} : { maxTokens }),
 			});
 			setDraft(null);
 			await reload();
