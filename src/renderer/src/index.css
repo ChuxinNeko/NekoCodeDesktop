@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Both Electron and Android compile these shared component utilities. */
+@source "./";
 
 @custom-variant dark (&:is(.dark, .dark *));
 

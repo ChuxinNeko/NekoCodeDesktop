@@ -22,7 +22,15 @@
     "start": "bunx --bun --no-install electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pi:build": "bun scripts/pi-toolchain.ts build",
-    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build"
+    "pi:setup": "bun install && bun scripts/pi-toolchain.ts build",
+    "mobile:dev": "vite --config mobile/vite.config.ts",
+    "mobile:build": "vite build --config mobile/vite.config.ts",
+    "mobile:sync": "bun run mobile:build && cap sync android",
+    "test:lan": "bun test src/main/task-manager.test.ts src/main/lan-service.test.ts mobile/src/lan-client.test.ts src/shared/lan-pairing.test.ts",
+    "test:lan:integration": "bun scripts/test-lan-integration.ts",
+    "mobile:apk": "bun scripts/build-android.ts",
+    "mobile:sync:ios": "bun run mobile:build && cap sync ios",
+    "mobile:ipa": "bun scripts/build-ios.ts"
   },
   "trustedDependencies": [
     "@google/genai",
@@ -33,6 +41,12 @@
   ],
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@capacitor/android": "8.5.2",
+    "@capacitor/app": "8",
+    "@capacitor/barcode-scanner": "3.1.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2",
+    "@capacitor/preferences": "8",
     "@earendil-works/pi-agent-core": "workspace:0.85.1",
     "@earendil-works/pi-ai": "workspace:0.85.1",
     "@earendil-works/pi-coding-agent": "workspace:0.85.1",
@@ -43,6 +57,7 @@
     "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "node-pty": "1.1.0",
+    "qrcode.react": "4.2.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-icons": "^5.6.0",
@@ -55,6 +70,7 @@
     "undici": "^8.10.2"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.2",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^24.10.13",
     "@types/react": "^19.3.0",

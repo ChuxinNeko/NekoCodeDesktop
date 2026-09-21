@@ -199,7 +199,7 @@ export function SessionList(props: SessionListProps) {
 										setRenaming(session.sessionFile);
 									}}
 									renaming={renaming === session.sessionFile}
-									running={props.streaming && session.id === activeId}
+									running={!!session.running || (props.streaming && session.id === activeId)}
 									session={session}
 								/>
 							))}

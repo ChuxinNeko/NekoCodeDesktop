@@ -319,8 +319,8 @@ export function ComposerShell(props: ComposerShellProps) {
 									/>
 								</div>
 							</div>
-							<div className={cn(COMPOSER_FOOTER_ROW_CLASS_NAME, "gap-1 pb-1.5 pr-1.5")}>
-								<div className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>
+							<div data-slot="composer-footer" className={cn(COMPOSER_FOOTER_ROW_CLASS_NAME, "gap-1 pb-1.5 pr-1.5")}>
+								<div data-slot="composer-toolbar" className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>
 
 								{streaming && props.onAbort ? (
 									<Button

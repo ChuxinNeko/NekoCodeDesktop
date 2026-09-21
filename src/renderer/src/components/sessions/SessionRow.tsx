@@ -14,6 +14,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopupBase, MenuSeparator, MenuTrigger } from "../ui/menu";
 
 export interface SessionRowProps {
+	hideActions?: boolean;
 	compact?: boolean;
 	disabled?: boolean;
 	session: SessionSummary;
@@ -123,6 +124,7 @@ export function SessionRow(props: SessionRowProps) {
 			)}
 			// Right-click opens the same menu the ⋯ button does, anchored to it.
 			onContextMenu={(event) => {
+				if (props.hideActions) return;
 				event.preventDefault();
 				setMenuOpen(true);
 			}}
@@ -171,7 +173,7 @@ export function SessionRow(props: SessionRowProps) {
 				>
 					{relativeSessionTime(session.updatedAt, props.now)}
 				</span>
-				<Menu open={menuOpen} onOpenChange={setMenuOpen}>
+				{!props.hideActions && <Menu open={menuOpen} onOpenChange={setMenuOpen}>
 					<MenuTrigger
 						render={
 							<Button
@@ -197,7 +199,7 @@ export function SessionRow(props: SessionRowProps) {
 							{t("common.delete")}
 						</MenuItem>
 					</MenuPopupBase>
-				</Menu>
+				</Menu>}
 			</span>
 		</div>
 	);

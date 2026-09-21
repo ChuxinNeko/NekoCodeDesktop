@@ -234,6 +234,10 @@ export class AgentService {
 		private readonly modelConfig: ModelConfigService,
 		private readonly browserInspector: BrowserInspector,
 		private readonly antigravity?: AntigravityOAuthService,
+		private readonly connection?: {
+			owner?: AgentService;
+			emit: (channel: string, payload?: unknown) => void;
+		},
 	) {
 		this.sessionDir = join(app.getPath("userData"), "sessions");
 		mkdirSync(this.sessionDir, { recursive: true });
@@ -260,7 +264,7 @@ export class AgentService {
 
 	private emitPlugins(): void {
 		void this.pluginsSnapshot()
-			.then((snapshot) => this.win.webContents.send("plugins:changed", snapshot))
+			.then((snapshot) => this.publish("plugins:changed", snapshot))
 			.catch(() => undefined);
 	}
 
@@ -455,6 +459,14 @@ export class AgentService {
 	 * second instance would duplicate them.
 	 */
 	getModelRuntime(): Promise<ModelRuntime> {
+		if (this.connection?.owner) {
+			return this.connection.owner.getModelRuntime().then((runtime) => {
+				this.runtime = runtime;
+				this.supportedThinking = this.connection!.owner!.supportedThinking;
+				this.customProviderIds = this.connection!.owner!.customProviderIds;
+				return runtime;
+			});
+		}
 		if (!this.modelRuntimePromise) {
 			this.modelRuntimePromise = pi()
 				.then((m) => m.ModelRuntime.create())
@@ -512,12 +524,14 @@ export class AgentService {
 	}
 
 	/** Re-register custom providers after profile save/delete. */
-	async reloadConfiguredModels(): Promise<void> {
+	async reloadConfiguredModels(register = true): Promise<void> {
 		const session = this.session;
 		const current = session?.model ?? null;
 		await this.getModelRuntime();
-		this.registerProfiles();
-		await this.runtime?.refresh({ allowNetwork: false });
+		if (register) {
+			this.registerProfiles();
+			await this.runtime?.refresh({ allowNetwork: false });
+		}
 		if (session && this.runtime) {
 			const runtime = this.runtime;
 			const firstCustom =
@@ -772,6 +786,20 @@ export class AgentService {
 
 	getSnapshot(): AgentSnapshot | null {
 		return this.session ? this.buildSnapshot() : null;
+	}
+
+	/** Copy composer choices without changing or restarting the source session. */
+	inheritDefaults(source: AgentService): void {
+		this.pendingModelKey = source.pendingModelKey;
+		this.pendingThinkingLevel = source.pendingThinkingLevel;
+		this.pendingFusion = source.pendingFusion;
+		this.mode = source.mode;
+		this.workMode = source.workMode;
+	}
+
+	private publish(channel: string, payload?: unknown): void {
+		if (this.connection) this.connection.emit(channel, payload);
+		else if (!this.win.isDestroyed()) this.win.webContents.send(channel, payload);
 	}
 
 	async send(req: SendPromptRequest): Promise<SendPromptResult> {
@@ -1228,7 +1256,7 @@ export class AgentService {
 			cwd: sessionManager.getCwd(), sessionId: sessionManager.getSessionId(),
 			onPreview: (request) => {
 				if (this.preview === preview && !this.win.isDestroyed())
-					this.win.webContents.send("browser:preview", request);
+					this.publish("browser:preview", request);
 			},
 		});
 		this.preview = preview;
@@ -1263,7 +1291,7 @@ export class AgentService {
 			}),
 			onNavigate: (request) => {
 				if (!this.win.isDestroyed()) {
-					this.win.webContents.send("browser:preview", {
+					this.publish("browser:preview", {
 						...request,
 						sessionId: sessionManager.getSessionId(),
 						cwd: sessionManager.getCwd(),
@@ -1514,12 +1542,13 @@ export class AgentService {
 				createdAt,
 				updatedAt: Date.now(),
 				messageCount: messages.length,
+				running: session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks,
 			},
 			cells: withFusionUsage(this.projector.cells(), sm.getBranch(), this.workflow?.state.hasRunningTasks),
 			checkpoints: this.listCheckpoints(),
 			fusion: this.workflow?.fusion ?? null,
 			workflow: this.workflow?.state.snapshot() ?? { request: null, todos: [], tasks: [] },
-			streaming: session.isStreaming || this.helperAbort !== null,
+			streaming: session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks,
 			modelKey:
 				model && model.provider !== "unknown" && this.isModelUsable(model)
 					? modelKeyOf(model)
@@ -1545,7 +1574,7 @@ export class AgentService {
 	private emit(snapshot?: AgentSnapshot): void {
 		if (this.win.isDestroyed()) return;
 		const payload = snapshot ?? (this.session ? this.buildSnapshot() : null);
-		this.win.webContents.send("agent:snapshot", payload);
+		this.publish("agent:snapshot", payload);
 	}
 
 	/**
@@ -1558,7 +1587,7 @@ export class AgentService {
 		void this.getDefaults(cwd)
 			.then((defaults) => {
 				if (!this.win.isDestroyed()) {
-					this.win.webContents.send("agent:defaults", defaults);
+					this.publish("agent:defaults", defaults);
 				}
 			})
 			.catch(() => undefined);
@@ -1572,6 +1601,6 @@ export class AgentService {
 	 */
 	private emitSessionsChanged(): void {
 		if (this.win.isDestroyed()) return;
-		this.win.webContents.send("agent:sessionsChanged");
+		this.publish("agent:sessionsChanged");
 	}
 }

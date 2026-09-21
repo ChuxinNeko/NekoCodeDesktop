@@ -1,4 +1,5 @@
 import type { ComposerInsertion } from "../../../shared/browser";
+import type { SlashCommandSummary } from "../../../shared/commands";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode } from "../../../shared/workflow";
 import type { AgentDefaults, ExecutionMode, ThinkingLevel } from "../../../shared/agent";
@@ -11,6 +12,7 @@ import { ProjectPicker } from "./chat/ProjectPicker";
 import { Button } from "./ui/button";
 
 interface WelcomeViewProps {
+	loadCommands?: () => Promise<SlashCommandSummary[]>;
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	cwd: string | null;
@@ -75,7 +77,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 				placeholder={t("composer.placeholder")}
 				// No session yet, so this lists the built-in skills; the session the
 				// first prompt creates is what expands whatever gets picked here.
-				loadCommands={() => api.agentCommands()}
+				loadCommands={props.loadCommands ?? (() => api.agentCommands())}
 				toolbar={
 					<>
 						{defaults ? (

@@ -1,3 +1,5 @@
+import { TaskManager } from "./task-manager";
+import { LanService } from "./lan-service";
 import type { FusionConfig } from "../shared/fusion";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
@@ -79,7 +81,8 @@ import {
 // every other unnamed Electron app on the machine.
 app.setName("NekoCode Desktop");
 
-let agentService: AgentService | null = null;
+let taskManager: TaskManager | null = null;
+let lanService: LanService | null = null;
 let terminalService: TerminalService | null = null;
 let modelConfig: ModelConfigService | null = null;
 let oauthService: OAuthService | null = null;
@@ -237,13 +240,15 @@ function createWindow(): void {
 			openExternal: (url) => shell.openExternal(url),
 			emit: (event) => { if (!win.isDestroyed()) win.webContents.send("oauth:event", event); },
 	});
-	agentService = new AgentService(win, modelConfig, inspector, antigravity);
+	taskManager = new TaskManager((emit, owner) => new AgentService(win, modelConfig!, inspector, antigravity, { emit, owner }),
+		(channel, payload) => { if (!win.isDestroyed()) win.webContents.send(channel, payload); });
+	lanService = new LanService(app.getPath("userData"), taskManager);
 	oauthService = new OAuthService({
 		antigravity,
 		userDataDir: app.getPath("userData"),
 		getRuntime: () => {
-			if (!agentService) throw new Error("Agent service unavailable");
-			return agentService.getModelRuntime();
+			if (!taskManager) throw new Error("Agent service unavailable");
+			return taskManager!.active.getModelRuntime();
 		},
 		// The sign-in page opens in the real browser, never in an app window: the
 		// user has to see the address bar they are typing their password into.
@@ -264,8 +269,8 @@ function createWindow(): void {
 			// scheduled run show up as a session in the sidebar.
 			sessionsDir: join(app.getPath("userData"), "automation-sessions"),
 			getModelRuntime: async () => {
-				if (!agentService) throw new Error("Agent service is not running");
-				return agentService.getModelRuntime();
+				if (!taskManager) throw new Error("Agent service is not running");
+				return taskManager!.active.getModelRuntime();
 			},
 			onEvent: (event: AutomationEvent) => {
 				if (!win.isDestroyed()) win.webContents.send("automation:event", event);
@@ -277,8 +282,8 @@ function createWindow(): void {
 	win.on("closed", () => {
 		oauthService?.close();
 		terminalService?.killAll();
-		agentService?.close();
-		agentService = null;
+		taskManager?.close(); void lanService?.stop();
+		taskManager = null; lanService = null;
 		terminalService = null;
 	});
 
@@ -424,72 +429,87 @@ function registerIpc(): void {
 		return result.canceled ? null : result.filePaths[0];
 	});
 
+	ipcMain.handle("lan:status", () => lanService?.status());
+	ipcMain.handle("lan:enabled", (_e, enabled: boolean) => {
+		if (typeof enabled !== "boolean" || !lanService) throw new Error("LAN service unavailable");
+		return enabled ? lanService.start() : lanService.stop();
+	});
+	ipcMain.handle("lan:pairing", () => lanService?.newPairing());
+	ipcMain.handle("lan:revoke", (_e, id: string) => lanService?.revoke(id));
+	ipcMain.handle("lan:removeProject", (_e, id: string) => lanService?.removeProject(id));
+	ipcMain.handle("lan:addProject", async (e) => {
+		const win = BrowserWindow.fromWebContents(e.sender);
+		if (!win || !lanService) throw new Error("LAN service unavailable");
+		const result = await dialog.showOpenDialog(win, { properties: ["openDirectory"], title: "允许手机创建任务的项目" });
+		return result.canceled ? lanService.status() : lanService.addProject(result.filePaths[0]);
+	});
+
 	ipcMain.handle("agent:listSessions", (_e, cwd?: string) =>
-		agentService?.listSessions(cwd),
+		taskManager?.list(cwd),
 	);
 	ipcMain.handle("agent:create", (_e, cwd: string) =>
-		agentService?.createSession(cwd),
+		taskManager?.create(cwd).then((agent) => agent.getSnapshot()),
 	);
 	ipcMain.handle("agent:open", (_e, req: OpenSessionRequest) =>
-		agentService?.openSession(req),
+		taskManager?.open(req).then((agent) => agent.getSnapshot()),
 	);
 	ipcMain.handle("agent:rename", (_e, req: RenameSessionRequest) =>
-		agentService?.renameSession(req),
+		taskManager?.rename(req),
 	);
 	ipcMain.handle("agent:delete", (_e, req: DeleteSessionRequest) =>
-		agentService?.deleteSession(req),
+		taskManager?.remove(req.sessionFile),
 	);
-	ipcMain.handle("agent:snapshot", () => agentService?.getSnapshot() ?? null);
+	ipcMain.handle("agent:snapshot", () => taskManager?.active.getSnapshot() ?? null);
 	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
-		agentService?.getDefaults(cwd),
+		taskManager?.active.getDefaults(cwd),
 	);
 	ipcMain.handle("agent:send", (_e, req: SendPromptRequest) =>
-		agentService?.send(req),
+		taskManager?.active.send(req),
 	);
-	ipcMain.handle("agent:abort", () => agentService?.abort());
-	ipcMain.handle("agent:setFusion", (_e, config: FusionConfig) => agentService?.setFusion(config));
+	ipcMain.handle("agent:abort", () => taskManager?.active.abort());
+	ipcMain.handle("agent:setFusion", (_e, config: FusionConfig) => taskManager?.active.setFusion(config));
 	ipcMain.handle("agent:setModel", (_e, modelKey: string) =>
-		agentService?.setModel(modelKey),
+		taskManager?.active.setModel(modelKey),
 	);
 	ipcMain.handle("agent:setThinking", (_e, level: ThinkingLevel) =>
-		agentService?.setThinkingLevel(level),
+		taskManager?.active.setThinkingLevel(level),
 	);
-	ipcMain.handle("agent:setWorkMode", (_e, mode: WorkMode) => agentService?.setWorkMode(mode));
+	ipcMain.handle("agent:setWorkMode", (_e, mode: WorkMode) => taskManager?.active.setWorkMode(mode));
 
-	ipcMain.handle("checkpoints:list", () => agentService?.listCheckpoints() ?? []);
+	ipcMain.handle("checkpoints:list", () => taskManager?.active.listCheckpoints() ?? []);
 	ipcMain.handle("checkpoints:fileDiff", (_e, id: string, path: string) => {
-		if (!agentService) throw new Error("Agent service unavailable");
-		return agentService.checkpointFileDiff(id, path);
+		if (!taskManager) throw new Error("Agent service unavailable");
+		return taskManager!.active.checkpointFileDiff(id, path);
 	});
 	ipcMain.handle("checkpoints:preview", (_e, id: string) => {
-		if (!agentService) throw new Error("Agent service unavailable");
-		return agentService.previewCheckpoint(id);
+		if (!taskManager) throw new Error("Agent service unavailable");
+		return taskManager!.active.previewCheckpoint(id);
 	});
 	ipcMain.handle("checkpoints:restore", (_e, req: RestoreCheckpointRequest) => {
-		if (!agentService) throw new Error("Agent service unavailable");
+		if (!taskManager) throw new Error("Agent service unavailable");
 		if (req?.scope !== "code" && req?.scope !== "conversation" && req?.scope !== "both") {
 			throw new Error(`Unknown checkpoint scope: ${String(req?.scope)}`);
 		}
-		return agentService.restoreCheckpoint(req);
+		return taskManager!.active.restoreCheckpoint(req);
 	});
 
-	ipcMain.handle("agent:answerWorkflow", (_e, answer: WorkflowAnswer) => agentService?.answerWorkflow(answer));
-	ipcMain.handle("agent:cancelTask", (_e, id: string) => agentService?.cancelTask(id));
+	ipcMain.handle("agent:answerWorkflow", (_e, answer: WorkflowAnswer) => taskManager?.active.answerWorkflow(answer));
+	ipcMain.handle("agent:cancelTask", (_e, id: string) => taskManager?.active.cancelTask(id));
 	const pluginCatalog = new PluginCatalogService();
 	ipcMain.handle("plugins:catalog", (_event, query: PluginCatalogQuery) => pluginCatalog.list(query));
-	ipcMain.handle("plugins:list", () => agentService?.pluginsSnapshot());
+	ipcMain.handle("plugins:list", () => taskManager?.active.pluginsSnapshot());
 	ipcMain.handle("plugins:install", (_e, request: InstallPluginRequest) =>
-		agentService?.installPlugin(request),
+		taskManager?.active.installPlugin(request),
 	);
 	ipcMain.handle("plugins:remove", (_e, request: PluginActionRequest) =>
-		agentService?.removePlugin(request),
+		taskManager?.active.removePlugin(request),
 	);
-	ipcMain.handle("plugins:update", (_e, source?: string) => agentService?.updatePlugin(source));
+	ipcMain.handle("plugins:update", (_e, source?: string) => taskManager?.active.updatePlugin(source));
 	ipcMain.handle("plugins:setEnabled", (_e, request: SetPluginEnabledRequest) =>
-		agentService?.setPluginEnabled(request),
+		taskManager?.active.setPluginEnabled(request),
 	);
 	ipcMain.handle("agent:setMode", (_e, mode: ExecutionMode) =>
-		agentService?.setMode(mode),
+		taskManager?.active.setMode(mode),
 	);
 
 	ipcMain.handle("terminal:create", (_e, req: TerminalCreateRequest) =>
@@ -507,27 +527,27 @@ function registerIpc(): void {
 	ipcMain.handle("settings:listModels", () => modelConfig?.list());
 	ipcMain.handle("settings:saveModel", async (_e, req: SaveModelProfileRequest) => {
 		const summary = modelConfig?.save(req);
-		await agentService?.reloadConfiguredModels();
+		await taskManager?.reloadModels();
 		return summary;
 	});
 	ipcMain.handle("settings:deleteModel", async (_e, id: string) => {
 		modelConfig?.delete(id);
-		await agentService?.reloadConfiguredModels();
+		await taskManager?.reloadModels();
 	});
 	ipcMain.handle("settings:fetchModels", (_e, req: FetchModelsRequest) =>
 		modelConfig?.fetchModels(req),
 	);
 	ipcMain.handle("settings:testModel", (_e, req: ModelTestRequest) =>
-		agentService?.testConfiguredModel(req),
+		taskManager?.active.testConfiguredModel(req),
 	);
 
 	// Read straight off the open session's loaders, so the composer's menu can
 	// be fetched on every open rather than pushed and cached in the renderer.
-	ipcMain.handle("agent:commands", () => agentService?.slashCommands() ?? []);
+	ipcMain.handle("agent:commands", () => taskManager?.active.slashCommands() ?? []);
 
-	ipcMain.handle("skills:list", () => agentService?.skillsSnapshot());
+	ipcMain.handle("skills:list", () => taskManager?.active.skillsSnapshot());
 	ipcMain.handle("skills:setEnabled", (_e, request: SetSkillEnabledRequest) =>
-		agentService?.setSkillEnabled(request),
+		taskManager?.active.setSkillEnabled(request),
 	);
 
 	ipcMain.handle("stats:tokens", () => tokenStatsService().report());
@@ -562,7 +582,7 @@ function registerIpc(): void {
 		if (!oauthService) throw new Error("OAuth service unavailable");
 		const account = await oauthService.login(id);
 		// The provider only becomes selectable once its models are registered.
-		await agentService?.reloadConfiguredModels();
+		await taskManager?.reloadModels();
 		return account;
 	});
 	ipcMain.handle("oauth:cancel", (_e, id: string) => oauthService?.cancel(id));
@@ -572,7 +592,7 @@ function registerIpc(): void {
 	ipcMain.handle("oauth:logout", async (_e, id: string) => {
 		if (!oauthService) throw new Error("OAuth service unavailable");
 		const account = await oauthService.logout(id);
-		await agentService?.reloadConfiguredModels();
+		await taskManager?.reloadModels();
 		return account;
 	});
 
@@ -658,7 +678,7 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
 	automationService?.stop();
 	terminalService?.killAll();
-	agentService?.close();
+	taskManager?.close(); void lanService?.stop();
 });
 
 app.on("window-all-closed", () => {

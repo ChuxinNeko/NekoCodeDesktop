@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { AboutSettings } from "./AboutSettings";
 import { GeneralSettings } from "./GeneralSettings";
+import { MobileSettings } from "./MobileSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { ProviderModelSettings } from "./ProviderModelSettings";
 import { PluginSettings } from "./PluginSettings";
@@ -14,6 +15,7 @@ import { ArrowLeftIcon } from "../../lib/icons";
 
 const SECTIONS = [
 	{ id: "general", labelKey: "settings.section.general" },
+	{ id: "mobile", labelKey: "settings.section.mobile" },
 	{ id: "appearance", labelKey: "settings.section.appearance" },
 	{ id: "providers", labelKey: "settings.section.providers" },
 	{ id: "tokens", labelKey: "settings.section.tokens" },
@@ -75,6 +77,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 						{t(SECTIONS.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
 					</h2>
 					{section === "general" ? <GeneralSettings /> : null}
+					{section === "mobile" ? <MobileSettings /> : null}
 					{section === "appearance" ? <AppearanceSettings /> : null}
 					{section === "providers" ? <ProviderModelSettings /> : null}
 					{section === "tokens" ? <TokenUsageSettings /> : null}

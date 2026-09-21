@@ -1,4 +1,5 @@
 import type { FusionConfig } from "../../shared/fusion";
+import type { LanStatus } from "../../shared/lan";
 import type { AppVersionInfo, UpdateCheckResult } from "../../shared/updates";
 import type {
 	InstallPluginRequest,
@@ -73,6 +74,12 @@ import type { TokenUsageReport } from "../../shared/tokenStats";
 import type { ShellInfo, WindowMaterial } from "../../shared/window";
 
 export interface AgentApi {
+	lanStatus(): Promise<LanStatus>;
+	lanSetEnabled(enabled: boolean): Promise<LanStatus>;
+	lanPairing(): Promise<LanStatus>;
+	lanRevoke(id: string): Promise<LanStatus>;
+	lanAddProject(): Promise<LanStatus>;
+	lanRemoveProject(id: string): Promise<LanStatus>;
 	appVersion(): Promise<AppVersionInfo>;
 	checkForUpdates(): Promise<UpdateCheckResult>;
 	checkForUpdatesOnStartup(): Promise<UpdateCheckResult | null>;

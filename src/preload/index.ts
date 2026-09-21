@@ -1,4 +1,5 @@
 import type { FusionConfig } from "../shared/fusion";
+import type { LanStatus } from "../shared/lan";
 import type { AppVersionInfo, UpdateCheckResult } from "../shared/updates";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { DEFAULT_SHELL_INFO, type ShellInfo, type WindowMaterial } from "../shared/window";
@@ -83,6 +84,12 @@ const shellInfo: ShellInfo =
 	(ipcRenderer.sendSync("app:shellInfo") as ShellInfo | undefined) ?? DEFAULT_SHELL_INFO;
 
 const api = {
+	lanStatus: (): Promise<LanStatus> => ipcRenderer.invoke("lan:status"),
+	lanSetEnabled: (enabled: boolean): Promise<LanStatus> => ipcRenderer.invoke("lan:enabled", enabled),
+	lanPairing: (): Promise<LanStatus> => ipcRenderer.invoke("lan:pairing"),
+	lanRevoke: (id: string): Promise<LanStatus> => ipcRenderer.invoke("lan:revoke", id),
+	lanAddProject: (): Promise<LanStatus> => ipcRenderer.invoke("lan:addProject"),
+	lanRemoveProject: (id: string): Promise<LanStatus> => ipcRenderer.invoke("lan:removeProject", id),
 	appVersion: (): Promise<AppVersionInfo> => ipcRenderer.invoke("app:version"),
 	checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("app:checkForUpdates"),
 	checkForUpdatesOnStartup: (): Promise<UpdateCheckResult | null> => ipcRenderer.invoke("app:checkForUpdatesOnStartup"),

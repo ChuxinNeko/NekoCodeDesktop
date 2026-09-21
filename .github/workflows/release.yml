@@ -42,6 +42,8 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           PUBLISH_RELEASE: ${{ inputs.publish }}
         run: bun scripts/release-plan.ts
+      - name: Check release gating and asset completeness
+        run: bun test scripts/release-plan.test.ts scripts/release-workflow.test.ts scripts/build-ios.test.ts
 
   build:
     needs: plan
@@ -99,8 +101,124 @@ jobs:
             dist/*.AppImage
             dist/*.deb
 
+  build-android:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Restore release signing key
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Missing repository secret: $key. See README Android release setup."
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nekocode-release.keystore"
+          test -s "$RUNNER_TEMP/nekocode-release.keystore"
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Build signed release APK
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/nekocode-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          # Reserve codes 1 and 2 for the initial local builds. Retries keep the same code.
+          export ANDROID_VERSION_CODE="$((GITHUB_RUN_NUMBER + 2))"
+          bun scripts/build-android.ts --release
+      - name: Verify release APK signature
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: '"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "dist/mobile/NekoCode-${RELEASE_VERSION}-android.apk"'
+      - name: Build debug APK for artifact-only runs
+        if: needs.plan.outputs.publish != 'true'
+        run: bun run mobile:apk
+      - name: Remove signing key
+        if: always()
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/nekocode-release.keystore"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-android
+          if-no-files-found: error
+          retention-days: 14
+          path: dist/mobile/*.apk
+
+  build-ios:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Check iOS packaging configuration
+        run: bun test scripts/build-ios.test.ts
+      - name: Build unsigned device IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/ios
+          bun run mobile:ipa 2>&1 | tee out/ios/build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-ios
+          if-no-files-found: error
+          retention-days: 14
+          path: dist/mobile/*-ios-unsigned.ipa
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          if-no-files-found: ignore
+          retention-days: 7
+          path: out/ios/build.log
+
   release:
-    needs: [plan, build]
+    needs: [plan, build, build-android, build-ios]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -129,6 +247,8 @@ jobs:
             // electron-builder uses format-specific architecture names for Linux artifacts.
             const suffixes = ['win-x64.exe', 'mac-x64.dmg', 'mac-x64.zip', 'mac-arm64.dmg', 'mac-arm64.zip', 'linux-x86_64.AppImage', 'linux-amd64.deb'];
             const names = suffixes.map(suffix => `NekoCode-Desktop-${version}-${suffix}`);
+            names.push(`NekoCode-${version}-android.apk`);
+            names.push(`NekoCode-${version}-ios-unsigned.ipa`);
             // Verify every platform before creating a tag or release.
             const available = await fs.readdir('installers');
             const missing = names.filter(name => !available.includes(name));
@@ -161,7 +281,7 @@ jobs:
               if (error.status !== 404) throw error;
             }
             const notes = await github.rest.repos.generateReleaseNotes({ owner, repo, tag_name: tag, target_commitish: context.sha });
-            const body = `${notes.data.body}\n\n## Downloads\nWindows: EXE installer · macOS: Intel / Apple Silicon DMG or ZIP · Linux: AppImage or DEB.\n\nSHA-256 checksums are provided in SHA256SUMS.txt.\n\nThese builds are not signed with a Windows publisher certificate or notarized by Apple.`;
+            const body = `${notes.data.body}\n\n## Downloads\nWindows: EXE installer · macOS: Intel / Apple Silicon DMG or ZIP · Linux: AppImage or DEB · Android 8.0+: signed APK · iOS 15.0+: unsigned IPA for self-signing.\n\nSHA-256 checksums are provided in SHA256SUMS.txt.\n\nDesktop builds are not signed with a Windows publisher certificate or notarized by Apple. iOS IPA files must be signed by the user with Sideloadly or AltStore before installation; they cannot be installed directly. No Apple signing certificates are included. Android APKs use the project's release signing key. If you previously installed a debug APK, uninstall it before installing the release APK (local pairing settings will be removed).`;
             const release = existing ?? (await github.rest.repos.createRelease({ owner, repo, tag_name: tag, target_commitish: context.sha, name: `NekoCode Desktop ${tag}`, body, draft: true, prerelease })).data;
             const assets = await github.paginate(github.rest.repos.listReleaseAssets, { owner, repo, release_id: release.id, per_page: 100 });
             for (const name of names) {
@@ -170,6 +290,6 @@ jobs:
               const data = await fs.readFile(path.join('installers', name));
               await github.rest.repos.uploadReleaseAsset({ owner, repo, release_id: release.id, name, data, headers: { 'content-type': 'application/octet-stream', 'content-length': data.length } });
             }
-            // Latest changes only after all seven installers and the checksum file are uploaded.
+            // Latest changes only after all nine installers and the checksum file are uploaded.
             await github.rest.repos.updateRelease({ owner, repo, release_id: release.id, name: `NekoCode Desktop ${tag}`, body, draft: false, prerelease, make_latest: prerelease ? 'false' : 'true' });
             core.info(`Published ${tag}: ${release.html_url}`);

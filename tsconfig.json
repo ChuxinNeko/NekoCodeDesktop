@@ -3,7 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
@@ -12,11 +16,25 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["vite/client", "bun-types"],
+    "types": [
+      "vite/client",
+      "bun-types"
+    ],
     "paths": {
-      "@/*": ["./src/renderer/src/*"],
-      "~/*": ["./src/renderer/src/*"]
+      "@/*": [
+        "./src/renderer/src/*"
+      ],
+      "~/*": [
+        "./src/renderer/src/*"
+      ]
     }
   },
-  "include": ["src", "scripts", "electron.vite.config.ts"]
+  "include": [
+    "src",
+    "scripts",
+    "electron.vite.config.ts",
+    "mobile/src",
+    "mobile/vite.config.ts",
+    "capacitor.config.ts"
+  ]
 }

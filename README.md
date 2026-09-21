@@ -141,6 +141,84 @@ OpenAI Responses / Anthropic Messages）、API Key 与模型 id。API Key 只在
 注意：`safeStorage` 在无系统密钥环的 Linux 上会退化为 `basic_text`，此时 `isEncryptionAvailable()`
 为 false，设置页会显示警告且拒绝保存新配置。内置 provider 不受影响。
 
+## 手机端与局域网并行任务
+
+手机端是可安装的 **Android / iOS APP（Capacitor）**。直接复用桌面 React 的 `ChatView`、`Composer`、`Transcript`、模型菜单、工作流面板、图标和主题；仅为小屏增加工具栏换行、安全区域和导航。Electron 继续运行在电脑上，负责模型调用和项目操作。
+
+1. 启动更新后的桌面端，进入 **Settings → 手机连接**，开启局域网访问。
+2. 添加允许手机新建任务的项目目录。绑定手机可以查看全部会话，新建任务限于这些项目。
+3. 安装 `dist/mobile/NekoCode-Android-debug.apk`（Android 8.0 及以上）。APP 默认显示「扫码配对」，点击「扫一扫，连接电脑」并允许相机权限，扫描电脑设置页的二维码即可自动填写地址并完成绑定。也可切换「手动配置」输入地址和配对码；电脑端的手动信息保留在折叠区。二维码与配对码均为 5 分钟有效、使用一次即失效，重新生成会立即作废旧码；可在桌面解除设备绑定。
+4. 手机和电脑连接同一局域网。电脑有多个网卡时，可在二维码下方选择与手机同网段的地址。手机创建的任务会立即出现在电脑侧栏，执行时显示运行标记；两端可以各自查看不同会话，切换会话不会停止后台任务。手机也支持继续发送消息、停止任务、修改模型设置和回答工作流问题。
+
+电脑需保持唤醒且桌面应用运行。局域网服务默认关闭，重启应用后需重新开启；关闭局域网访问不会停止已经接受的任务。默认端口为 `47832`，使用 HTTP，仅在可信网络中使用，不要映射到公网。Windows 防火墙需允许应用在专用网络通信，Wi-Fi 不能启用设备隔离。Android 使用原生 HTTP 连接电脑，不从电脑下载界面。
+
+并行任务具有独立 AgentSession，共享一个 ModelRuntime；任务快照与桌面当前选择分离，未写入磁盘的新任务也参与列表合并。最多同时保留 31 个任务实例，完成且已落盘的非当前任务可按需释放、重新打开。**同一项目的并行任务共享文件，没有自动创建 Git worktree**，请避免多个任务同时修改相同文件或相互回退代码。任务退出后不自动恢复执行。请求去重覆盖一次桌面应用运行期间的网络重试。
+
+二维码只包含版本标识、局域网地址、一次性配对码和有效期，不包含长期设备凭据。APP 使用后置相机本地解码（Android 使用 ZXing，iOS 使用原生扫描库），仅在点击扫码按钮时请求使用相机；拒绝相机权限后仍可手动配对。过期、无效或指向公网地址的二维码会被拒绝。
+
+构建 APK 需要 JDK 21、Android SDK 36 与已接受的 SDK 许可：
+
+```bash
+bun install
+bun run mobile:apk
+```
+
+`mobile:apk` 构建共享界面、同步 Android 工程、执行 Gradle 并把可安装的调试 APK 复制到 `dist/mobile/`。设置 `ANDROID_HOME` 指向 SDK；可用 `NEKOCODE_ANDROID_JAVA_HOME` 指定 Android Studio 自带的 JBR 21，或使用 `JAVA_HOME`。这份 APK 使用调试签名；正式签名和自动发布的配置见下方「GitHub 自动发布」。
+
+```bash
+bun run test:lan               # 并行生命周期、二维码校验、配对鉴权及请求去重
+bun run test:lan:integration   # 隔离 Electron + 真实 PI + 本地模拟模型，不使用真实 API 凭据
+bun run mobile:dev            # APP 界面的开发预览，非交付方式
+```
+
+开发预览仅在开发模式通过代理访问 `http://127.0.0.1:47834`，可用 `NEKOCODE_TEST_LAN_URL` 调整；`bun scripts/test-lan-integration.ts --preview` 可启动隔离测试后端。正式 APK 内置界面，使用 Capacitor 原生网络传输。Android 工程位于 `mobile/android`。
+
+## GitHub 自动发布（桌面 + Android + iOS）
+
+将 `package.json` 的 `version` 增加并推送到 `main` 后，`.github/workflows/release.yml` 会并行构建桌面安装包、Android APK 和未签名 iOS IPA，并上传到同一个 `v<version>` Release。Android 文件名为 `NekoCode-<version>-android.apk`，iOS 文件名为 `NekoCode-<version>-ios-unsigned.ipa`，均包含在 `SHA256SUMS.txt` 中；所有平台产物齐全后才发布。版本未变化的依赖调整不会发布。手动运行时，`publish=false` 只生成 Actions 构建产物（Android 为调试 APK）；`publish=true` 发布正式签名 Android APK 和供用户自签名的 iOS IPA。
+
+**首次发布前**，在 GitHub 仓库 **Settings → Secrets and variables → Actions** 配置以下 Repository Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | 正式签名 keystore 文件的 Base64 编码 |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
+| `ANDROID_KEY_ALIAS` | 签名密钥别名 |
+| `ANDROID_KEY_PASSWORD` | 密钥密码 |
+
+已有 Android 发布密钥时必须沿用。首次创建可在本地执行下面的命令，交互输入密码，并将生成的文件离线备份；不要提交密钥或密码：
+
+```bash
+keytool -genkeypair -v -keystore nekocode-release.jks -alias nekocode -keyalg RSA -keysize 3072 -validity 10000
+```
+
+在 PowerShell 中可用 `[Convert]::ToBase64String([IO.File]::ReadAllBytes('nekocode-release.jks'))` 获取文件编码，保存到 `ANDROID_KEYSTORE_BASE64`；其余 Secrets 对应创建时输入的密码及别名。CI 仅将密钥临时还原到 runner 临时目录，构建后删除；缺少签名配置会明确失败，不会将调试签名 APK 作为正式 Release 发布。
+
+APK `versionName` 直接读取根 `package.json`；CI 的 `versionCode` 为该工作流的 `github.run_number + 2`，同一次运行的重试保持不变，后续发布递增。保留现有工作流文件，迁移工作流或发布已有更高 versionCode 的应用时需相应提高编号偏移。正式签名与先前本地调试版签名不同，首次从调试版迁移需要卸载调试版再安装（手机本地配对设置会清除）；之后持续使用同一正式签名即可覆盖升级。
+
+本地验证正式构建可设置 `ANDROID_KEYSTORE_PATH`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`、`ANDROID_VERSION_CODE`（大于 2 的递增整数）后执行 `bun scripts/build-android.ts --release`。
+
+## iOS 构建与自行签名安装
+
+已提交 iOS 原生工程 `mobile/ios/App/App.xcodeproj`，通过 Swift Package Manager 集成 Capacitor、相机扫码和偏好存储插件。iOS 15.0+ 的 iPhone / iPad 使用与 Android 相同的 React 界面和局域网接口；默认扫码配对，保留手动配置。首次使用需允许「相机」和「本地网络」权限，拒绝后可在 iOS 设置中重新开启。
+
+**Windows 上获取 IPA：**
+
+1. 将代码推送到 GitHub 的 main 分支。在 **Actions → Build and release → Run workflow** 选择 **main**，保持 **publish=false** 并运行。一次运行同时构建 Windows、macOS、Linux、Android 和 iOS，无需增加版本号；仅构建模式不需要签名 Secrets，Android 生成调试 APK，iOS 生成未签名 IPA。
+2. macOS runner 使用 Xcode 构建真实设备的 arm64 Release 应用，关闭代码签名，生成标准 `Payload/App.app` 结构的 IPA。
+3. 完成后下载 **installers-ios** Artifact，解压得到 `NekoCode-<version>-ios-unsigned.ipa`。构建失败时可下载 **ios-build-log** 查看日志。
+4. 增加根 `package.json` 版本号并推送 main 时，同一个 **Build and release** 工作流构建全部平台，等待各平台成功后，把 IPA 与桌面安装包、Android APK 一起发布到同一个 Release。正式发布需要 Android 签名 Secrets；iOS 始终为供用户自行签名的 IPA，不需要 Apple 证书或 Team ID。
+
+**用户自行签名：**
+
+IPA 未签名，不能直接点击安装，也不是 App Store / TestFlight 包。Windows 用户可通过 [Sideloadly](https://sideloadly.io/) 或 [AltStore Classic](https://altstore.io/) 的官方安装流程，用自己的 Apple ID 签名后安装到连接的设备。按工具提示安装所需的 Apple 驱动、信任电脑和开发者；iOS 16+ 如有提示需开启开发者模式。免费 Apple ID 签名通常约 7 天有效，需要定期续签，具体限制以 Apple 和所用工具为准。Apple ID 与证书由用户在签名工具中管理，不上传至本项目或 GitHub Actions。
+
+更新时沿用同一个 Apple ID、签名工具和 Bundle ID 设置，避免被识别成另一个应用。重新安装或改变签名标识可能需要重新绑定电脑。包内没有推送、App Groups 等付费账号专属 entitlement。
+
+CI 不使用需要 provisioning profile 的 `xcodebuild -exportArchive`，而是归档、移除已有签名并打包 IPA。脚本会检查设备架构、版本号、隐私与界面资源，校验压缩包；所有产物齐全才发布。IPA 文件名保留完整 SemVer，Apple 包内版本只保留 major.minor.patch，构建号采用 GitHub 工作流运行编号。
+
+在 macOS 上也可执行 `bun run mobile:ipa`；Windows 可执行 `bun run mobile:sync:ios` 生成界面并同步工程，但无法运行 Xcode。首次 CI 构建与真机扫码需要在 GitHub/macOS 和 iPhone 上验证。
+
 ## 修改 pi
 
 pi 的源码在 `pi/`，与普通源码一样编辑；改完后：

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { SlashCommandSummary } from "../../../shared/commands";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { AgentPhase, WorkMode } from "../../../shared/workflow";
@@ -8,6 +9,7 @@ import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
 
 interface ComposerProps {
+	loadCommands?: () => Promise<SlashCommandSummary[]>;
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	disabled: boolean;
@@ -42,7 +44,7 @@ export function Composer(props: ComposerProps) {
 			onAbort={props.onAbort}
 			onSend={props.onSend}
 			streaming={props.streaming}
-			loadCommands={() => api.agentCommands()}
+			loadCommands={props.loadCommands ?? (() => api.agentCommands())}
 			openCommandsSignal={openCommands}
 			toolbar={
 				<ComposerPickers

@@ -133,6 +133,8 @@ export type AgentCell =
 
 /** One row in the session list, and the header of the open session. */
 export interface SessionSummary {
+	/** Live execution state, including sessions running outside the selected view. */
+	running?: boolean;
 	id: string;
 	sessionFile: string;
 	cwd: string;

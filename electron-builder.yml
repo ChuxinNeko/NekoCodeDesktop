@@ -10,7 +10,9 @@ asar: true
 # Each architecture is built on a matching native runner.
 npmRebuild: false
 files:
-  - out/**/*
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
   - package.json
   - licenses/**/*
   # Workspace packages are followed through node_modules by electron-builder.

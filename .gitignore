@@ -4,6 +4,8 @@ dist/
 .tools/
 *.log
 *.tsbuildinfo
+*.jks
+*.keystore
 /demo/
 # Upstream reference checkouts (not part of this project's source).
 # The PI agent core is in-tree at pi/ and IS part of this project.

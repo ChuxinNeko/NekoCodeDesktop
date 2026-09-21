@@ -1,0 +1,17 @@
+/* The desktop stylesheet owns colors, typography, messages and the composer.
+   Only mobile safe areas and narrow-screen sizing belong here. */
+html, body, #root { height: 100%; overflow: hidden; }
+.mobile-shell { height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.mobile-shell button { touch-action: manipulation; }
+.mobile-shell textarea { font-size: 16px; }
+.mobile-shell [data-slot="composer-footer"] { align-items: flex-end; }
+.mobile-shell [data-slot="composer-toolbar"] { flex-wrap: wrap; row-gap: 6px; }
+.mobile-shell [data-slot="composer-toolbar"] > div:empty { display: none; }
+.mobile-shell [data-slot="composer-toolbar"] > button { max-width: 180px; }
+.mobile-shell .chat-markdown pre { max-width: 100%; overflow-x: auto; }
+.mobile-shell .chat-markdown img { max-width: 100%; }
+.mobile-shell .mobile-chat > div > header { min-width: 0; }
+@media (max-width: 480px) {
+  .mobile-shell { --app-chat-gutter: 12px; }
+  .mobile-app [data-slot="menu-popup"] { max-width: calc(100vw - 24px); }
+}

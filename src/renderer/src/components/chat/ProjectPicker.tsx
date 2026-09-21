@@ -24,7 +24,7 @@ export function ProjectPicker({ cwd, disabled, onPickProject }: {
 				/>
 			}>
 				<FolderOpenIcon className="size-3.5" />
-				<span className="truncate">{cwd ? shortenPath(cwd, api.homeDir) : t("welcome.chooseFolder")}</span>
+				<span className="truncate">{cwd ? shortenPath(cwd, api?.homeDir ?? "") : t("welcome.chooseFolder")}</span>
 				<ChevronDownIcon className="size-3 opacity-60" />
 			</TooltipTrigger>
 			<TooltipPopup side="bottom">

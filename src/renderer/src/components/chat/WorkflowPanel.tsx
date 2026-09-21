@@ -29,7 +29,7 @@ export function isAnswered(answers: WorkflowAnswer["answers"], id: string): bool
 	return Boolean(answers[id]?.optionId || answers[id]?.text?.trim());
 }
 
-function QuestionCard({ request }: { request: WorkflowRequest }) {
+function QuestionCard({ request, onAnswer }: { request: WorkflowRequest; onAnswer?: (answer: WorkflowAnswer) => Promise<unknown> }) {
 	const { t } = useTranslation();
 	const [answers, setAnswers] = useState<WorkflowAnswer["answers"]>({});
 	const [page, setPage] = useState(0);
@@ -56,7 +56,7 @@ function QuestionCard({ request }: { request: WorkflowRequest }) {
 		setBusy(true);
 		setError("");
 		try {
-			await api.agentAnswerWorkflow({ requestId: request.id, answers, cancelled });
+			await (onAnswer ?? api.agentAnswerWorkflow)({ requestId: request.id, answers, cancelled });
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
@@ -294,9 +294,13 @@ function ProgressSection({
 export function WorkflowPanel({
 	workflow,
 	onOpenTask,
+	onAnswer,
+	onCancelWorker,
 }: {
 	workflow: WorkflowSnapshot;
 	onOpenTask?: (taskId: string) => void;
+	onAnswer?: (answer: WorkflowAnswer) => Promise<unknown>;
+	onCancelWorker?: (id: string) => Promise<unknown>;
 }) {
 	const [error, setError] = useState("");
 	if (!workflow.request && !workflow.todos.length && !workflow.tasks.length) return null;
@@ -312,7 +316,7 @@ export function WorkflowPanel({
 				)}
 			>
 				{workflow.request ? (
-					<QuestionCard key={workflow.request.id} request={workflow.request} />
+					<QuestionCard key={workflow.request.id} request={workflow.request} onAnswer={onAnswer} />
 				) : null}
 				{workflow.todos.length || workflow.tasks.length ? (
 					// Progress steps back while a question is waiting: the answer is
@@ -328,7 +332,7 @@ export function WorkflowPanel({
 							workflow={workflow}
 							onOpenTask={onOpenTask}
 							onCancel={(id) => {
-								void api.agentCancelTask(id).catch((cause) => setError(errorMessage(cause)));
+								void (onCancelWorker ?? api.agentCancelTask)(id).catch((cause) => setError(errorMessage(cause)));
 							}}
 						/>
 					</div>
