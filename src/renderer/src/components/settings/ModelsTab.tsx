@@ -12,6 +12,7 @@ import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Checkbox } from "../ui/checkbox";
 import { CheckIcon, PlusIcon, RefreshCwIcon, XIcon } from "../../lib/icons";
 
 /** Below this many entries the list is short enough to scan without a filter. */
@@ -23,6 +24,46 @@ const SEARCH_THRESHOLD = 8;
  * Every add/remove writes straight through to the provider — there is no second
  * save step, because a half-applied model list is not a state worth having.
  */
+/**
+ * One fetched model. An already-enabled row is text only: there is nothing to
+ * tick, and offering a box that does nothing is worse than offering none.
+ */
+function FetchedRow({
+	added,
+	checked,
+	disabled,
+	id,
+	name,
+	onToggle,
+}: {
+	added: boolean;
+	checked: boolean;
+	disabled: boolean;
+	id: string;
+	name: string;
+	onToggle: () => void;
+}) {
+	const body = (
+		<span className="flex min-w-0 flex-1 flex-col">
+			<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">{id}</span>
+			{name !== id ? (
+				<span className="truncate text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+					{name}
+				</span>
+			) : null}
+		</span>
+	);
+	if (added) return body;
+	// A label, so the whole row is the hit target — picking twenty models by
+	// aiming at twenty 16px boxes is the thing this is meant to replace.
+	return (
+		<label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+			<Checkbox aria-label={id} checked={checked} disabled={disabled} onCheckedChange={onToggle} />
+			{body}
+		</label>
+	);
+}
+
 export function ModelsTab({
 	profiles,
 	accounts,
@@ -58,6 +99,8 @@ export function ModelsTab({
 	const [fetched, setFetched] = useState<Record<string, FetchedModel[]>>({});
 	const [query, setQuery] = useState("");
 	const [manual, setManual] = useState("");
+	/** Ids ticked in the fetched list, waiting to be added in one go. */
+	const [picked, setPicked] = useState<Set<string>>(new Set());
 	/** The one expanded per-model limits editor; drafts stay strings until saved. */
 	const [limitsEditor, setLimitsEditor] = useState<{
 		modelId: string;
@@ -68,6 +111,7 @@ export function ModelsTab({
 	const load = async (target: ModelProfileSummary) => {
 		const result = await onFetch(target);
 		if (result) setFetched((prev) => ({ ...prev, [target.id]: result }));
+		setPicked(new Set());
 	};
 
 	// The selection names either a custom profile or an OAuth account; a
@@ -88,6 +132,10 @@ export function ModelsTab({
 		onAutoFetchHandled();
 		void load(profile);
 	}, [autoFetchId, profileId]);
+
+	useEffect(() => {
+		setPicked(new Set());
+	}, [profileId]);
 
 	// An OAuth subscription's model list is the provider's to decide, so those
 	// categories render read-only below — add/remove/fetch are profile-only tools.
@@ -121,6 +169,48 @@ export function ModelsTab({
 		const id = modelId.trim();
 		if (!profile || !id || enabled.includes(id)) return;
 		onSaveModels(profile, [...enabled, id]);
+	};
+
+	// Only rows that are not already enabled can be ticked; the rest have nothing
+	// to add and would make a count the action cannot honour.
+	//
+	// Two scopes on purpose. Ticks survive the search box — narrowing the list is
+	// how you find the next model to tick, not a reason to drop the ones already
+	// chosen — so the action spans everything fetched. "Select all" is the one
+	// thing that means the visible rows, because that is what "all" looks like
+	// from where the user is standing.
+	const selected = (available ?? []).filter(
+		(model) => picked.has(model.id) && !enabled.includes(model.id),
+	);
+	const selectable = filtered.filter((model) => !enabled.includes(model.id));
+	const allSelected = selectable.length > 0 && selectable.every((model) => picked.has(model.id));
+
+	const togglePick = (modelId: string) => {
+		setPicked((previous) => {
+			const next = new Set(previous);
+			if (!next.delete(modelId)) next.add(modelId);
+			return next;
+		});
+	};
+
+	// Scoped to the current search, because that is the list in front of the
+	// user — "all" meaning the hidden rows too is a nasty surprise.
+	const toggleAll = () => {
+		setPicked((previous) => {
+			const next = new Set(previous);
+			for (const model of selectable) {
+				if (allSelected) next.delete(model.id);
+				else next.add(model.id);
+			}
+			return next;
+		});
+	};
+
+	/** One save for the whole selection rather than a round trip per model. */
+	const addPicked = () => {
+		if (!profile || selected.length === 0) return;
+		onSaveModels(profile, [...enabled, ...selected.map((model) => model.id)]);
+		setPicked(new Set());
 	};
 
 	const parseLimit = (raw: string, max: number): number | null => {
@@ -407,12 +497,27 @@ export function ModelsTab({
 				{available ? (
 					<div className="flex flex-col gap-2 rounded-xl border border-border p-3">
 						<div className="flex items-center gap-2">
+							{selectable.length > 0 ? (
+								<Checkbox
+									checked={allSelected}
+									indeterminate={selected.length > 0 && !allSelected}
+									onCheckedChange={toggleAll}
+									disabled={busy}
+									aria-label={t("models.selectAll")}
+								/>
+							) : null}
 							<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
 								{t("models.available")}
 							</span>
 							<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 								{available.length}
 							</span>
+							<span className="flex-1" />
+							{selected.length > 0 ? (
+								<Button onClick={addPicked} size="xs" variant="chrome-outline" disabled={busy}>
+									{t("models.addSelected", { count: String(selected.length) })}
+								</Button>
+							) : null}
 						</div>
 
 						{available.length === 0 ? (
@@ -439,16 +544,18 @@ export function ModelsTab({
 											const added = enabled.includes(model.id);
 											return (
 												<div key={model.id} className="flex items-center gap-2 py-1">
-													<div className="flex min-w-0 flex-1 flex-col">
-														<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
-															{model.id}
-														</span>
-														{model.name !== model.id ? (
-															<span className="truncate text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
-																{model.name}
-															</span>
-														) : null}
-													</div>
+													{added ? (
+														// Holds the column so added rows do not shift left.
+														<span aria-hidden="true" className="size-4 shrink-0" />
+													) : null}
+													<FetchedRow
+														added={added}
+														checked={picked.has(model.id)}
+														disabled={busy}
+														id={model.id}
+														name={model.name}
+														onToggle={() => togglePick(model.id)}
+													/>
 													{added ? (
 														<span className="flex items-center gap-1 px-1.5 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 															<CheckIcon className="size-3.5" />

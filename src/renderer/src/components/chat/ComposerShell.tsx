@@ -1,3 +1,4 @@
+import type { ContextUsage } from "../../../../shared/agent";
 import type { ComposerInsertion } from "../../../../shared/browser";
 import type { SlashCommandSummary } from "../../../../shared/commands";
 import { BorderBeam } from "border-beam";
@@ -5,7 +6,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTheme } from "../../hooks/useTheme";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { BackgroundTrayIcon, ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
+import { ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
+import { ContextGauge } from "./ContextGauge";
 import { Button } from "../ui/button";
 import { ComposerColumnFrame } from "./ComposerColumnFrame";
 import { ComposerCommandMenu, filterCommands } from "./ComposerCommandMenu";
@@ -44,7 +46,10 @@ interface ComposerShellProps {
 	 * screen. Absent where there is nothing to stay on — the welcome screen has
 	 * no open session, so every prompt there is the foreground one.
 	 */
+	/** Ctrl/Cmd+Enter routes the draft here instead — a task of its own. */
 	onSendBackground?: (text: string) => void;
+	/** Drawn beside send when the session has reported context usage. */
+	context?: ContextUsage;
 	onAbort?: () => void;
 	/**
 	 * Skills and prompt templates for the slash menu. Absent on surfaces with no
@@ -337,20 +342,9 @@ export function ComposerShell(props: ComposerShellProps) {
 							<div data-slot="composer-footer" className={cn(COMPOSER_FOOTER_ROW_CLASS_NAME, "gap-1 pb-1.5 pr-1.5")}>
 								<div data-slot="composer-toolbar" className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>
 
-								{/* Stays put while the session streams: firing off a second task
-								    without waiting for this one is the whole point of it. */}
-								{props.onSendBackground ? (
-									<Button
-										aria-label={t("composer.sendBackground")}
-										disabled={disabled || !sendable}
-										onClick={() => submit(true)}
-										size="icon-sm"
-										title={t("composer.sendBackgroundHint")}
-										variant="outline"
-									>
-										<BackgroundTrayIcon className="size-3.5" />
-									</Button>
-								) : null}
+								{/* Sits next to send because that is where the eye already is at
+								    the moment the length of the conversation starts to matter. */}
+								{props.context ? <ContextGauge context={props.context} /> : null}
 
 								{streaming && props.onAbort ? (
 									<Button

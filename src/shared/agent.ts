@@ -178,6 +178,17 @@ export interface AgentDefaults {
 	agentPhase: AgentPhase;
 }
 
+export interface ContextUsage {
+	/**
+	 * What the conversation occupied at the last model call: the whole prompt it
+	 * sent — system prompt, every message, cached or not — plus the reply. Not
+	 * the size of that reply on its own.
+	 */
+	used: number;
+	/** The active model's context window. */
+	window: number;
+}
+
 export interface AgentSnapshot {
 	fusion?: FusionConfig | null;
 	session: SessionSummary;
@@ -207,6 +218,11 @@ export interface AgentSnapshot {
 	 * than infers from the tools that went missing.
 	 */
 	agentPhase: AgentPhase;
+	/**
+	 * How full the context window is. Absent until a reply has reported usage,
+	 * or when the active model declares no window.
+	 */
+	context?: ContextUsage;
 	error?: string;
 }
 

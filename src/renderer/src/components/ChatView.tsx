@@ -455,6 +455,7 @@ export function ChatView(props: ChatViewProps) {
 					snapshot.streaming || snapshot.workflow.tasks.some((task) => task.status === "running")
 				}
 				models={snapshot.models}
+				context={snapshot.context}
 				modelKey={snapshot.modelKey}
 				fusion={snapshot.fusion}
 				thinkingLevel={snapshot.thinkingLevel}

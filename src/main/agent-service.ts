@@ -54,6 +54,7 @@ import { cellIdForMessage, findTurnEntry } from "./checkpoint-anchor";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
 import { SnapshotDeltaCache, type AgentSnapshotDelta } from "../shared/agent-delta";
 import { remoteToolOutput, remoteView, type RemoteToolOutput, type RemoteViewRequest } from "./agent-remote-view";
+import { contextUsage } from "./context-usage";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import { PluginService } from "./plugin-service";
 import { BuiltinSkillStore, resolveBuiltinSkillsDir } from "./builtin-skills";
@@ -1595,6 +1596,10 @@ export class AgentService {
 				running: session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks,
 			},
 			cells: withFusionUsage(this.projector.cells(), sm.getBranch(), this.workflow?.state.hasRunningTasks),
+			...(() => {
+				const context = contextUsage(messages, model?.contextWindow);
+				return context ? { context } : {};
+			})(),
 			checkpoints: this.listCheckpoints(),
 			fusion: this.workflow?.fusion ?? null,
 			workflow: this.workflow?.state.snapshot() ?? { request: null, todos: [], tasks: [] },

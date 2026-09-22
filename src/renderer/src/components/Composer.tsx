@@ -3,7 +3,7 @@ import type { SlashCommandSummary } from "../../../shared/commands";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { AgentPhase, WorkMode } from "../../../shared/workflow";
-import type { ExecutionMode, ModelOption, ThinkingLevel } from "../../../shared/agent";
+import type { ContextUsage, ExecutionMode, ModelOption, ThinkingLevel } from "../../../shared/agent";
 import { api } from "../api";
 import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
@@ -24,6 +24,7 @@ interface ComposerProps {
 	agentPhase: AgentPhase;
 	onSend: (text: string) => void;
 	onSendBackground?: (text: string) => void;
+	context?: ContextUsage;
 	onAbort: () => void;
 	onSetFusion: (config: FusionConfig) => void;
 	onSetModel: (modelKey: string) => void;
@@ -45,6 +46,7 @@ export function Composer(props: ComposerProps) {
 			onAbort={props.onAbort}
 			onSend={props.onSend}
 			onSendBackground={props.onSendBackground}
+			context={props.context}
 			streaming={props.streaming}
 			loadCommands={props.loadCommands ?? (() => api.agentCommands())}
 			openCommandsSignal={openCommands}
