@@ -2,7 +2,7 @@ import type { ComposerInsertion } from "../../../shared/browser";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode, WorkflowAnswer } from "../../../shared/workflow";
 import type { SlashCommandSummary } from "../../../shared/commands";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
 	AgentDefaults,
 	AgentSnapshot,
@@ -12,7 +12,9 @@ import type {
 import { useTranslation } from "../i18n";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
+import { Spinner } from "./ui/spinner";
 import { WorkflowPanel } from "./chat/WorkflowPanel";
+import { WorktreeBar } from "./chat/WorktreeBar";
 import { Composer } from "./Composer";
 import { ProjectPicker } from "./chat/ProjectPicker";
 import { Transcript } from "./Transcript";
@@ -35,6 +37,14 @@ import type { CheckpointSummary } from "../../../shared/checkpoints";
  */
 const FOLLOW_GAP_RATIO = 0.3;
 
+/**
+ * How close to the top of a remote transcript reaches for the page before it.
+ *
+ * Roughly a viewport's worth of runway, so the older turns are already in place
+ * by the time the scroll gets to where they belong.
+ */
+const EARLIER_TRIGGER_PX = 400;
+
 /** Bottom of the real content: the spacer below it is reserved room, not content. */
 function realContentBottom(el: HTMLElement): number {
 	const spacerEl = el.querySelector<HTMLElement>("[data-scroll-spacer]");
@@ -52,6 +62,21 @@ function tailTarget(el: HTMLElement, realBottom: number): number {
 interface ChatViewProps {
 	/** Keeps the same chat surface while omitting desktop-only dock controls. */
 	mobile?: boolean;
+	/**
+	 * The transcript starts mid-session and older turns can still be fetched.
+	 * Only remote surfaces set this — a local session always holds all of it.
+	 */
+	earlierAvailable?: boolean;
+	/** A page of older turns is in flight; the trigger stays disarmed until it lands. */
+	loadingEarlier?: boolean;
+	onLoadEarlier?: () => void;
+	/**
+	 * A session was tapped and its transcript has not arrived yet. Only remote
+	 * surfaces set this — a local session is already in memory when it opens.
+	 */
+	loadingSession?: boolean;
+	/** Fetch the rest of a tool result this surface only received the head of. */
+	onLoadToolOutput?: (toolCallId: string, offset: number) => Promise<{ text: string; total: number }>;
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
 	onAnswerWorkflow?: (answer: WorkflowAnswer) => Promise<unknown>;
 	onCancelWorker?: (id: string) => Promise<unknown>;
@@ -64,9 +89,15 @@ interface ChatViewProps {
 	busy: boolean;
 	error: string | null;
 	terminalOpen: boolean;
+	browserAvailable?: boolean;
 	browserOpen: boolean;
 	onPickProject: () => void;
 	onSend: (text: string) => void;
+	/**
+	 * Run this prompt as a task of its own without leaving the open session.
+	 * Absent on surfaces that cannot hold more than one task at a time.
+	 */
+	onSendBackground?: (text: string) => void;
 	onAbort: () => void;
 	onSetFusion: (config: FusionConfig) => void;
 	onSetModel: (modelKey: string) => void;
@@ -87,6 +118,9 @@ interface ChatViewProps {
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
 	/** Show the list of every restore point in the right dock. */
 	onOpenCheckpoints: () => void;
+	/** This task's isolated checkout was merged or thrown away. */
+	onWorktreeReleased?: () => void;
+	onWorktreeError?: (message: string) => void;
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -108,6 +142,29 @@ export function ChatView(props: ChatViewProps) {
 	const lastUserCellRef = useRef<string | null>(null);
 	const [jumpVisible, setJumpVisible] = useState(false);
 	const [spacerPx, setSpacerPx] = useState(0);
+	/** Where the viewport sat when a page of older turns was asked for. */
+	const prependRef = useRef<{ firstId: string; scrollHeight: number; scrollTop: number } | null>(null);
+
+	/**
+	 * Reach for older turns once the user has scrolled up to them.
+	 *
+	 * The scroll position is recorded here rather than when the cells arrive:
+	 * by then the content above has already changed height, and the number
+	 * needed to put the viewport back is the one from before it did.
+	 */
+	const requestEarlier = (el: HTMLDivElement) => {
+		if (!props.earlierAvailable || props.loadingEarlier || !props.onLoadEarlier) return;
+		if (prependRef.current || el.scrollTop > EARLIER_TRIGGER_PX) return;
+		const firstId = snapshot?.cells[0]?.id;
+		if (!firstId) return;
+		prependRef.current = { firstId, scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+		props.onLoadEarlier();
+	};
+
+	// A request that failed, or found nothing, must not disarm the trigger for good.
+	useEffect(() => {
+		if (!props.loadingEarlier) prependRef.current = null;
+	}, [props.loadingEarlier]);
 
 	// The spacer only exists while a session is open; re-measure with the window.
 	useLayoutEffect(() => {
@@ -140,6 +197,19 @@ export function ChatView(props: ChatViewProps) {
 		}
 		const newTurn = lastUserId !== null && lastUserId !== lastUserCellRef.current;
 		if (lastUserId) lastUserCellRef.current = lastUserId;
+
+		const pending = prependRef.current;
+		if (pending && sessionChanged) prependRef.current = null;
+		else if (pending && snapshot.cells[0]?.id !== pending.firstId) {
+			// Older turns landed above the viewport. Everything the user was looking
+			// at moved down by however much arrived; put the scroll back onto it.
+			prependRef.current = null;
+			const target = Math.max(0, pending.scrollTop + (el.scrollHeight - pending.scrollHeight));
+			expectedScrollRef.current = target;
+			el.scrollTop = target;
+			setJumpVisible(realContentBottom(el) - target - el.clientHeight > 80);
+			return;
+		}
 
 		if (sessionChanged) followRef.current = "bottom";
 		// Sending re-engages following even if the user had scrolled away.
@@ -175,6 +245,7 @@ export function ChatView(props: ChatViewProps) {
 			}
 		}
 		updateJump();
+		requestEarlier(el);
 	}, [snapshot, spacerPx]);
 
 	const onTranscriptScroll = () => {
@@ -191,6 +262,7 @@ export function ChatView(props: ChatViewProps) {
 			followRef.current = distFromBottom < 40 ? "bottom" : null;
 		}
 		setJumpVisible(distFromBottom > 80);
+		requestEarlier(el);
 	};
 
 	const jumpToLatest = () => {
@@ -203,6 +275,27 @@ export function ChatView(props: ChatViewProps) {
 		el.scrollTop = target;
 		setJumpVisible(false);
 	};
+
+	// A session was opened and its transcript is still in flight. The chat
+	// surface has nothing to draw until it lands, but the welcome screen would
+	// be plainly wrong — and holding the tap until the fetch returns is what
+	// made opening a session feel like it had not registered at all.
+	if (!snapshot && props.loadingSession) {
+		return (
+			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+				{error ? (
+					<p className="text-[length:var(--app-font-size-ui,12px)] text-destructive">{error}</p>
+				) : (
+					<>
+						<Spinner className="size-4 text-muted-foreground" />
+						<p className="text-[length:var(--app-font-size-ui,12px)] text-muted-foreground">
+							{t("chat.openingSession")}
+						</p>
+					</>
+				)}
+			</div>
+		);
+	}
 
 	// No open session — including the very first launch — lands on the welcome
 	// screen, which is itself a way to start one rather than a dead end.
@@ -252,14 +345,16 @@ export function ChatView(props: ChatViewProps) {
 					<GitBranchIcon className="size-3.5" />
 					{t("nav.review")}
 				</Button>
-				<Button
-					onClick={props.onToggleBrowser}
-					size="xs"
-					variant={props.browserOpen ? "subtle" : "chrome-outline"}
-				>
-					<GlobeIcon className="size-3.5" />
-					{t("nav.browser")}
-				</Button>
+				{props.browserAvailable !== false ? (
+					<Button
+						onClick={props.onToggleBrowser}
+						size="xs"
+						variant={props.browserOpen ? "subtle" : "chrome-outline"}
+					>
+						<GlobeIcon className="size-3.5" />
+						{t("nav.browser")}
+					</Button>
+				) : null}
 				<Button
 					onClick={props.onToggleTerminal}
 					size="xs"
@@ -270,6 +365,19 @@ export function ChatView(props: ChatViewProps) {
 				</Button>
 				</>}
 			</header>
+
+			{/* Desktop only: the phone client reaches tasks over the LAN API, which
+			    has no way to act on a checkout sitting on the desktop's disk. */}
+			{!props.mobile ? (
+				<WorktreeBar
+					key={snapshot.session.id}
+					sessionId={snapshot.session.id}
+					title={snapshot.session.title}
+					streaming={snapshot.streaming}
+					onReleased={props.onWorktreeReleased ?? (() => undefined)}
+					onError={props.onWorktreeError ?? (() => undefined)}
+				/>
+			) : null}
 
 			{error ? (
 				<div className="flex items-center gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
@@ -297,6 +405,13 @@ export function ChatView(props: ChatViewProps) {
 								</p>
 							</div>
 						) : (
+							<>
+							{props.loadingEarlier ? (
+								<div className="flex items-center justify-center gap-2 pb-4 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+									<Spinner className="size-3" />
+									{t("chat.loadingEarlier")}
+								</div>
+							) : null}
 							<Transcript
 							cells={snapshot.cells}
 							streaming={snapshot.streaming}
@@ -306,7 +421,9 @@ export function ChatView(props: ChatViewProps) {
 							checkpoints={snapshot.checkpoints}
 							onRestoreCheckpoint={props.onRestoreCheckpoint}
 							onOpenReview={props.onOpenReview}
+							onLoadToolOutput={props.onLoadToolOutput}
 						/>
+							</>
 						)}
 					</div>
 					{/* Scroll headroom: lets a fresh turn's prompt reach its middle-upper
@@ -346,6 +463,7 @@ export function ChatView(props: ChatViewProps) {
 				workMode={snapshot.workMode}
 				agentPhase={snapshot.agentPhase}
 				onSend={props.onSend}
+				onSendBackground={props.onSendBackground}
 				onAbort={props.onAbort}
 				onSetFusion={props.onSetFusion}
 				onSetModel={props.onSetModel}

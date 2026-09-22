@@ -1,0 +1,24 @@
+{
+  "name": "nekocode-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NekoCode public backend — accounts, email verification, and the rendezvous the mobile app uses to reach a desktop over the internet.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "elysia": "^1.4.30",
+    "jose": "^6.1.0",
+    "mongodb": "^6.21.0",
+    "nodemailer": "^7.0.12"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.4",
+    "bun-types": "1.4.2",
+    "typescript": "^5.9.3"
+  }
+}

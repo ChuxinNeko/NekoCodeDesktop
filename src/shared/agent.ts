@@ -111,6 +111,13 @@ export type AgentCell =
 			toolName: string;
 			args: unknown;
 			output: string;
+			/**
+			 * Set only on a remote transcript, where `output` was cut down to keep
+			 * the transfer bounded: it holds the first characters of a result that
+			 * is this many long, and the rest is fetched on demand. Absent locally,
+			 * where the transcript always carries the whole thing.
+			 */
+			outputTotal?: number;
 			details?: unknown;
 			status: "pending" | "running" | "done" | "error";
 			/** Tool arguments are still being generated; no file has been written yet. */
@@ -221,6 +228,27 @@ export interface DeleteSessionRequest {
 export interface SendPromptRequest {
 	text: string;
 }
+
+/**
+ * Start a task in a session of its own without leaving the one on screen.
+ *
+ * Creating and prompting are one call rather than two because a session that
+ * was created but never prompted is nothing a user asked for — if the prompt is
+ * refused there must be no leftover row in the sidebar to explain.
+ */
+export interface StartBackgroundTaskRequest {
+	cwd: string;
+	text: string;
+}
+
+export type StartBackgroundTaskResult =
+	/**
+	 * `warning` reports an arrangement the user did not pick — most often that
+	 * isolation was asked for and the project could not have it, so this task is
+	 * sharing the working directory after all.
+	 */
+	| { accepted: true; session: SessionSummary; warning?: string }
+	| { accepted: false; error: string };
 
 export type SendPromptResult =
 	| { accepted: true; action?: "new-session" | "open-terminal" }

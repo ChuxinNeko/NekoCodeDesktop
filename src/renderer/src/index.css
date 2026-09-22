@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark, .dark *));
 
 @theme inline {
+  --animate-otp-enter: otp-enter 0.22s ease-out both;
+  --animate-otp-shake: otp-shake 0.22s ease-in-out;
   --animate-skeleton: skeleton 2s -1s infinite linear;
   /* Status spinners and shimmer labels share 50ms steps (20 fps), aligned by
      animationTimelineSync. Matching both cadence and phase lets their redraws
@@ -65,6 +67,30 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  @keyframes otp-enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes otp-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20%,
+    60% {
+      transform: translateX(3px);
+    }
+    40%,
+    80% {
+      transform: translateX(-3px);
+    }
+  }
   @keyframes skeleton {
     to {
       background-position: -200% 0;

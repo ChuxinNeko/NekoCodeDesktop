@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { app, type BrowserWindow } from "electron";
@@ -9,6 +10,7 @@ import type {
 	ResourceLoader,
 	SessionManager,
 	SettingsManager,
+	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type {
@@ -50,6 +52,8 @@ import { attachTruncationRecovery } from "./truncation-recovery";
 import { applyReversal, fileDiffSince, previewReversal } from "./file-restore";
 import { cellIdForMessage, findTurnEntry } from "./checkpoint-anchor";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
+import { SnapshotDeltaCache, type AgentSnapshotDelta } from "../shared/agent-delta";
+import { remoteToolOutput, remoteView, type RemoteToolOutput, type RemoteViewRequest } from "./agent-remote-view";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import { PluginService } from "./plugin-service";
 import { BuiltinSkillStore, resolveBuiltinSkillsDir } from "./builtin-skills";
@@ -199,6 +203,8 @@ export class AgentService {
 	 */
 	private titleAbort: AbortController | null = null;
 	private titlePendingFile: string | null = null;
+	/** Per-session diff state for {@link snapshotDelta}; see that method. */
+	private snapshotDeltas: { sessionId: string; cache: SnapshotDeltaCache } | null = null;
 	private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 	private runtime: ModelRuntime | null = null;
 	private sessionDir: string;
@@ -238,6 +244,11 @@ export class AgentService {
 			owner?: AgentService;
 			emit: (channel: string, payload?: unknown) => void;
 		},
+		/**
+		 * Tools from connected MCP servers. Shared across every session rather
+		 * than owned by one: a server is a process, not a conversation.
+		 */
+		private readonly mcp?: { tools(): ToolDefinition[]; toolNames(): string[] },
 	) {
 		this.sessionDir = join(app.getPath("userData"), "sessions");
 		mkdirSync(this.sessionDir, { recursive: true });
@@ -788,6 +799,37 @@ export class AgentService {
 		return this.session ? this.buildSnapshot() : null;
 	}
 
+	/**
+	 * The snapshot as a diff against the one a remote client already holds.
+	 *
+	 * Remote clients poll, and a transcript carries every tool output it ever
+	 * produced — resending all of it on each poll is what made a long session
+	 * unusable over the relay. The cache is rebuilt whenever the open session
+	 * changes, so a version minted for one transcript can never be diffed
+	 * against another.
+	 */
+	snapshotDelta(request: RemoteViewRequest & { since?: string } = {}): AgentSnapshotDelta | null {
+		const snapshot = this.getSnapshot();
+		if (!snapshot) return null;
+		const sessionId = snapshot.session.id;
+		if (this.snapshotDeltas?.sessionId !== sessionId) {
+			this.snapshotDeltas = { sessionId, cache: new SnapshotDeltaCache(randomUUID().slice(0, 8)) };
+		}
+		// Diffed over the windowed, trimmed transcript rather than the real one, so
+		// the fingerprints describe exactly what the client was sent.
+		const view = remoteView(snapshot, request);
+		return { ...this.snapshotDeltas.cache.next(view.snapshot, request.since), more: view.more };
+	}
+
+	/**
+	 * A chunk of one tool result in full, for a client whose transcript only has
+	 * the head of it. See {@link snapshotDelta} for why it only has the head.
+	 */
+	toolOutput(toolCallId: string, offset: number): RemoteToolOutput | null {
+		const snapshot = this.getSnapshot();
+		return snapshot ? remoteToolOutput(snapshot, toolCallId, offset) : null;
+	}
+
 	/** Copy composer choices without changing or restarting the source session. */
 	inheritDefaults(source: AgentService): void {
 		this.pendingModelKey = source.pendingModelKey;
@@ -1331,9 +1373,17 @@ export class AgentService {
 					this.savePreferences();
 				}
 			},
-			getPluginTools: () => [...new Set([...this.pluginTools(), ...WEBSITE_CLONE_TOOL_NAMES])],
+			// MCP tool names have to be here too: a tool that is in `customTools`
+			// but in no mode manifest is registered and then refused on every call.
+			getPluginTools: () => [
+				...new Set([
+					...this.pluginTools(),
+					...WEBSITE_CLONE_TOOL_NAMES,
+					...(this.mcp?.toolNames() ?? []),
+				]),
+			],
 			builtinSkills: this.builtinSkills,
-			customTools: cloneTools,
+			customTools: [...cloneTools, ...(this.mcp?.tools() ?? [])],
 			modelRuntime,
 			model,
 			thinkingLevel: freshCwd ? (this.pendingThinkingLevel ?? undefined) : undefined,

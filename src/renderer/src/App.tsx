@@ -26,6 +26,7 @@ import { PullRequestsPage } from "./components/pullRequests/PullRequestsPage";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { AutomaticUpdateDialog } from "./components/updates/UpdateDialog";
+import { useHostDirectoryPicker } from "./components/HostDirectoryPicker";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { TitleBar } from "./components/TitleBar";
@@ -69,6 +70,8 @@ function writeStored(key: string, value: string | null): void {
 
 export default function App() {
 	const { resolvedTheme, setTheme, theme } = useTheme();
+	const browserAvailable = api.runtime !== "web";
+	const pickDirectory = useHostDirectoryPicker();
 	// Fall back to the home directory rather than to "no project": the welcome
 	// screen is usable immediately, and the folder chip is right there to change.
 	const [cwd, setCwd] = useState<string | null>(
@@ -221,7 +224,7 @@ export default function App() {
 			const tool: DockTool | null =
 				event.code === "Backquote" && !event.shiftKey
 					? "terminal"
-					: event.code === "KeyT" && !event.shiftKey
+					: event.code === "KeyT" && !event.shiftKey && browserAvailable
 						? "browser"
 						: event.code === "KeyP" && !event.shiftKey
 							? "files"
@@ -246,16 +249,37 @@ export default function App() {
 		[sessions.sessions, snapshot?.session],
 	);
 
+	// The open session owns the project path, and a snapshot can arrive without
+	// anyone here having opened it: a restore on launch, a background task made
+	// active, a session that moved into its own worktree. Left behind, `cwd`
+	// roots the Files pane in a directory the transcript has nothing to do with,
+	// and every "Read file" row answers "path escapes project root".
+	const cwdRef = useRef(cwd);
+	cwdRef.current = cwd;
+
 	useEffect(() => {
 		const unsubscribe = api.onAgentSnapshot((next) => {
 			setSnapshot(next);
 			setError(next?.error ?? null);
+			const sessionCwd = next?.session.cwd;
+			if (!sessionCwd || sessionCwd === cwdRef.current) return;
+			cwdRef.current = sessionCwd;
+			setCwd(sessionCwd);
+			writeStored(PROJECT_STORAGE_KEY, sessionCwd);
 		});
 		return unsubscribe;
 	}, []);
 
 	useEffect(() => api.onAgentDefaults(setDefaults), []);
-	useEffect(() => api.onBrowserPreview((request) => {
+
+	// Clicking a finished task's notification opens it. Routed through a ref
+	// because the subscription outlives the render that made `openSession`.
+	const openSessionRef = useRef<(session: SessionSummary) => Promise<void>>(async () => undefined);
+	useEffect(() => api.onRevealSession((session) => void openSessionRef.current(session)), []);
+
+	useEffect(() => {
+		if (!browserAvailable) return;
+		return api.onBrowserPreview((request) => {
 		const scope = currentPreviewScope.current;
 		if (scope.cwd !== request.cwd || scope.sessionId !== request.sessionId) return;
 		setBrowserPreview(request);
@@ -263,11 +287,15 @@ export default function App() {
 		setDockActive("browser");
 		setDockOpen(true);
 		writeStored(DOCK_OPEN_STORAGE_KEY, "1");
-	}), []);
-	useEffect(() => api.onBrowserElementSelected((selection) => {
-		setView("chat");
-		setComposerInsertion((pending) => ({ id: crypto.randomUUID(), text: (pending?.text ?? "") + elementSelectionText(selection) }));
-	}), []);
+		});
+	}, []);
+	useEffect(() => {
+		if (!browserAvailable) return;
+		return api.onBrowserElementSelected((selection) => {
+			setView("chat");
+			setComposerInsertion((pending) => ({ id: crypto.randomUUID(), text: (pending?.text ?? "") + elementSelectionText(selection) }));
+		});
+	}, []);
 
 	// The welcome screen's pickers are resolved per directory — project settings
 	// can change which model a new session starts with.
@@ -308,7 +336,7 @@ export default function App() {
 	const pickProject = async () => {
 		if (sessionTransition.current) return;
 		try {
-			const picked = await api.pickDirectory();
+			const picked = await pickDirectory(cwd ?? api.homeDir);
 			if (picked) await createSession(picked);
 		} catch (cause) { setError(errorMessage(cause)); }
 	};
@@ -331,6 +359,7 @@ export default function App() {
 			setBusy(false);
 		}
 	};
+	openSessionRef.current = openSession;
 
 	const createSession = async (targetCwd = cwd): Promise<boolean> => {
 		if (!targetCwd || sessionTransition.current) return false;
@@ -364,6 +393,28 @@ export default function App() {
 			if (result.action === "open-terminal") setTerminalOpen(true);
 			// The list refreshes itself: main pushes `sessionsChanged` once the
 			// prompt names the session and again when the run settles.
+		} catch (cause) {
+			setError(errorMessage(cause));
+		}
+	};
+
+	/**
+	 * Run a prompt in a session of its own, leaving this one on screen.
+	 *
+	 * Nothing here touches the selection: main creates the task unselected, and
+	 * the only trace of it in this window is the row that `sessionsChanged` adds
+	 * to the sidebar, running dot and all. Clicking that row opens it the usual
+	 * way — full screen, like every other session.
+	 */
+	const startBackgroundTask = async (text: string) => {
+		const target = snapshot?.session.cwd ?? cwd;
+		if (!target) return;
+		try {
+			const result = await api.agentStartBackground({ cwd: target, text });
+			// A warning means the task started on terms the user did not pick —
+			// most often sharing the directory when isolation was asked for.
+			if (!result.accepted) setError(result.error);
+			else if (result.warning) setError(result.warning);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -526,9 +577,11 @@ export default function App() {
 							busy={busy}
 							error={error}
 							terminalOpen={terminalOpen}
+							browserAvailable={browserAvailable}
 							browserOpen={dockOpen && dockActive === "browser"}
 							onPickProject={pickProject}
 							onSend={send}
+							onSendBackground={(text) => void startBackgroundTask(text)}
 							onAbort={() => void api.agentAbort()}
 							onSetFusion={setFusion}
 							onSetModel={setModel}
@@ -542,6 +595,8 @@ export default function App() {
 							onOpenFile={openDockFile}
 							onDismissError={() => setError(null)}
 							onStartSession={startSession}
+							onWorktreeReleased={() => sessions.refresh()}
+							onWorktreeError={setError}
 							onRestoreCheckpoint={setRestoreTarget}
 							onOpenCheckpoints={() => openDockTab("checkpoints")}
 						/>

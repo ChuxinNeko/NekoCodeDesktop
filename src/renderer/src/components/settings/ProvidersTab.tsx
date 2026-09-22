@@ -12,21 +12,24 @@ import {
 	type OAuthProviderSummary,
 	type ProviderKind,
 } from "../../../../shared/settings";
+import {
+	PROTOCOL_DEFAULT_ROUTE,
+	PROTOCOL_SUFFIX,
+	parseFullEndpoint,
+} from "../../../../shared/model-protocol";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
 import { ExternalLinkIcon, PencilIcon, PlusIcon, TrashCanIcon } from "../../lib/icons";
 import { RAISED_SURFACE_BORDER_CLASS_NAME } from "../chat/composerPickerStyles";
 import type { OAuthLoginState } from "./ProviderModelSettings";
 
-export const PROTOCOL_DEFAULT_ROUTE: Record<ModelApiProtocol, string> = {
-	"openai-completions": "/v1/chat/completions",
-	"openai-responses": "/v1/responses",
-	"anthropic-messages": "/v1/messages",
-};
+export { PROTOCOL_DEFAULT_ROUTE };
 
 export const PROTOCOL_LABELS: Record<ModelApiProtocol, string> = {
 	"openai-completions": "OpenAI Chat Completions",
@@ -38,9 +41,6 @@ export const PROVIDER_KIND_LABEL_KEYS: Record<ProviderKind, TranslationKey> = {
 	"custom-api": "providers.kind.customApi",
 	oauth: "providers.kind.oauth",
 };
-
-const SELECT_CLASS_NAME =
-	"h-8 rounded-lg border border-border bg-transparent px-2 text-[length:var(--app-font-size-ui,12px)]";
 
 /**
  * The provider form's fields. Models are deliberately absent: they belong to
@@ -69,6 +69,37 @@ export interface ProviderDraft {
 	maxTokens: string;
 	/** The route field stays folded away until an endpoint needs a custom path. */
 	advanced: boolean;
+	/**
+	 * Enter the endpoint as one address instead of a base, a route and a
+	 * protocol. Held on the draft only — what gets saved is still the three
+	 * fields, parsed out of the URL as it is typed.
+	 */
+	fullUrl: boolean;
+	/** What the user typed in full-URL mode, parsed or not. */
+	fullUrlText: string;
+}
+
+/**
+ * Take a typed endpoint URL into the fields the backend stores.
+ *
+ * A URL that does not parse blanks the base rather than leaving the last good
+ * one behind it: save is gated on the base, so a half-typed address cannot ride
+ * in on the back of whatever was there before.
+ */
+export function applyFullUrl(draft: ProviderDraft, text: string): ProviderDraft {
+	const parsed = parseFullEndpoint(text);
+	return parsed
+		? { ...draft, fullUrlText: text, baseUrl: parsed.baseUrl, route: parsed.route, api: parsed.api }
+		: { ...draft, fullUrlText: text, baseUrl: "" };
+}
+
+/** Flip between one endpoint field and the base/route/protocol trio. */
+export function setFullUrlMode(draft: ProviderDraft, fullUrl: boolean): ProviderDraft {
+	if (!fullUrl) return { ...draft, fullUrl: false };
+	const text = draft.baseUrl.trim()
+		? `${draft.baseUrl.trim().replace(/\/+$/, "")}${draft.route}`
+		: draft.fullUrlText;
+	return { ...applyFullUrl(draft, text), fullUrl: true };
 }
 
 /** A limit the backend would accept — blank is not one, the field is required. */
@@ -100,6 +131,8 @@ export function emptyProviderDraft(): ProviderDraft {
 		contextWindow: String(DEFAULT_CONTEXT_WINDOW),
 		maxTokens: String(DEFAULT_MAX_TOKENS),
 		advanced: false,
+		fullUrl: false,
+		fullUrlText: "",
 	};
 }
 
@@ -119,9 +152,12 @@ export function providerDraftFrom(profile: ModelProfileSummary): ProviderDraft {
 		// A saved endpoint whose route is not the protocol default only got there
 		// on purpose, so keep it in sight while editing.
 		advanced:
-			profile.route !== PROTOCOL_DEFAULT_ROUTE[profile.api] ||
 			profile.contextWindow !== DEFAULT_CONTEXT_WINDOW ||
 			profile.maxTokens !== DEFAULT_MAX_TOKENS,
+		// A stored route that is not the protocol default only got there on
+		// purpose, so reopen it the way it was most likely entered.
+		fullUrl: profile.route !== PROTOCOL_DEFAULT_ROUTE[profile.api],
+		fullUrlText: `${profile.baseUrl.replace(/\/+$/, "")}${profile.route}`,
 	};
 }
 
@@ -460,17 +496,23 @@ function ProviderForm({
 					<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
 						<div className="flex flex-col gap-1">
 							<Label>{t("providers.kind")}</Label>
-							<select
+							<Select
 								value={draft.kind}
-								onChange={(event) => onDraftChange({ ...draft, kind: event.target.value as ProviderKind })}
-								className={SELECT_CLASS_NAME}
+								onValueChange={(value) => {
+									if (value) onDraftChange({ ...draft, kind: value as ProviderKind });
+								}}
 								// An existing endpoint cannot turn into a subscription; the two keep
 								// entirely different things on disk.
 								disabled={draft.id !== undefined}
 							>
-								<option value="custom-api">{t("providers.kind.customApi")}</option>
-								<option value="oauth">{t("providers.kind.oauth")}</option>
-							</select>
+								<SelectTrigger size="sm">
+									<SelectValue>{t(PROVIDER_KIND_LABEL_KEYS[draft.kind])}</SelectValue>
+								</SelectTrigger>
+								<SelectPopup surface="settings">
+									<SelectItem value="custom-api">{t("providers.kind.customApi")}</SelectItem>
+									<SelectItem value="oauth">{t("providers.kind.oauth")}</SelectItem>
+								</SelectPopup>
+							</Select>
 							<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 								{t(draft.kind === "oauth" ? "providers.kindHintOauth" : "providers.kindHint")}
 							</span>
@@ -480,19 +522,26 @@ function ProviderForm({
 							<>
 								<div className="flex flex-col gap-1">
 									<Label>{t("oauth.provider")}</Label>
-									<select
+									<Select
 										value={draft.oauthProvider}
-										onChange={(event) =>
-											onDraftChange({ ...draft, oauthProvider: event.target.value as OAuthProviderId })
-										}
-										className={SELECT_CLASS_NAME}
+										onValueChange={(value) => {
+											if (value) onDraftChange({ ...draft, oauthProvider: value as OAuthProviderId });
+										}}
 									>
-										{accounts.map((account) => (
-											<option key={account.id} value={account.id}>
-												{account.name}
-											</option>
-										))}
-									</select>
+										<SelectTrigger size="sm">
+											<SelectValue>
+												{accounts.find((account) => account.id === draft.oauthProvider)?.name ??
+													draft.oauthProvider}
+											</SelectValue>
+										</SelectTrigger>
+										<SelectPopup surface="settings">
+											{accounts.map((account) => (
+												<SelectItem key={account.id} value={account.id}>
+													{account.name}
+												</SelectItem>
+											))}
+										</SelectPopup>
+									</Select>
 									<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 										{t(draft.oauthProvider === "antigravity" ? "oauth.antigravityHint" : "oauth.formHint")}
 									</span>
@@ -500,7 +549,7 @@ function ProviderForm({
 							</>
 						) : (
 							<>
-								<div className="grid grid-cols-2 gap-3">
+								<div className={draft.fullUrl ? "flex flex-col gap-1" : "grid grid-cols-2 gap-3"}>
 									<div className="flex flex-col gap-1">
 										<Label>{t("common.name")}</Label>
 										<Input
@@ -509,45 +558,92 @@ function ProviderForm({
 											onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
 										/>
 									</div>
-									<div className="flex flex-col gap-1">
-										<Label>{t("providers.protocol")}</Label>
-										<select
-											value={draft.api}
-											onChange={(event) => {
-												const nextApi = event.target.value as ModelApiProtocol;
-												onDraftChange({
-													...draft,
-													api: nextApi,
-													// The route carries a protocol-specific suffix the backend
-													// enforces, so switching protocol resets it.
-													route: PROTOCOL_DEFAULT_ROUTE[nextApi],
-												});
-											}}
-											className={SELECT_CLASS_NAME}
-										>
-											{Object.entries(PROTOCOL_LABELS).map(([value, label]) => (
-												<option key={value} value={value}>
-													{label}
-												</option>
-											))}
-										</select>
-									</div>
+									{/* In full-URL mode the protocol is read off the address instead of
+									    picked: each one ends its path differently, so the URL already
+									    says which it is. */}
+									{draft.fullUrl ? null : (
+										<div className="flex flex-col gap-1">
+											<Label>{t("providers.protocol")}</Label>
+											<Select
+												value={draft.api}
+												onValueChange={(value) => {
+													if (!value) return;
+													const nextApi = value as ModelApiProtocol;
+													onDraftChange({
+														...draft,
+														api: nextApi,
+														// The route carries a protocol-specific suffix the backend
+														// enforces, so switching protocol resets it.
+														route: PROTOCOL_DEFAULT_ROUTE[nextApi],
+													});
+												}}
+											>
+												<SelectTrigger size="sm">
+													<SelectValue>{PROTOCOL_LABELS[draft.api]}</SelectValue>
+												</SelectTrigger>
+												<SelectPopup surface="settings">
+													{Object.entries(PROTOCOL_LABELS).map(([value, label]) => (
+														<SelectItem key={value} value={value}>
+															{label}
+														</SelectItem>
+													))}
+												</SelectPopup>
+											</Select>
+										</div>
+									)}
 								</div>
-								<div className="flex flex-col gap-1">
-									<Label>{t("providers.baseUrl")}</Label>
-									<Input
-										placeholder="https://api.example.com"
-										value={draft.baseUrl}
-										onChange={(event) => onDraftChange({ ...draft, baseUrl: event.target.value })}
-									/>
-									{draft.baseUrl.trim() ? (
-										<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-											{t("providers.endpointPreview", {
-												url: `${draft.baseUrl.trim().replace(/\/+$/, "")}${draft.route}`,
-											})}
+
+								<label className="flex items-center justify-between gap-3">
+									<span className="flex min-w-0 flex-col gap-0.5">
+										<span className="text-[length:var(--app-font-size-ui,12px)]">
+											{t("providers.fullUrl")}
 										</span>
-									) : null}
-								</div>
+										<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+											{t("providers.fullUrlHint")}
+										</span>
+									</span>
+									<Switch
+										checked={draft.fullUrl}
+										onCheckedChange={(checked) => onDraftChange(setFullUrlMode(draft, checked))}
+									/>
+								</label>
+
+								{draft.fullUrl ? (
+									<div className="flex flex-col gap-1">
+										<Label>{t("providers.endpointUrl")}</Label>
+										<Input
+											placeholder="https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+											value={draft.fullUrlText}
+											aria-invalid={draft.fullUrlText.trim().length > 0 && !draft.baseUrl}
+											onChange={(event) => onDraftChange(applyFullUrl(draft, event.target.value))}
+										/>
+										<span className="truncate text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+											{draft.fullUrlText.trim().length === 0
+												? t("providers.fullUrlHint")
+												: draft.baseUrl
+													? t("providers.protocolDetected", { protocol: PROTOCOL_LABELS[draft.api] })
+													: t("providers.fullUrlInvalid", {
+															suffixes: Object.values(PROTOCOL_SUFFIX).join(" / "),
+														})}
+										</span>
+									</div>
+								) : (
+									<div className="flex flex-col gap-1">
+										<Label>{t("providers.baseUrl")}</Label>
+										<Input
+											placeholder="https://api.example.com"
+											value={draft.baseUrl}
+											onChange={(event) => onDraftChange({ ...draft, baseUrl: event.target.value })}
+										/>
+										{draft.baseUrl.trim() ? (
+											<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+												{t("providers.endpointPreview", {
+													url: `${draft.baseUrl.trim().replace(/\/+$/, "")}${draft.route}`,
+												})}
+											</span>
+										) : null}
+									</div>
+								)}
 								<div className="flex flex-col gap-1">
 									<Label>
 										{t("providers.apiKey")} {draft.id ? t("providers.apiKeyKeep") : ""}
@@ -569,13 +665,15 @@ function ProviderForm({
 								</button>
 								{draft.advanced ? (
 									<>
-										<div className="flex flex-col gap-1">
-											<Label>{t("providers.route")}</Label>
-											<Input
-												value={draft.route}
-												onChange={(event) => onDraftChange({ ...draft, route: event.target.value })}
-											/>
-										</div>
+										{draft.fullUrl ? null : (
+											<div className="flex flex-col gap-1">
+												<Label>{t("providers.route")}</Label>
+												<Input
+													value={draft.route}
+													onChange={(event) => onDraftChange({ ...draft, route: event.target.value })}
+												/>
+											</div>
+										)}
 										{/* A custom endpoint advertises neither limit, so both are
 										    declared here. The output ceiling is the one that decides
 										    whether a long file can be written in a single response. */}

@@ -1,10 +1,12 @@
 /// <reference types="vite/client" />
 
 import type { NekoCodeDesktopApi } from "../../preload/index";
+import type { WebUiRuntime } from "../../shared/webui";
 
 declare global {
 	interface Window {
-		nekocode: NekoCodeDesktopApi;
+		nekocode?: NekoCodeDesktopApi;
+		__NEKOCODE_WEBUI__?: WebUiRuntime;
 	}
 }
 

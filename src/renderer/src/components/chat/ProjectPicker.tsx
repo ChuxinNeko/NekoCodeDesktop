@@ -1,5 +1,5 @@
 import { shortenPath } from "../../../../shared/paths";
-import { api } from "../../api";
+import { optionalApi } from "../../api";
 import { useTranslation } from "../../i18n";
 import { ChevronDownIcon, FolderOpenIcon } from "../../lib/icons";
 import { Button } from "../ui/button";
@@ -24,7 +24,9 @@ export function ProjectPicker({ cwd, disabled, onPickProject }: {
 				/>
 			}>
 				<FolderOpenIcon className="size-3.5" />
-				<span className="truncate">{cwd ? shortenPath(cwd, api?.homeDir ?? "") : t("welcome.chooseFolder")}</span>
+				{/* The phone app renders this header too, and there the bridge — and so
+				    the desktop's home directory — is simply absent. */}
+				<span className="truncate">{cwd ? shortenPath(cwd, optionalApi()?.homeDir ?? "") : t("welcome.chooseFolder")}</span>
 				<ChevronDownIcon className="size-3 opacity-60" />
 			</TooltipTrigger>
 			<TooltipPopup side="bottom">

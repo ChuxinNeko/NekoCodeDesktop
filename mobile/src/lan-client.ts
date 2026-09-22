@@ -3,6 +3,8 @@ export { normalizeDesktopAddress } from "../../src/shared/lan-pairing";
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import type { AgentDefaults, AgentSnapshot, SendPromptResult } from "../../src/shared/agent";
+import type { AgentSnapshotDelta } from "../../src/shared/agent-delta";
+import type { DeltaRequest, ToolOutputChunk } from "./desktop-client";
 import type { LanState, LanTaskOptions } from "../../src/shared/lan";
 import type { WorkflowAnswer } from "../../src/shared/workflow";
 import type { SlashCommandSummary } from "../../src/shared/commands";
@@ -74,6 +76,8 @@ export class LanClient {
 	state() { return this.request<LanState>("/api/state"); }
 	defaults(projectId: string) { return this.request<AgentDefaults>(`/api/projects/${encodeURIComponent(projectId)}/defaults`); }
 	snapshot(id: string) { return this.request<AgentSnapshot>(`/api/tasks/${encodeURIComponent(id)}`); }
+	delta(id: string, options: DeltaRequest = {}) { return this.request<AgentSnapshotDelta>(`/api/tasks/${encodeURIComponent(id)}/delta`, options); }
+	toolOutput(id: string, toolCallId: string, offset: number) { return this.request<ToolOutputChunk>(`/api/tasks/${encodeURIComponent(id)}/tool-output`, { toolCallId, offset }); }
 	create(projectId: string, text: string, options: LanTaskOptions) { return this.submit<SubmitResult>("/api/tasks", { projectId, text, options }); }
 	send(id: string, text: string) { return this.submit<SendPromptResult>(`/api/tasks/${encodeURIComponent(id)}/send`, { text }); }
 	configure(id: string, options: LanTaskOptions) { return this.request<AgentSnapshot>(`/api/tasks/${encodeURIComponent(id)}/configure`, options); }

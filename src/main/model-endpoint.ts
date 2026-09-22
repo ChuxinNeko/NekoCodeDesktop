@@ -1,9 +1,17 @@
 import type { FetchedModel, ModelApiProtocol } from "../shared/settings";
+import { PROTOCOL_SUFFIX } from "../shared/model-protocol";
 
-export const PROTOCOL_SUFFIX: Record<ModelApiProtocol, string> = {
-	"openai-completions": "/chat/completions",
-	"openai-responses": "/responses",
-	"anthropic-messages": "/messages",
+export { PROTOCOL_SUFFIX };
+
+/**
+ * How much of the endpoint the vendor SDK builds for itself, and so must not
+ * appear in the base URL we hand it. The OpenAI client appends only the leaf,
+ * but the Anthropic client hardcodes `/v1/messages` — leaving the `/v1` on its
+ * base URL makes it request `/v1/v1/messages`.
+ */
+const SDK_PATH_SUFFIX: Record<ModelApiProtocol, string> = {
+	...PROTOCOL_SUFFIX,
+	"anthropic-messages": "/v1/messages",
 };
 
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
@@ -87,8 +95,16 @@ export function resolveEndpoints(
 	requireSuffix(path, api);
 	const endpoint = joinEndpoint(base, path);
 	const suffix = PROTOCOL_SUFFIX[api];
-	const sdkBaseUrl = endpoint.slice(0, endpoint.length - suffix.length);
-	const modelsUrl = `${sdkBaseUrl.replace(/\/+$/, "")}/models`;
+	// `/models` is a sibling of the endpoint's leaf, under the same API root.
+	const apiRoot = endpoint.slice(0, endpoint.length - suffix.length);
+	// A route that stops short of the SDK's own suffix — `/messages` without the
+	// `/v1` — is unreachable through the SDK either way, so fall back to the root
+	// rather than cutting a suffix the endpoint does not carry.
+	const sdkSuffix = SDK_PATH_SUFFIX[api];
+	const sdkBaseUrl = endpoint.endsWith(sdkSuffix)
+		? endpoint.slice(0, endpoint.length - sdkSuffix.length)
+		: apiRoot;
+	const modelsUrl = `${apiRoot.replace(/\/+$/, "")}/models`;
 	return { endpoint, sdkBaseUrl, modelsUrl };
 }
 

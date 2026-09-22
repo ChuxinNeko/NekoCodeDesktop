@@ -49,8 +49,9 @@ export function FilesPanel({
 
 	// A transcript "Read file" row lands here through App: open the file straight
 	// into the preview, and park the browser on its directory so Back lands
-	// somewhere sensible. Tool paths may be absolute or relative to the root —
-	// the pane displays and navigates in root-relative form.
+	// somewhere sensible. Tool paths may be absolute or relative to the root, and
+	// an absolute one need not be spelled the way the root is; stripping the
+	// prefix here is a shortcut, and the answer carries the path that was read.
 	useEffect(() => {
 		if (!cwd || !fileRequest) return;
 		const norm = (p: string) => p.replace(/\\/g, "/");
@@ -64,9 +65,9 @@ export function FilesPanel({
 			.fsReadFile(cwd, rel)
 			.then((result) => {
 				if (cancelled) return;
-				setPreview({ path: rel, ...result });
+				setPreview({ path: result.relPath, ...result });
 				setError(null);
-				const segments = rel.split("/").slice(0, -1).filter(Boolean);
+				const segments = result.relPath.split("/").slice(0, -1).filter(Boolean);
 				setStack(segments.map((_, index) => segments.slice(0, index + 1).join("/")));
 			})
 			.catch((cause: unknown) => {
@@ -103,7 +104,7 @@ export function FilesPanel({
 		if (!cwd) return;
 		try {
 			const result = await api.fsReadFile(cwd, entry.relPath);
-			setPreview({ path: entry.relPath, ...result });
+			setPreview({ path: result.relPath, ...result });
 			setError(null);
 		} catch (cause) {
 			setError(errorMessage(cause));

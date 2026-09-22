@@ -13,7 +13,9 @@ import { useTheme } from "../../src/renderer/src/hooks/useTheme";
 import { useAppearanceVariables } from "../../src/renderer/src/hooks/useAppearanceVariables";
 import { ArrowLeftIcon, PlusIcon, SettingsIcon, XIcon, FolderOpenIcon } from "../../src/renderer/src/lib/icons";
 import { projectLabel } from "../../src/shared/paths";
-import { lan, LanError } from "./lan-client";
+import { LanError } from "./lan-client";
+import { desktop, type TransportMode } from "./desktop-client";
+import { PublicConnectionView } from "./PublicConnectionView";
 
 const noop = () => undefined;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -23,6 +25,7 @@ export function MobileApp() {
 	useAppearanceVariables({ density: "comfortable", chatWidth: "full", chatFontSizePx: 14, terminalFontSizePx: 13 });
 	const [ready, setReady] = useState(false);
 	const [paired, setPaired] = useState(false);
+	const [transport, setTransport] = useState<TransportMode | null>(null);
 	const [online, setOnline] = useState(false);
 	const [view, setView] = useState<"tasks" | "chat" | "settings">("tasks");
 	const [projects, setProjects] = useState<LanProject[]>([]);
@@ -37,47 +40,84 @@ export function MobileApp() {
 	const busyRef = useRef(false);
 	const [error, setError] = useState<string | null>(null);
 	const [insertion, setInsertion] = useState<ComposerInsertion | null>(null);
+	/** Older turns exist before this transcript's first cell. */
+	const [earlier, setEarlier] = useState(false);
+	const [loadingEarlier, setLoadingEarlier] = useState(false);
+	const loadingEarlierRef = useRef(false);
 	const [endpoint, setEndpoint] = useState("");
 	const refreshing = useRef(false);
 	const navigation = useRef({ view, projectSheet });
 	navigation.current = { view, projectSheet };
 
-	const disconnected = useCallback((cause: unknown) => {
-		setOnline(false);
-		if (cause instanceof LanError && cause.status === 401) {
-			void lan.disconnect(); setPaired(false); setError(cause.message);
-		}
+	const clearSession = useCallback(() => {
+		desktop.forgetSync();
+		selected.current = null; setId(null); setSnapshot(null); setDefaults(null); setEarlier(false);
+		setProjects([]); setSessions([]); setProjectId(""); setInsertion(null);
 	}, []);
 
+	const disconnected = useCallback((cause: unknown) => {
+		setOnline(false);
+		if (!(cause instanceof LanError) || cause.status !== 401) return;
+		setError(cause.message);
+		void (async () => {
+			if (desktop.mode === "relay") {
+				await desktop.suspend();
+				if (desktop.hasLan) {
+					await desktop.switch("lan");
+					clearSession(); setTransport("lan"); setPaired(true);
+				} else {
+					await desktop.deactivate();
+					setTransport(null); setPaired(false);
+				}
+			} else {
+				await desktop.disconnect();
+				clearSession(); setTransport(desktop.mode); setPaired(desktop.mode !== null);
+			}
+		})().catch((failure) => setError(message(failure)));
+	}, [clearSession]);
+
 	const refresh = useCallback(async () => {
-		if (!lan.binding || refreshing.current || document.hidden) return;
+		const marker = desktop.marker;
+		if (!marker || refreshing.current || document.hidden) return;
 		refreshing.current = true;
-		const binding = lan.binding;
 		try {
-			const state = await lan.state();
-			if (lan.binding !== binding) return;
+			const selectedId = selected.current;
+			// Only pull the transcript while it is on screen. Backing out to the task
+			// list used to leave it streaming in the background for the whole session.
+			const wanted = selectedId && navigation.current.view === "chat" ? selectedId : null;
+			// In parallel, not in turn: the two are independent, and over the relay a
+			// serial pair spends a second full round trip on every tick.
+			const [state, pulled] = await Promise.all([
+				desktop.state(),
+				wanted === null ? null : desktop.syncSnapshot(wanted).then(
+					(synced) => ({ ok: true as const, synced }),
+					(error: unknown) => ({ ok: false as const, error }),
+				),
+			]);
+			if (desktop.marker !== marker) return;
 			setSessions(state.tasks.map((task) => ({ ...task, sessionFile: "" })));
 			setProjects(state.projects);
 			setProjectId((previous) => state.projects.some((p) => p.id === previous) ? previous : state.projects[0]?.id ?? "");
-			const selectedId = selected.current;
-			if (selectedId) {
-				if (!state.tasks.some((task) => task.id === selectedId)) {
-					selected.current = null; setId(null); setSnapshot(null); setView("tasks");
-				} else {
-					const next = await lan.snapshot(selectedId);
-					if (selected.current === selectedId && lan.binding === binding) setSnapshot(next);
+			if (selectedId && !state.tasks.some((task) => task.id === selectedId)) {
+				// The task is gone, so a transcript that failed to load is expected.
+				desktop.forgetSync();
+				selected.current = null; setId(null); setSnapshot(null); setEarlier(false); setView("tasks");
+			} else if (pulled) {
+				if (!pulled.ok) throw pulled.error;
+				if (selected.current === wanted && desktop.marker === marker) {
+					setSnapshot(pulled.synced.snapshot); setEarlier(pulled.synced.more);
 				}
 			}
 			setOnline(true);
-		} catch (cause) { if (lan.binding === binding) disconnected(cause); }
+		} catch (cause) { if (desktop.marker === marker) disconnected(cause); }
 		finally { refreshing.current = false; }
 	}, [disconnected]);
 
 	useEffect(() => {
 		let alive = true;
-		void lan.restore().then((binding) => {
+		void desktop.restore().then((pairedDesktop) => {
 			if (!alive) return;
-			setPaired(!!binding); setEndpoint(binding?.endpoint ?? ""); setReady(true); void refresh();
+			setPaired(pairedDesktop); setTransport(desktop.mode); setEndpoint(desktop.lanEndpoint); setReady(true); void refresh();
 		});
 		const timer = setInterval(() => { void refresh(); }, 1500);
 		const resume = () => { if (!document.hidden) void refresh(); };
@@ -97,10 +137,17 @@ export function MobileApp() {
 		if (!paired || !projectId || id) return;
 		let cancelled = false;
 		setDefaults(null);
-		void lan.defaults(projectId).then((next) => { if (!cancelled) setDefaults(next); })
+		void desktop.defaults(projectId).then((next) => { if (!cancelled) setDefaults(next); })
 			.catch((cause) => { if (!cancelled) setError(message(cause)); });
 		return () => { cancelled = true; };
-	}, [paired, projectId, id]);
+	}, [paired, projectId, id, transport]);
+
+	/** The rest of a tool result the transcript only carries the head of. */
+	const loadToolOutput = useCallback((toolCallId: string, offset: number) => {
+		const target = selected.current;
+		if (!target) return Promise.reject(new Error("会话已关闭"));
+		return desktop.toolOutput(target, toolCallId, offset);
+	}, []);
 
 	const action = async (run: () => Promise<void>) => {
 		if (busyRef.current) return;
@@ -110,13 +157,41 @@ export function MobileApp() {
 		finally { busyRef.current = false; setBusy(false); }
 	};
 
-	const open = (session: SessionSummary) => action(async () => {
-		const next = await lan.snapshot(session.id);
-		selected.current = session.id; setId(session.id); setSnapshot(next); setView("chat");
-	});
+	const open = (session: SessionSummary) => {
+		// Navigate first, fetch second. The transcript is a round trip away, and
+		// over the relay that is long enough for the tap to feel ignored.
+		selected.current = session.id;
+		setId(session.id); setSnapshot(null); setEarlier(false); setView("chat");
+		void action(async () => {
+			const next = await desktop.syncSnapshot(session.id);
+			// A dropped fetch is not a dead end: the poll fills it in either way.
+			if (selected.current !== session.id) return;
+			setSnapshot(next.snapshot); setEarlier(next.more);
+		});
+	};
+
+	/**
+	 * Deliberately outside `action`: scrolling up is not a reason to lock the
+	 * composer, and a failed page should leave the session usable.
+	 */
+	const loadEarlier = useCallback(() => {
+		const target = selected.current;
+		if (!target || loadingEarlierRef.current) return;
+		loadingEarlierRef.current = true; setLoadingEarlier(true);
+		void (async () => {
+			try {
+				const next = await desktop.loadEarlier(target);
+				if (selected.current === target) { setSnapshot(next.snapshot); setEarlier(next.more); }
+			} catch (cause) {
+				setError(message(cause));
+			} finally {
+				loadingEarlierRef.current = false; setLoadingEarlier(false);
+			}
+		})();
+	}, []);
 
 	const newTask = (project?: string) => {
-		selected.current = null; setId(null); setSnapshot(null); setInsertion(null); setError(null);
+		selected.current = null; setId(null); setSnapshot(null); setInsertion(null); setError(null); setEarlier(false);
 		if (project) setProjectId(project);
 		setView("chat"); setProjectSheet(!project && projects.length !== 1);
 	};
@@ -124,7 +199,7 @@ export function MobileApp() {
 	const configure = (options: LanTaskOptions) => {
 		if (selected.current) {
 			const target = selected.current;
-			void action(async () => { const next = await lan.configure(target, options); if (selected.current === target) setSnapshot(next); });
+			void action(async () => { const next = await desktop.configure(target, options); if (selected.current === target) setSnapshot(next); });
 		} else setDefaults((previous) => {
 			if (!previous) return previous;
 			const next = { ...previous, ...options };
@@ -146,7 +221,7 @@ export function MobileApp() {
 		try {
 			const target = selected.current;
 			if (target) {
-				const result = await lan.send(target, text);
+				const result = await desktop.send(target, text);
 				if (!result.accepted) throw new Error(result.error);
 				if (result.action === "new-session") { newTask(projects.find((p) => p.path === snapshot?.session.cwd)?.id); return; }
 			} else {
@@ -156,12 +231,15 @@ export function MobileApp() {
 					fusion: defaults.fusion ?? undefined, thinkingLevel: defaults.thinkingLevel,
 					mode: defaults.mode, workMode: defaults.workMode,
 				};
-				const result = await lan.create(projectId, text, options);
-				const next = await lan.snapshot(result.id);
-				selected.current = result.id; setId(result.id); setSnapshot(next);
+				const result = await desktop.create(projectId, text, options);
+				const next = await desktop.syncSnapshot(result.id);
+				selected.current = result.id; setId(result.id);
+				setSnapshot(next.snapshot); setEarlier(next.more);
 				if (!result.accepted) throw new Error(result.error ?? "任务已创建，但未能开始执行");
 			}
-			await refresh();
+			// Not awaited: the prompt is already accepted, and holding `busy` over a
+			// refresh is what kept the composer locked for the round trip after send.
+			void refresh();
 		} catch (cause) { setInsertion({ id: crypto.randomUUID(), text }); throw cause; }
 	});
 
@@ -172,7 +250,9 @@ export function MobileApp() {
 	return <div className="mobile-shell flex flex-col bg-background text-foreground">
 		{!ready ? <div className="flex flex-1 items-center justify-center"><Spinner /></div> : !paired ?
 			<PairingView initialEndpoint={endpoint} busy={busy} error={error} onError={setError} onPair={(address, code, name) => action(async () => {
-				await lan.pair(address, code, name); setEndpoint(address); setPaired(true); setView("tasks"); await refresh();
+				await desktop.pairLan(address, code, name); clearSession(); setEndpoint(address); setTransport("lan"); setPaired(true); setView("tasks"); await refresh();
+			})} onPublicConnect={async (device) => action(async () => {
+				await desktop.selectRelay(device); clearSession(); setTransport("relay"); setPaired(true); setView("tasks"); await refresh();
 			})} /> : <>
 			<header className="flex h-14 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
 				{view !== "tasks" && <Button aria-label="返回任务列表" size="icon" variant="ghost" onClick={() => setView("tasks")}><ArrowLeftIcon className="size-4" /></Button>}
@@ -187,21 +267,32 @@ export function MobileApp() {
 				{[...groups].map(([cwd, tasks]) => <section key={cwd} className="mb-5"><div className="mb-2 flex items-center gap-2 px-2 text-xs text-muted-foreground"><FolderOpenIcon className="size-3.5" /><span className="truncate">{projectLabel(cwd)}</span></div>{tasks.map((task) => <SessionRow key={task.id} hideActions session={task} active={id === task.id} running={!!task.running} now={Date.now()} disabled={busy || !online} renaming={false} confirmingDelete={false} onOpen={() => { void open(task); }} onStartRename={noop} onRename={noop} onCancelRename={noop} onStartDelete={noop} onDelete={noop} onCancelDelete={noop} />)}</section>)}
 			</div>}
 			{view === "chat" && <main className="mobile-chat flex min-h-0 flex-1 flex-col">
-				<ChatView key={id ?? `new:${projectId}`} mobile cwd={snapshot?.session.cwd ?? project?.path ?? null} snapshot={snapshot} defaults={defaults} busy={busy || !online || (!id && !defaults)} error={error} insertion={insertion} onInsertionConsumed={() => setInsertion(null)} terminalOpen={false} browserOpen={false}
-					onPickProject={() => setProjectSheet(true)} onSend={send} onStartSession={send} onAbort={() => { const target = selected.current; if (target) void action(async () => { const next = await lan.abort(target); if (selected.current === target) setSnapshot(next); }); }}
+				<ChatView key={id ?? `new:${projectId}`} mobile earlierAvailable={earlier} loadingEarlier={loadingEarlier} onLoadEarlier={loadEarlier} onLoadToolOutput={loadToolOutput} loadingSession={id !== null && snapshot === null} cwd={snapshot?.session.cwd ?? project?.path ?? null} snapshot={snapshot} defaults={defaults} busy={busy || !online || (!id && !defaults)} error={error} insertion={insertion} onInsertionConsumed={() => setInsertion(null)} terminalOpen={false} browserOpen={false}
+					onPickProject={() => setProjectSheet(true)} onSend={send} onStartSession={send} onAbort={() => { const target = selected.current; if (target) void action(async () => { const next = await desktop.abort(target); if (selected.current === target) setSnapshot(next); }); }}
 					onSetModel={(modelKey) => configure({ modelKey })} onSetThinking={(thinkingLevel) => configure({ thinkingLevel })} onSetMode={(mode) => configure({ mode })} onSetWorkMode={(workMode) => configure({ workMode })} onSetFusion={(fusion) => configure({ fusion })}
 					onToggleBrowser={noop} onToggleTerminal={noop} onOpenCheckpoints={noop} onDismissError={() => setError(null)}
-					loadCommands={() => selected.current ? lan.commands(selected.current) : Promise.resolve([])}
-					onAnswerWorkflow={async (answer) => { const target = selected.current; if (!target) return; const next = await lan.answer(target, answer); if (selected.current === target) setSnapshot(next); }}
-					onCancelWorker={async (workerId) => { const target = selected.current; if (!target) return; const next = await lan.cancelWorker(target, workerId); if (selected.current === target) setSnapshot(next); }}
+					loadCommands={() => selected.current ? desktop.commands(selected.current) : Promise.resolve([])}
+					onAnswerWorkflow={async (answer) => { const target = selected.current; if (!target) return; const next = await desktop.answer(target, answer); if (selected.current === target) setSnapshot(next); }}
+					onCancelWorker={async (workerId) => { const target = selected.current; if (!target) return; const next = await desktop.cancelWorker(target, workerId); if (selected.current === target) setSnapshot(next); }}
 				/>
 			</main>}
 			{view === "settings" && <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-5 text-sm">
-				<section><h2 className="mb-2 font-medium">已绑定电脑</h2><p className="text-muted-foreground">{lan.binding?.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{lan.binding?.endpoint}</p></section>
+				<section><h2 className="mb-2 font-medium">已连接电脑（{transport === "relay" ? "公网连接" : "局域网"}）</h2><p className="text-muted-foreground">{desktop.binding?.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{desktop.binding?.endpoint}</p>
+					{transport !== "relay" && desktop.hasRelay ? <Button variant="subtle" className="mt-3" disabled={busy} onClick={() => { void action(async () => { await desktop.switch("relay"); clearSession(); setTransport("relay"); await refresh(); }); }}>切换到公网连接</Button> : null}
+					{transport !== "lan" && desktop.hasLan ? <Button variant="subtle" className="mt-3" disabled={busy} onClick={() => { void action(async () => { await desktop.switch("lan"); clearSession(); setTransport("lan"); await refresh(); }); }}>切换到局域网</Button> : null}
+				</section>
 				<div className="flex items-center justify-between"><span>外观</span><Button variant="subtle" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>{resolvedTheme === "dark" ? "深色" : "浅色"}</Button></div>
 				<section><h2 className="mb-2 font-medium">并行任务</h2><p className="text-xs leading-relaxed text-muted-foreground">手机与桌面共享任务列表。新任务独立运行，切换会话不会停止后台任务。同一项目中的任务共享文件，请避免同时修改相同文件。</p></section>
-				<p className="text-xs leading-relaxed text-muted-foreground">电脑需保持唤醒并运行 NekoCode。局域网 HTTP 连接仅适用于可信网络。</p>
-				<Button variant="subtle" onClick={() => { void action(async () => { await lan.disconnect(); setPaired(false); selected.current = null; setId(null); setSnapshot(null); setSessions([]); setDefaults(null); setProjects([]); setOnline(false); }); }}>断开并移除本机绑定</Button>
+				<p className="text-xs leading-relaxed text-muted-foreground">电脑需保持唤醒并运行 NekoCode。{transport === "relay" ? "公网连接通过账号服务器中转，消息端到端加密；设备公钥由服务器分发，请只在可信服务上使用。" : "局域网 HTTP 连接仅适用于可信网络。"}</p>
+				<section><h2 className="mb-2 font-medium">公网连接</h2><PublicConnectionView busy={busy} activeDesktopId={desktop.activeRelayDeviceId ?? undefined}
+					onConnect={async (device) => action(async () => { await desktop.selectRelay(device); clearSession(); setTransport("relay"); await refresh(); })}
+					onSignedOut={() => { void (async () => { if (transport === "relay") { if (desktop.hasLan) { await desktop.switch("lan"); clearSession(); setTransport("lan"); await refresh(); } else { await desktop.deactivate(); setTransport(null); setPaired(false); setOnline(false); } } })().catch((cause) => setError(message(cause))); }} /></section>
+				<Button variant="subtle" onClick={() => { void action(async () => {
+					await desktop.disconnect();
+					const fallback = desktop.mode;
+					clearSession(); setTransport(fallback); setOnline(false);
+					if (fallback) { setPaired(true); await refresh(); } else setPaired(false);
+				}); }}>断开并移除当前连接</Button>
 			</div>}
 		</>}
 		{projectSheet && paired && <div className="absolute inset-0 z-50 flex flex-col bg-background px-4 pb-6 pt-[max(1rem,env(safe-area-inset-top))]" role="dialog" aria-modal="true" aria-label="选择项目">

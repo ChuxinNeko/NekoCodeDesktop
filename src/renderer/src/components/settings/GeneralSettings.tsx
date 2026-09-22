@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type { ProxyStatus } from "../../../../shared/settings";
+import type { AppPreferences } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
 import { LANGUAGE_OPTIONS, useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { SettingsRow } from "./SettingsRow";
 
 const PROXY_SOURCE_KEYS: Record<ProxyStatus["source"], TranslationKey> = {
@@ -20,6 +22,24 @@ export function GeneralSettings() {
 	const [draft, setDraft] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [preferences, setPreferences] = useState<AppPreferences | null>(null);
+
+	useEffect(() => {
+		api
+			.preferencesGet()
+			.then(setPreferences)
+			.catch((cause: unknown) => setError(errorMessage(cause)));
+	}, []);
+
+	const setPreference = (patch: Partial<AppPreferences>) => {
+		// Optimistic: a switch that waits for a round trip before moving reads as
+		// broken. The reply is authoritative and puts it back if the write failed.
+		setPreferences((current) => (current ? { ...current, ...patch } : current));
+		api
+			.preferencesUpdate(patch)
+			.then(setPreferences)
+			.catch((cause: unknown) => setError(errorMessage(cause)));
+	};
 
 	useEffect(() => {
 		api
@@ -64,6 +84,22 @@ export function GeneralSettings() {
 						</button>
 					))}
 				</div>
+			</SettingsRow>
+
+			<SettingsRow hint={t("settings.notifyOnTaskFinishHint")} label={t("settings.notifyOnTaskFinish")}>
+				<Switch
+					checked={preferences?.notifyOnTaskFinish ?? false}
+					disabled={!preferences}
+					onCheckedChange={(checked: boolean) => setPreference({ notifyOnTaskFinish: checked })}
+				/>
+			</SettingsRow>
+
+			<SettingsRow hint={t("settings.isolateBackgroundHint")} label={t("settings.isolateBackground")}>
+				<Switch
+					checked={preferences?.isolateBackgroundTasks ?? false}
+					disabled={!preferences}
+					onCheckedChange={(checked: boolean) => setPreference({ isolateBackgroundTasks: checked })}
+				/>
 			</SettingsRow>
 
 			<div className="flex flex-col gap-2 py-2.5">

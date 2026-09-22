@@ -1,9 +1,28 @@
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { AgentService } from "./agent-service";
-import type { AgentSnapshot, OpenSessionRequest, RenameSessionRequest, SessionSummary } from "../shared/agent";
+import type {
+	AgentSnapshot,
+	OpenSessionRequest,
+	RenameSessionRequest,
+	SendPromptResult,
+	SessionSummary,
+	StartBackgroundTaskResult,
+} from "../shared/agent";
 
 export type AgentFactory = (emit: (channel: string, payload?: unknown) => void, owner?: AgentService) => AgentService;
+
+/** A task has stopped running. `selected` is whether it is the one on screen. */
+export type SettledListener = (session: SessionSummary, selected: boolean) => void;
+
+/**
+ * A task produced a new snapshot, selected or not.
+ *
+ * Distinct from {@link SettledListener} because a remote front end needs the
+ * middle of a run, not only its end: progress to stream, and a workflow question
+ * to put to whoever is waiting on it.
+ */
+export type SnapshotListener = (snapshot: AgentSnapshot) => void;
 
 /** Owns execution lifetimes independently of the desktop's selected transcript. */
 export class TaskManager {
@@ -16,7 +35,12 @@ export class TaskManager {
 	private transition: Promise<unknown> = Promise.resolve();
 	private listCache: { at: number; rows: SessionSummary[] } | undefined;
 
-	constructor(private factory: AgentFactory, private emit: (channel: string, payload?: unknown) => void) {
+	constructor(
+		private factory: AgentFactory,
+		private emit: (channel: string, payload?: unknown) => void,
+		private onSettled?: SettledListener,
+		private onSnapshot?: SnapshotListener,
+	) {
 		this.owner = this.make();
 		this.active = this.owner;
 	}
@@ -35,6 +59,12 @@ export class TaskManager {
 					previous?.session.title !== next?.session.title || previous?.session.messageCount !== next?.session.messageCount) {
 					this.changed();
 				}
+				// A run ending is the one transition nobody is necessarily watching:
+				// the task may have been started here and left behind two sessions ago.
+				if (previous?.streaming && next && !next.streaming) {
+					this.onSettled?.(next.session, this.active === agent);
+				}
+				if (next) this.onSnapshot?.(next);
 			}
 			if (channel === "agent:sessionsChanged") this.changed();
 			else if (this.active === agent) this.emit(channel, payload);
@@ -79,6 +109,42 @@ export class TaskManager {
 			}
 		};
 		return select ? this.inOrder(create) : create();
+	}
+
+	/**
+	 * Run a prompt in a session of its own, leaving the selection alone.
+	 *
+	 * Creating and prompting are one step because a session that was created but
+	 * never prompted is not a task: if the prompt is refused the session goes
+	 * away again rather than settling in the sidebar as a row nobody started.
+	 */
+	async startBackground(
+		cwd: string,
+		text: string,
+		/**
+		 * Applied after the session exists and before the prompt runs.
+		 *
+		 * A remote caller picks the model for the task it is starting, and a
+		 * configure step afterwards would be too late — the turn would already
+		 * have gone out on whatever the desktop happened to be set to.
+		 */
+		configure?: (agent: AgentService) => Promise<void>,
+	): Promise<StartBackgroundTaskResult> {
+		const agent = await this.create(cwd, false);
+		const created = agent.getSnapshot()?.session;
+		let result: SendPromptResult;
+		try {
+			await configure?.(agent);
+			result = await agent.send({ text });
+		}
+		catch (error) { result = { accepted: false, error: error instanceof Error ? error.message : String(error) }; }
+		if (result.accepted) {
+			// Re-read: the prompt is what gives the row its title and running dot.
+			const session = agent.getSnapshot()?.session ?? created;
+			return session ? { accepted: true, session } : { accepted: false, error: "Session is unavailable" };
+		}
+		if (created) await this.remove(created.sessionFile).catch(() => undefined);
+		return { accepted: false, error: result.error };
 	}
 
 	private find(file: string): AgentService | undefined {

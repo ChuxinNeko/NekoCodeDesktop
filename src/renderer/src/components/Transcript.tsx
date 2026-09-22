@@ -151,12 +151,29 @@ interface TaskView {
 const TaskLookupContext = createContext<TaskView>({ tasks: new Map() });
 
 /**
+ * Fetch the rest of a tool result the transcript only carries the head of.
+ *
+ * A context for the same reason as {@link TaskLookupContext}: the tool row sits
+ * two levels inside a work group, and only remote surfaces supply one at all —
+ * a local session already holds every result in full.
+ */
+const ToolOutputContext = createContext<
+	((toolCallId: string, offset: number) => Promise<{ text: string; total: number }>) | undefined
+>(undefined);
+
+/**
  * The worker a `task` call started, if it is still known.
  *
  * The id comes back in the tool's own result, which is the only thing tying the
  * transcript row to the live worker — the row is a record of the request, the
  * worker is the thing still running.
  */
+/** Character counts, in the units someone deciding whether to fetch cares about. */
+function formatSize(chars: number): string {
+	if (chars >= 1024 * 1024) return `${(chars / 1024 / 1024).toFixed(1)} MB`;
+	return `${(Math.max(chars, 1) / 1024).toFixed(chars < 1024 ? 1 : 0)} KB`;
+}
+
 function taskIdOf(cell: Extract<AgentCell, { type: "tool" }>): string | null {
 	if (cell.toolName !== "task" || !cell.output) return null;
 	try {
@@ -455,6 +472,29 @@ function ToolCell({ cell, active }: { cell: Extract<AgentCell, { type: "tool" }>
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const view = useContext(TaskLookupContext);
+	const loadOutput = useContext(ToolOutputContext);
+	// What has been fetched beyond the head the transcript came with. Keyed by
+	// that head: a result still being written replaces it, and what was read off
+	// the old one no longer joins onto it.
+	const [fetched, setFetched] = useState<{ head: string; text: string } | null>(null);
+	const [loadingOutput, setLoadingOutput] = useState(false);
+	const extra = fetched?.head === cell.output ? fetched.text : "";
+	const shown = cell.output + extra;
+	const missing = cell.outputTotal === undefined ? 0 : cell.outputTotal - shown.length;
+	const fetchMore = () => {
+		if (!loadOutput || loadingOutput) return;
+		const head = cell.output;
+		setLoadingOutput(true);
+		void loadOutput(cell.toolCallId, shown.length)
+			.then((chunk) => {
+				setFetched((previous) => ({
+					head,
+					text: (previous?.head === head ? previous.text : "") + chunk.text,
+				}));
+			})
+			.catch(() => undefined)
+			.finally(() => setLoadingOutput(false));
+	};
 
 	// A delegation is not a tool result to unfold — it is a whole session that
 	// ran, so the row shows the worker itself rather than the JSON acknowledging
@@ -536,10 +576,28 @@ function ToolCell({ cell, active }: { cell: Extract<AgentCell, { type: "tool" }>
 							{presentation.command}
 						</div>
 					) : null}
-					{cell.output ? (
+					{shown ? (
 						<pre className="max-h-80 overflow-auto whitespace-pre-wrap p-2.5">
-							{cell.output}
+							{shown}
 						</pre>
+					) : null}
+					{missing > 0 ? (
+						<button
+							type="button"
+							className={cn(
+								"flex w-full items-center justify-center gap-1.5 border-t border-border/60 px-2.5 py-1.5",
+								"text-[length:var(--app-font-size-ui-sm,11px)]",
+								MUTED_LABEL_TEXT_CLASS_NAME,
+								loadOutput ? "hover:bg-[var(--color-background-elevated-secondary)]" : "cursor-default",
+							)}
+							disabled={!loadOutput || loadingOutput}
+							onClick={fetchMore}
+						>
+							{loadingOutput ? <Loader2Icon className="size-3 animate-spin" /> : null}
+							{loadOutput
+								? t("transcript.outputRemaining", { size: formatSize(missing) })
+								: t("transcript.outputTruncated", { size: formatSize(missing) })}
+						</button>
 					) : null}
 				</div>
 			) : null}
@@ -707,6 +765,7 @@ export function Transcript({
 	checkpoints,
 	onRestoreCheckpoint,
 	onOpenReview,
+	onLoadToolOutput,
 }: {
 	cells: AgentCell[];
 	streaming?: boolean;
@@ -720,6 +779,11 @@ export function Transcript({
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
 	/** Open the review panel — the edit summary card's "Review" action. */
 	onOpenReview?: () => void;
+	/**
+	 * Fetch the rest of a trimmed tool result. Only remote surfaces pass one; a
+	 * local transcript already holds every result whole.
+	 */
+	onLoadToolOutput?: (toolCallId: string, offset: number) => Promise<{ text: string; total: number }>;
 }) {
 	const taskLookup = useMemo<TaskView>(
 		() => ({
@@ -774,6 +838,7 @@ export function Transcript({
 	const waitingInWork = waiting && rows[rows.length - 1]?.kind === "work";
 	return (
 		<TaskLookupContext.Provider value={taskLookup}>
+			<ToolOutputContext.Provider value={onLoadToolOutput}>
 			<div className="flex flex-col gap-4">
 				{rows.map((row, index) => {
 					const last = index === rows.length - 1;
@@ -815,6 +880,7 @@ export function Transcript({
 				})}
 				{waiting && !waitingInWork ? <PlanningLine /> : null}
 			</div>
+			</ToolOutputContext.Provider>
 		</TaskLookupContext.Provider>
 	);
 }

@@ -161,23 +161,25 @@ export function Sidebar(props: SidebarProps) {
 						<span className="min-w-0 flex-1 truncate">{t(entry.labelKey)}</span>
 					</button>
 				))}
-				<button
-					type="button"
-					aria-pressed={browserOpen}
-					onClick={onToggleBrowser}
-					className={cn(
-						SIDEBAR_HEADER_ROW_CLASS_NAME,
-						browserOpen
-							? SIDEBAR_ROW_ACTIVE_CLASS_NAME
-							: cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
-					)}
-				>
-					<GlobeIcon className="size-3.5 shrink-0 opacity-80" />
-					<span className="min-w-0 flex-1 truncate">{t("nav.browser")}</span>
-					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
-						{browserOpen ? t("nav.browserOn") : t("nav.browserOff")}
-					</span>
-				</button>
+				{api.runtime !== "web" ? (
+					<button
+						type="button"
+						aria-pressed={browserOpen}
+						onClick={onToggleBrowser}
+						className={cn(
+							SIDEBAR_HEADER_ROW_CLASS_NAME,
+							browserOpen
+								? SIDEBAR_ROW_ACTIVE_CLASS_NAME
+								: cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
+						)}
+					>
+						<GlobeIcon className="size-3.5 shrink-0 opacity-80" />
+						<span className="min-w-0 flex-1 truncate">{t("nav.browser")}</span>
+						<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
+							{browserOpen ? t("nav.browserOn") : t("nav.browserOff")}
+						</span>
+					</button>
+				) : null}
 			</div>
 
 			<SessionList

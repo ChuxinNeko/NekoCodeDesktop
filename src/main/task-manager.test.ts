@@ -8,10 +8,13 @@ function fixture() {
 	const events: Array<{ channel: string; payload?: unknown }> = [];
 	const agents: FakeAgent[] = [];
 	const disk = new Map<string, SessionSummary>();
+	/** Set to make the next `send` refuse its prompt, the way no configured model would. */
+	let refuseNext: string | null = null;
 	class FakeAgent {
 		snapshot: AgentSnapshot | null = null;
 		closed = false;
 		aborts = 0;
+		sent: string[] = [];
 		constructor(readonly emit: (channel: string, payload?: unknown) => void, readonly owner?: AgentService) {}
 		getSnapshot() { return this.snapshot; }
 		inheritDefaults() {}
@@ -36,6 +39,17 @@ function fixture() {
 			this.snapshot = { ...this.snapshot!, streaming: running, session: { ...this.snapshot!.session, running } };
 			this.emit("agent:snapshot", this.snapshot);
 		}
+		async send({ text }: { text: string }) {
+			const refusal = refuseNext;
+			refuseNext = null;
+			if (refusal) return { accepted: false as const, error: refusal };
+			this.sent.push(text);
+			// A first prompt is what names the row, so the caller re-reading the
+			// snapshot after the send has to see the new title rather than the id.
+			this.snapshot = { ...this.snapshot!, session: { ...this.snapshot!.session, title: text } };
+			this.run();
+			return { accepted: true as const };
+		}
 		async listSessions() { return [...disk.values()]; }
 		async abort() { this.aborts++; this.run(false); }
 		async deleteSession() { this.snapshot = null; this.emit("agent:snapshot", null); }
@@ -45,7 +59,13 @@ function fixture() {
 	const manager = new TaskManager((emit, owner) => {
 		const agent = new FakeAgent(emit, owner); agents.push(agent); return agent as unknown as AgentService;
 	}, (channel, payload) => events.push({ channel, payload }));
-	return { manager, agents, events, fake: (agent: AgentService) => agent as unknown as FakeAgent, disk };
+	return {
+		manager, agents, events, disk,
+		fake: (agent: AgentService) => agent as unknown as FakeAgent,
+		/** The most recently made agent — what a background start just created. */
+		last: () => agents[agents.length - 1],
+		refuseNext: (error: string) => { refuseNext = error; },
+	};
 }
 
 describe("parallel task execution", () => {
@@ -80,6 +100,42 @@ describe("parallel task execution", () => {
 		const req = { cwd: "/history", sessionFile: "/sessions/history.jsonl" };
 		const [one, two] = await Promise.all([f.manager.open(req, false), f.manager.open(req, false)]);
 		expect(one).toBe(two); expect(f.manager.active).toBe(active);
+	});
+
+	test("a background prompt runs in its own session and leaves the desktop where it was", async () => {
+		const f = fixture();
+		const desktop = f.fake(await f.manager.create("/project"));
+		desktop.run();
+		f.events.length = 0;
+
+		const result = await f.manager.startBackground("/project", "整理一下 README");
+
+		expect(result.accepted).toBe(true);
+		if (!result.accepted) return;
+		// Read after the send, so the row carries the prompt rather than a placeholder.
+		expect(result.session.title).toBe("整理一下 README");
+		expect(f.manager.active).toBe(desktop as unknown as AgentService);
+		expect(desktop.snapshot!.streaming).toBe(true);
+		// The window hears about the new task through the sidebar, not the transcript.
+		expect(f.events.filter((e) => e.channel === "agent:snapshot")).toHaveLength(0);
+		expect(f.events.some((e) => e.channel === "agent:sessionsChanged")).toBe(true);
+		expect(f.last().sent).toEqual(["整理一下 README"]);
+		const rows = await f.manager.list();
+		expect(rows).toHaveLength(2);
+		expect(rows.find((s) => s.id === result.session.id)?.running).toBe(true);
+	});
+
+	test("a refused background prompt leaves no session behind", async () => {
+		const f = fixture();
+		const desktop = f.fake(await f.manager.create("/project"));
+		f.refuseNext("当前模型配置已被移除，请添加或选择可用模型");
+
+		const result = await f.manager.startBackground("/project", "整理一下 README");
+
+		expect(result).toEqual({ accepted: false, error: "当前模型配置已被移除，请添加或选择可用模型" });
+		expect(f.last().closed).toBe(true);
+		expect(f.manager.active).toBe(desktop as unknown as AgentService);
+		expect(await f.manager.list()).toHaveLength(1);
 	});
 
 	test("rename and delete route to the background owner, and shutdown closes every task", async () => {

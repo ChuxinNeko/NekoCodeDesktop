@@ -33,11 +33,36 @@ import type {
 	SendPromptRequest,
 	SendPromptResult,
 	SessionSummary,
+	StartBackgroundTaskRequest,
+	StartBackgroundTaskResult,
 	ThinkingLevel,
 } from "../shared/agent";
 import type { SlashCommandSummary } from "../shared/commands";
-import type { FsEntry, FsReadResult } from "../shared/files";
+import type { FsEntry, FsReadResult, HostDirectoryListing } from "../shared/files";
 import type { SetSkillEnabledRequest, SkillsSnapshot } from "../shared/skills";
+import type { AppPreferences } from "../shared/preferences";
+import type {
+	WorktreeMergeRequest,
+	WorktreeMergeResult,
+	WorktreeRecord,
+	WorktreeStatus,
+} from "../shared/worktree";
+import type { McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
+import type { QqBotConfig, QqBotStatus } from "../shared/qqbot";
+import type {
+	RelayLoginRequest,
+	RelayRegisterRequest,
+	RelayResendRequest,
+	RelayStatus,
+	RelayVerifyRequest,
+} from "../shared/relay";
+import {
+	WEBUI_EVENT_CHANNELS,
+	isWebUiRpcMethod,
+	type SaveWebUiConfigRequest,
+	type WebUiBridgeRequest,
+	type WebUiStatus,
+} from "../shared/webui";
 import type { TokenUsageReport } from "../shared/tokenStats";
 import type {
 	CheckpointFileDiff,
@@ -84,12 +109,24 @@ const shellInfo: ShellInfo =
 	(ipcRenderer.sendSync("app:shellInfo") as ShellInfo | undefined) ?? DEFAULT_SHELL_INFO;
 
 const api = {
+	runtime: "electron" as const,
+	webUiStatus: (): Promise<WebUiStatus> => ipcRenderer.invoke("webui:status"),
+	webUiSave: (request: SaveWebUiConfigRequest): Promise<WebUiStatus> =>
+		ipcRenderer.invoke("webui:save", request),
 	lanStatus: (): Promise<LanStatus> => ipcRenderer.invoke("lan:status"),
 	lanSetEnabled: (enabled: boolean): Promise<LanStatus> => ipcRenderer.invoke("lan:enabled", enabled),
 	lanPairing: (): Promise<LanStatus> => ipcRenderer.invoke("lan:pairing"),
 	lanRevoke: (id: string): Promise<LanStatus> => ipcRenderer.invoke("lan:revoke", id),
 	lanAddProject: (): Promise<LanStatus> => ipcRenderer.invoke("lan:addProject"),
 	lanRemoveProject: (id: string): Promise<LanStatus> => ipcRenderer.invoke("lan:removeProject", id),
+	relayStatus: (): Promise<RelayStatus> => ipcRenderer.invoke("relay:status"),
+	relayLogin: (request: RelayLoginRequest): Promise<RelayStatus> => ipcRenderer.invoke("relay:login", request),
+	relayRegister: (request: RelayRegisterRequest): Promise<void> => ipcRenderer.invoke("relay:register", request),
+	relayVerify: (request: RelayVerifyRequest): Promise<RelayStatus> => ipcRenderer.invoke("relay:verify", request),
+	relayResend: (request: RelayResendRequest): Promise<void> => ipcRenderer.invoke("relay:resend", request),
+	relayLogout: (): Promise<RelayStatus> => ipcRenderer.invoke("relay:logout"),
+	relayReconnect: (): Promise<RelayStatus> => ipcRenderer.invoke("relay:reconnect"),
+	onRelayChanged: (listener: (status: RelayStatus) => void) => subscribe("relay:changed", listener),
 	appVersion: (): Promise<AppVersionInfo> => ipcRenderer.invoke("app:version"),
 	checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("app:checkForUpdates"),
 	checkForUpdatesOnStartup: (): Promise<UpdateCheckResult | null> => ipcRenderer.invoke("app:checkForUpdatesOnStartup"),
@@ -133,6 +170,10 @@ const api = {
 	fsReadFile: (cwd: string, relPath: string): Promise<FsReadResult> =>
 		ipcRenderer.invoke("fs:readFile", cwd, relPath),
 	pickDirectory: () => ipcRenderer.invoke("dialog:openDirectory"),
+	directoryList: (path: string): Promise<HostDirectoryListing> =>
+		ipcRenderer.invoke("directory:list", path),
+	lanAddProjectPath: (path: string): Promise<LanStatus> =>
+		ipcRenderer.invoke("lan:addProjectPath", path),
 
 	sessionList: (cwd?: string): Promise<SessionSummary[]> =>
 		ipcRenderer.invoke("agent:listSessions", cwd),
@@ -151,6 +192,40 @@ const api = {
 		ipcRenderer.invoke("agent:snapshot"),
 	agentSend: (req: SendPromptRequest): Promise<SendPromptResult> =>
 		ipcRenderer.invoke("agent:send", req),
+	agentStartBackground: (req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult> =>
+		ipcRenderer.invoke("agent:startBackground", req),
+	/** A finished task's notification was clicked: bring that session up. */
+	onRevealSession: (listener: (session: SessionSummary) => void) =>
+		subscribe("agent:revealSession", listener),
+	preferencesGet: (): Promise<AppPreferences> => ipcRenderer.invoke("preferences:get"),
+	preferencesUpdate: (patch: Partial<AppPreferences>): Promise<AppPreferences> =>
+		ipcRenderer.invoke("preferences:update", patch),
+
+	/** Null when this session works in the project directory like any other. */
+	worktreeStatus: (sessionId: string): Promise<WorktreeStatus | null> =>
+		ipcRenderer.invoke("worktree:status", sessionId),
+	worktreeList: (): Promise<WorktreeRecord[]> => ipcRenderer.invoke("worktree:list"),
+	worktreeMerge: (req: WorktreeMergeRequest): Promise<WorktreeMergeResult> =>
+		ipcRenderer.invoke("worktree:merge", req),
+	worktreeDiscard: (sessionId: string): Promise<void> =>
+		ipcRenderer.invoke("worktree:discard", sessionId),
+
+	mcpList: (): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:list"),
+	mcpSave: (req: SaveMcpServerRequest): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:save", req),
+	mcpRemove: (id: string): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:remove", id),
+	mcpReconnect: (id: string): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:reconnect", id),
+	/** Connection states move on their own — a server can drop at any time. */
+	onMcpChanged: (listener: (snapshot: McpSnapshot) => void) => subscribe("mcp:changed", listener),
+
+	qqBotStatus: (): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:status"),
+	qqBotSave: (config: QqBotConfig): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:save", config),
+	qqBotReconnect: (): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:reconnect"),
+	qqBotPairing: (): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:pairing"),
+	qqBotRevoke: (id: string): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:revoke", id),
+	qqBotClearLog: (): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:clearLog"),
+	qqBotChooseProject: (): Promise<string | null> => ipcRenderer.invoke("qqbot:chooseProject"),
+	/** The connection redials on its own, and chats bind sessions while nobody looks. */
+	onQqBotChanged: (listener: (status: QqBotStatus) => void) => subscribe("qqbot:changed", listener),
 	agentAbort: (): Promise<void> => ipcRenderer.invoke("agent:abort"),
 	agentCommands: (): Promise<SlashCommandSummary[]> =>
 		ipcRenderer.invoke("agent:commands"),
@@ -278,3 +353,41 @@ const api = {
 export type NekoCodeDesktopApi = typeof api;
 
 contextBridge.exposeInMainWorld("nekocode", api);
+
+ipcRenderer.on("webui:rpc", (_event, request: WebUiBridgeRequest) => {
+	const reply = (response: { ok: true; value: unknown } | { ok: false; error: string }) => {
+		if (request && typeof request.id === "string") {
+			ipcRenderer.send("webui:rpcResult", { id: request.id, ...response });
+		}
+	};
+	if (
+		!request ||
+		typeof request.id !== "string" ||
+		!isWebUiRpcMethod(request.method) ||
+		!Array.isArray(request.args) ||
+		request.args.length > 16
+	) {
+		reply({ ok: false, error: "Invalid WebUI bridge request" });
+		return;
+	}
+	const fn = (api as Record<string, unknown>)[request.method];
+	if (typeof fn !== "function") {
+		reply({ ok: false, error: `Unknown WebUI method: ${request.method}` });
+		return;
+	}
+	Promise.resolve()
+		.then(() => (fn as (...args: unknown[]) => unknown)(...request.args))
+		.then(
+			(value) => reply({ ok: true, value }),
+			(error: unknown) =>
+				reply({ ok: false, error: error instanceof Error ? error.message : String(error) }),
+		);
+});
+
+for (const channel of WEBUI_EVENT_CHANNELS) {
+	ipcRenderer.on(channel, (_event, payload: unknown) => {
+		ipcRenderer.send("webui:event", channel, payload);
+	});
+}
+
+ipcRenderer.send("webui:ready");

@@ -119,6 +119,11 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v3
+        with:
+          # Override the action's legacy "tools platform-tools" default:
+          # the Android SDK repository no longer provides the "tools" package.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - name: Restore release signing key
         if: needs.plan.outputs.publish == 'true'

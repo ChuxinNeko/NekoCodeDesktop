@@ -20,6 +20,8 @@ import type {
 	SendPromptRequest,
 	SendPromptResult,
 	SessionSummary,
+	StartBackgroundTaskRequest,
+	StartBackgroundTaskResult,
 	ThinkingLevel,
 } from "../../shared/agent";
 import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection } from "../../shared/browser";
@@ -45,7 +47,7 @@ import type {
 	RestoreCheckpointRequest,
 	RestoreCheckpointResult,
 } from "../../shared/checkpoints";
-import type { FsEntry, FsReadResult } from "../../shared/files";
+import type { FsEntry, FsReadResult, HostDirectoryListing } from "../../shared/files";
 import type { GitActionRequest, GitDiffRequest, RepoStatus, ReviewScope } from "../../shared/git";
 import type {
 	FetchModelsRequest,
@@ -70,16 +72,45 @@ import type {
 } from "../../shared/terminal";
 import type { SlashCommandSummary } from "../../shared/commands";
 import type { SetSkillEnabledRequest, SkillsSnapshot } from "../../shared/skills";
+import type { AppPreferences } from "../../shared/preferences";
+import type {
+	WorktreeMergeRequest,
+	WorktreeMergeResult,
+	WorktreeRecord,
+	WorktreeStatus,
+} from "../../shared/worktree";
+import type { McpSnapshot, SaveMcpServerRequest } from "../../shared/mcp";
+import type { QqBotConfig, QqBotStatus } from "../../shared/qqbot";
+import type {
+	RelayLoginRequest,
+	RelayRegisterRequest,
+	RelayResendRequest,
+	RelayStatus,
+	RelayVerifyRequest,
+} from "../../shared/relay";
 import type { TokenUsageReport } from "../../shared/tokenStats";
 import type { ShellInfo, WindowMaterial } from "../../shared/window";
+import type { SaveWebUiConfigRequest, WebUiStatus } from "../../shared/webui";
+import { createWebUiApi } from "./webui-api";
 
 export interface AgentApi {
+	readonly runtime: "electron" | "web";
+	webUiStatus(): Promise<WebUiStatus>;
+	webUiSave(request: SaveWebUiConfigRequest): Promise<WebUiStatus>;
 	lanStatus(): Promise<LanStatus>;
 	lanSetEnabled(enabled: boolean): Promise<LanStatus>;
 	lanPairing(): Promise<LanStatus>;
 	lanRevoke(id: string): Promise<LanStatus>;
 	lanAddProject(): Promise<LanStatus>;
 	lanRemoveProject(id: string): Promise<LanStatus>;
+	relayStatus(): Promise<RelayStatus>;
+	relayLogin(request: RelayLoginRequest): Promise<RelayStatus>;
+	relayRegister(request: RelayRegisterRequest): Promise<void>;
+	relayVerify(request: RelayVerifyRequest): Promise<RelayStatus>;
+	relayResend(request: RelayResendRequest): Promise<void>;
+	relayLogout(): Promise<RelayStatus>;
+	relayReconnect(): Promise<RelayStatus>;
+	onRelayChanged(listener: (status: RelayStatus) => void): () => void;
 	appVersion(): Promise<AppVersionInfo>;
 	checkForUpdates(): Promise<UpdateCheckResult>;
 	checkForUpdatesOnStartup(): Promise<UpdateCheckResult | null>;
@@ -108,6 +139,8 @@ export interface AgentApi {
 	setWindowMaterial(material: WindowMaterial): Promise<ShellInfo>;
 
 	pickDirectory(): Promise<string | null>;
+	directoryList(path: string): Promise<HostDirectoryListing>;
+	lanAddProjectPath(path: string): Promise<LanStatus>;
 
 	gitStatus(cwd: string): Promise<RepoStatus>;
 	gitDiff(req: GitDiffRequest): Promise<string>;
@@ -127,6 +160,34 @@ export interface AgentApi {
 	agentOpen(req: OpenSessionRequest): Promise<AgentSnapshot>;
 	agentSnapshot(): Promise<AgentSnapshot | null>;
 	agentSend(req: SendPromptRequest): Promise<SendPromptResult>;
+	/** Run a prompt in a new session without changing what the window is showing. */
+	agentStartBackground(req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult>;
+	/** A finished task's notification was clicked: bring that session up. */
+	onRevealSession(listener: (session: SessionSummary) => void): () => void;
+	preferencesGet(): Promise<AppPreferences>;
+	preferencesUpdate(patch: Partial<AppPreferences>): Promise<AppPreferences>;
+	/** Null when this session works in the project directory like any other. */
+	worktreeStatus(sessionId: string): Promise<WorktreeStatus | null>;
+	worktreeList(): Promise<WorktreeRecord[]>;
+	worktreeMerge(req: WorktreeMergeRequest): Promise<WorktreeMergeResult>;
+	worktreeDiscard(sessionId: string): Promise<void>;
+	mcpList(): Promise<McpSnapshot>;
+	mcpSave(req: SaveMcpServerRequest): Promise<McpSnapshot>;
+	mcpRemove(id: string): Promise<McpSnapshot>;
+	mcpReconnect(id: string): Promise<McpSnapshot>;
+	/** Connection states move on their own — a server can drop at any time. */
+	onMcpChanged(listener: (snapshot: McpSnapshot) => void): () => void;
+	qqBotStatus(): Promise<QqBotStatus>;
+	qqBotSave(config: QqBotConfig): Promise<QqBotStatus>;
+	qqBotReconnect(): Promise<QqBotStatus>;
+	/** Mint a code to send the bot from QQ. Single use, and it expires. */
+	qqBotPairing(): Promise<QqBotStatus>;
+	qqBotRevoke(id: string): Promise<QqBotStatus>;
+	qqBotClearLog(): Promise<QqBotStatus>;
+	/** Null when the folder picker was cancelled. */
+	qqBotChooseProject(): Promise<string | null>;
+	/** The connection redials on its own, and chats bind sessions while nobody looks. */
+	onQqBotChanged(listener: (status: QqBotStatus) => void): () => void;
 	agentAbort(): Promise<void>;
 	/** Skills and prompt templates the composer's slash menu offers. */
 	agentCommands(): Promise<SlashCommandSummary[]>;
@@ -215,8 +276,48 @@ export interface AgentApi {
 	onAutomationEvent(listener: (event: AutomationEvent) => void): () => void;
 }
 
-/** The preload bridge, typed. Renderer code should go through this module. */
-export const api: AgentApi = window.nekocode as unknown as AgentApi;
+let resolvedApi: AgentApi | null = null;
+
+/**
+ * The bridge if this page has one, else null — never throws.
+ *
+ * Components shared with the phone app run in a WebView with neither bridge, so
+ * anything they touch while rendering has to ask instead of reaching for
+ * {@link api}: a Proxy is always truthy, which makes `api?.thing` on the phone a
+ * thrown error rather than the `undefined` the `?.` was written for.
+ */
+export function optionalApi(): AgentApi | null {
+	if (resolvedApi) return resolvedApi;
+	if (window.nekocode) resolvedApi = window.nekocode as unknown as AgentApi;
+	else if (window.__NEKOCODE_WEBUI__) resolvedApi = createWebUiApi(window.__NEKOCODE_WEBUI__);
+	return resolvedApi;
+}
+
+function resolveApi(): AgentApi {
+	const impl = optionalApi();
+	if (!impl) {
+		throw new Error(
+			"NekoCode bridge unavailable: this page must run inside the desktop app or be served by its WebUI.",
+		);
+	}
+	return impl;
+}
+
+/**
+ * The preload bridge, typed. Renderer code should go through this module.
+ *
+ * Resolution is lazy: the mobile app shares renderer components that import
+ * this module but never call it, and the Capacitor WebView has neither bridge —
+ * resolving at import time would crash the whole bundle there. Code that *can*
+ * run without a bridge must go through {@link optionalApi} instead.
+ */
+export const api: AgentApi = new Proxy({} as AgentApi, {
+	get(_target, prop) {
+		const impl = resolveApi() as unknown as Record<PropertyKey, unknown>;
+		const value = impl[prop];
+		return typeof value === "function" ? value.bind(impl) : value;
+	},
+});
 
 export function errorMessage(error: unknown): string {
 	if (error instanceof Error) return error.message;

@@ -5,23 +5,28 @@ import { Button } from "../ui/button";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { AboutSettings } from "./AboutSettings";
 import { GeneralSettings } from "./GeneralSettings";
-import { MobileSettings } from "./MobileSettings";
+import { ConnectSettings } from "./ConnectSettings";
 import { GitHubSettings } from "./GitHubSettings";
 import { ProviderModelSettings } from "./ProviderModelSettings";
 import { PluginSettings } from "./PluginSettings";
+import { McpSettings } from "./McpSettings";
 import { TokenUsageSettings } from "./TokenUsageSettings";
 import { SkillSettings } from "./SkillSettings";
+import { WebUiSettings } from "./WebUiSettings";
+import { api } from "../../api";
 import { ArrowLeftIcon } from "../../lib/icons";
 
 const SECTIONS = [
 	{ id: "general", labelKey: "settings.section.general" },
-	{ id: "mobile", labelKey: "settings.section.mobile" },
+	{ id: "connect", labelKey: "settings.section.connect" },
 	{ id: "appearance", labelKey: "settings.section.appearance" },
 	{ id: "providers", labelKey: "settings.section.providers" },
 	{ id: "tokens", labelKey: "settings.section.tokens" },
 	{ id: "skills", labelKey: "settings.section.skills" },
 	{ id: "plugins", labelKey: "settings.section.plugins" },
+	{ id: "mcp", labelKey: "settings.section.mcp" },
 	{ id: "github", labelKey: "settings.section.github" },
+	{ id: "webui", labelKey: "settings.section.webui" },
 	{ id: "about", labelKey: "settings.section.about" },
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey }>;
 
@@ -37,6 +42,8 @@ const SECTION_WIDTH: Partial<Record<SectionId, string>> = { tokens: "max-w-[58re
 export function SettingsPage({ onClose }: { onClose: () => void }) {
 	const { t } = useTranslation();
 	const [section, setSection] = useState<SectionId>("general");
+	const sections =
+		api.runtime === "web" ? SECTIONS.filter((entry) => entry.id !== "webui") : SECTIONS;
 
 	return (
 		<div className="flex min-h-0 flex-1">
@@ -49,7 +56,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 						{t("settings.title")}
 					</span>
 				</div>
-				{SECTIONS.map((entry) => (
+				{sections.map((entry) => (
 					<button
 						key={entry.id}
 						type="button"
@@ -74,16 +81,18 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 					)}
 				>
 					<h2 className="text-[length:var(--app-font-size-ui-lg,13px)] font-medium">
-						{t(SECTIONS.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
+						{t(sections.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
 					</h2>
 					{section === "general" ? <GeneralSettings /> : null}
-					{section === "mobile" ? <MobileSettings /> : null}
+					{section === "connect" ? <ConnectSettings /> : null}
 					{section === "appearance" ? <AppearanceSettings /> : null}
 					{section === "providers" ? <ProviderModelSettings /> : null}
 					{section === "tokens" ? <TokenUsageSettings /> : null}
 					{section === "skills" ? <SkillSettings /> : null}
 					{section === "plugins" ? <PluginSettings /> : null}
+					{section === "mcp" ? <McpSettings /> : null}
 					{section === "github" ? <GitHubSettings /> : null}
+					{section === "webui" && api.runtime !== "web" ? <WebUiSettings /> : null}
 					{section === "about" ? <AboutSettings /> : null}
 				</div>
 			</div>

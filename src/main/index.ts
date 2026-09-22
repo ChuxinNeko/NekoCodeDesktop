@@ -1,12 +1,25 @@
 import { TaskManager } from "./task-manager";
+import { TaskNotifier } from "./task-notifier";
+import { AppPreferencesStore } from "./app-preferences";
+import { WorktreeService, type PreparedWorkspace } from "./worktree-service";
+import { McpService } from "./mcp/service";
+import { QqBotService } from "./qqbot/service";
+import { renderBlock } from "./qqbot/code-image";
 import { LanService } from "./lan-service";
+import { RelayService } from "./relay-service";
+import type {
+	RelayLoginRequest,
+	RelayRegisterRequest,
+	RelayResendRequest,
+	RelayVerifyRequest,
+} from "../shared/relay";
 import type { FusionConfig } from "../shared/fusion";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, session, shell } from "electron";
 import { existsSync, statSync } from "node:fs";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { AgentService } from "./agent-service";
 import { migrateAgentHome } from "./agent-home";
 import { AutomationService } from "./automation/service";
@@ -42,10 +55,21 @@ import type {
 	OpenSessionRequest,
 	RenameSessionRequest,
 	SendPromptRequest,
+	StartBackgroundTaskRequest,
+	StartBackgroundTaskResult,
 	ThinkingLevel,
 } from "../shared/agent";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
 import type { SetSkillEnabledRequest } from "../shared/skills";
+import type { AppPreferences } from "../shared/preferences";
+import type {
+	WorktreeMergeRequest,
+	WorktreeMergeResult,
+	WorktreeRecord,
+	WorktreeStatus,
+} from "../shared/worktree";
+import type { McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
+import type { QqBotConfig, QqBotStatus } from "../shared/qqbot";
 import type { RestoreCheckpointRequest } from "../shared/checkpoints";
 import type {
 	TerminalCreateRequest,
@@ -63,6 +87,7 @@ import type {
 	PullRequestFilter,
 } from "../shared/pullRequests";
 import { FS_READ_MAX_BYTES, type FsEntry, type FsReadResult } from "../shared/files";
+import { resolveUnderRoot } from "./project-paths";
 import {
 	TITLE_BAR_HEIGHT,
 	isWindowMaterial,
@@ -74,6 +99,17 @@ import {
 	applyWindowMaterial,
 	supportedWindowMaterials,
 } from "./window-material";
+import { randomUUID } from "node:crypto";
+import type { WebContents } from "electron";
+import { WebUiService } from "./webui-service";
+import { listHostDirectories } from "./host-directories";
+import {
+	isWebUiEventChannel,
+	type SaveWebUiConfigRequest,
+	type WebUiBridgeRequest,
+	type WebUiBridgeResponse,
+	type WebUiRpcMethod,
+} from "../shared/webui";
 
 // Set before anything reads app.getPath("userData"): launched as
 // `electron out/main/index.js` the entry directory has no package.json, so Electron
@@ -82,7 +118,17 @@ import {
 app.setName("NekoCode Desktop");
 
 let taskManager: TaskManager | null = null;
+let taskNotifier: TaskNotifier | null = null;
+/** Outlives the window: preferences are read again when one is reopened. */
+let preferences: AppPreferencesStore | null = null;
+/** Also window-independent — a task checkout survives the window that made it. */
+let worktrees: WorktreeService | null = null;
+/** Servers are processes: one set for the app, not one per window or session. */
+let mcpService: McpService | null = null;
+/** One QQ login for the app — a second connection would answer every message twice. */
+let qqBotService: QqBotService | null = null;
 let lanService: LanService | null = null;
+let relayService: RelayService | null = null;
 let terminalService: TerminalService | null = null;
 let modelConfig: ModelConfigService | null = null;
 let oauthService: OAuthService | null = null;
@@ -91,6 +137,54 @@ let automationService: AutomationService | null = null;
 let githubAuth: GitHubAuthService | null = null;
 let pullRequests: PullRequestService | null = null;
 let tokenStats: TokenStatsService | null = null;
+let webUiService: WebUiService | null = null;
+let webUiBridge: WebContents | null = null;
+const webUiPending = new Map<
+	string,
+	{ resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+>();
+
+const WEBUI_BRIDGE_TIMEOUT_MS = 10 * 60_000;
+
+function webUiInvoke(method: WebUiRpcMethod, args: unknown[]): Promise<unknown> {
+	const bridge = webUiBridge;
+	if (!bridge || bridge.isDestroyed()) {
+		return Promise.reject(new Error("WebUI bridge unavailable: the desktop window is not ready"));
+	}
+	const id = randomUUID();
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			webUiPending.delete(id);
+			reject(new Error("WebUI bridge request timed out"));
+		}, WEBUI_BRIDGE_TIMEOUT_MS);
+		webUiPending.set(id, { resolve, reject, timer });
+		try {
+			bridge.send("webui:rpc", { id, method, args } satisfies WebUiBridgeRequest);
+		} catch (error) {
+			webUiPending.delete(id);
+			clearTimeout(timer);
+			reject(error instanceof Error ? error : new Error(String(error)));
+		}
+	});
+}
+
+function webUiBridgeGone(sender: WebContents): void {
+	if (webUiBridge !== sender) return;
+	webUiBridge = null;
+	for (const [id, pending] of webUiPending) {
+		clearTimeout(pending.timer);
+		pending.reject(new Error("WebUI bridge closed"));
+		webUiPending.delete(id);
+	}
+}
+
+function isWebUiBridgeResponse(value: unknown): value is WebUiBridgeResponse {
+	if (!value || typeof value !== "object") return false;
+	const response = value as { id?: unknown; ok?: unknown; error?: unknown };
+	if (typeof response.id !== "string" || response.id.length === 0 || response.id.length > 128) return false;
+	if (response.ok === true) return true;
+	return response.ok === false && typeof response.error === "string";
+}
 
 /**
  * The token panel reads the transcripts directly, so it needs no session to be
@@ -109,6 +203,121 @@ function tokenStatsService(): TokenStatsService {
 		});
 	}
 	return tokenStats;
+}
+
+/**
+ * Run a prompt in a session of its own.
+ *
+ * Shared by the composer's background button and the QQ bot rather than living
+ * in the IPC handler, because isolation has to be decided before the session
+ * exists — the worktree is the directory the session is created in.
+ *
+ * `isolate` is passed rather than read from preferences here: the two callers do
+ * not want the same default. Someone pressing the background button is at the
+ * desktop, where a task's worktree is visible and mergeable; someone messaging
+ * from QQ is not, and an isolated run would report success against a checkout
+ * they never see change.
+ */
+async function startBackgroundTask(
+	cwd: string,
+	text: string,
+	/** Omitted means "whatever the desktop preference says". */
+	isolate?: boolean,
+	/** Applied to the new session before its first prompt runs. */
+	configure?: (agent: AgentService) => Promise<void>,
+): Promise<StartBackgroundTaskResult> {
+	if (!taskManager) throw new Error("Agent service unavailable");
+	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	worktrees ??= new WorktreeService(app.getPath("userData"));
+	const workspace: PreparedWorkspace = (isolate ?? preferences.get().isolateBackgroundTasks)
+		? await worktrees.prepare(cwd)
+		: { cwd, worktree: null };
+	const result = await taskManager.startBackground(workspace.cwd, text, configure);
+	if (!result.accepted) {
+		// The task never started, so its checkout is an empty directory and a
+		// branch nobody will ever look at.
+		if (workspace.worktree) await worktrees.discardPrepared(workspace.worktree);
+		return result;
+	}
+	worktrees.attach(result.session.id, result.session.sessionFile, workspace.worktree);
+	return { ...result, ...(workspace.warning ? { warning: workspace.warning } : {}) };
+}
+
+/**
+ * Build the QQ connection on top of the running task manager.
+ *
+ * State is broadcast to whatever windows exist at the time rather than captured
+ * from one of them: a connection made before the settings panel was opened has
+ * no window to have remembered.
+ */
+function createQqBotService(): QqBotService {
+	const service = new QqBotService({
+		userDataDir: app.getPath("userData"),
+		// Never isolated: a QQ task edits the project the way a local one does, and
+		// checkpoints are its undo. A branch in a directory under this app's data
+		// folder is not something anyone can review from a chat.
+		startTask: (cwd, text, options) =>
+			startBackgroundTask(cwd, text, false, async (agent) => {
+				// Before the prompt, not after: a configure that landed later would
+				// have the first turn already out on the desktop's model.
+				if (options.modelKey) await agent.setModel(options.modelKey);
+				if (options.thinkingLevel) await agent.setThinkingLevel(options.thinkingLevel);
+			}),
+		defaults: async (cwd) => {
+			if (!taskManager) throw new Error("Agent service unavailable");
+			return taskManager.defaults(cwd || app.getPath("home"));
+		},
+		configure: async (sessionId, options) => {
+			if (!taskManager) throw new Error("Agent service unavailable");
+			const agent = await taskManager.byId(sessionId);
+			if (options.modelKey) await agent.setModel(options.modelKey);
+			if (options.thinkingLevel) await agent.setThinkingLevel(options.thinkingLevel);
+		},
+		renderBlock: (block) => renderBlock(block),
+		checkpoints: async (sessionId) => {
+			if (!taskManager) return [];
+			return (await taskManager.byId(sessionId)).listCheckpoints();
+		},
+		restoreCheckpoint: async (sessionId, id) => {
+			if (!taskManager) throw new Error("Agent service unavailable");
+			// Code only: rewinding the conversation as well would drop the very
+			// messages the chat is still reading.
+			return (await taskManager.byId(sessionId)).restoreCheckpoint({ id, scope: "code" });
+		},
+		resolveDirectory: async (path) => {
+			const trimmed = path.trim().replace(/^["']|["']$/g, "");
+			if (!isAbsolute(trimmed)) throw new Error("请使用绝对路径");
+			const canonical = await realpath(trimmed).catch(() => {
+				throw new Error(`目录不存在：${trimmed}`);
+			});
+			if (!(await stat(canonical)).isDirectory()) throw new Error("这不是一个文件夹");
+			return canonical;
+		},
+		sendTo: async (sessionId, text) => {
+			if (!taskManager) throw new Error("Agent service unavailable");
+			return (await taskManager.byId(sessionId)).send({ text });
+		},
+		snapshot: async (sessionId) => {
+			if (!taskManager) return null;
+			return (await taskManager.byId(sessionId)).getSnapshot();
+		},
+		abort: async (sessionId) => {
+			if (!taskManager) return;
+			await (await taskManager.byId(sessionId)).abort();
+		},
+		answerWorkflow: async (sessionId, answer) => {
+			if (!taskManager) throw new Error("Agent service unavailable");
+			(await taskManager.byId(sessionId)).answerWorkflow(answer);
+		},
+		onChange: () => {
+			const snapshot = qqBotService?.snapshot();
+			for (const open of BrowserWindow.getAllWindows()) {
+				if (!open.isDestroyed()) open.webContents.send("qqbot:changed", snapshot);
+			}
+		},
+	});
+	service.refresh();
+	return service;
 }
 
 /**
@@ -240,9 +449,40 @@ function createWindow(): void {
 			openExternal: (url) => shell.openExternal(url),
 			emit: (event) => { if (!win.isDestroyed()) win.webContents.send("oauth:event", event); },
 	});
-	taskManager = new TaskManager((emit, owner) => new AgentService(win, modelConfig!, inspector, antigravity, { emit, owner }),
-		(channel, payload) => { if (!win.isDestroyed()) win.webContents.send(channel, payload); });
+	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	taskNotifier = new TaskNotifier(win, preferences.get().notifyOnTaskFinish, (session) => {
+		if (!win.isDestroyed()) win.webContents.send("agent:revealSession", session);
+	});
+	// Servers are dialled against the project the window is on, and a stdio
+	// server's cwd is the only context it gets about which one that is.
+	mcpService ??= new McpService(
+		app.getPath("userData"),
+		() => taskManager?.active.getSnapshot()?.session.cwd ?? app.getPath("home"),
+		() => { if (!win.isDestroyed()) win.webContents.send("mcp:changed", mcpService?.snapshot()); },
+	);
+	taskManager = new TaskManager((emit, owner) => new AgentService(win, modelConfig!, inspector, antigravity, { emit, owner }, mcpService ?? undefined),
+		(channel, payload) => { if (!win.isDestroyed()) win.webContents.send(channel, payload); },
+		(session, selected) => {
+			taskNotifier?.settled(session, selected);
+			// The chat that started a task is not watching the window, so the same
+			// signal that raises a toast is what sends its answer back to QQ.
+			qqBotService?.settled(session);
+		},
+		// Progress, not just completion: QQ streams a run as it happens and has to
+		// relay a workflow question the moment it blocks the task.
+		(snapshot) => qqBotService?.progress(snapshot));
+	// After the manager exists, so a stdio server's cwd can resolve to the open
+	// project rather than to the fallback.
+	void mcpService.refresh();
+	qqBotService ??= createQqBotService();
 	lanService = new LanService(app.getPath("userData"), taskManager);
+	relayService = new RelayService({
+		userDataDir: app.getPath("userData"),
+		encryption: safeStorage,
+		gateway: lanService,
+		emit: (status) => { if (!win.isDestroyed()) win.webContents.send("relay:changed", status); },
+	});
+	void relayService.start();
 	oauthService = new OAuthService({
 		antigravity,
 		userDataDir: app.getPath("userData"),
@@ -280,11 +520,17 @@ function createWindow(): void {
 	}
 
 	win.on("closed", () => {
+		webUiBridgeGone(win.webContents);
 		oauthService?.close();
 		terminalService?.killAll();
+		relayService?.close();
 		taskManager?.close(); void lanService?.stop();
-		taskManager = null; lanService = null;
-		terminalService = null;
+		// The bot runs tasks through the task manager, so it cannot outlive one:
+		// staying connected would only collect messages it has no way to answer.
+		qqBotService?.close();
+		relayService = null;
+		taskManager = null; lanService = null; taskNotifier = null;
+		qqBotService = null; terminalService = null;
 	});
 
 	win.webContents.setWindowOpenHandler(({ url }) => {
@@ -376,21 +622,8 @@ function registerIpc(): void {
 	ipcMain.handle("git:action", (_e, req: GitActionRequest) => applyAction(req));
 	ipcMain.handle("git:init", (_e, cwd: string) => initRepo(cwd));
 
-	// The dock's Files pane browses relative paths under the project root; the
-	// resolved path must stay inside it (no "../.." escapes, no absolute hops).
-	const resolveUnderRoot = (cwd: string, relPath: string): { root: string; target: string } => {
-		const root = resolve(cwd);
-		const target = resolve(root, relPath);
-		const rel = relative(root, target);
-		if (rel.startsWith("..") || isAbsolute(rel)) {
-			throw new Error(`Path escapes project root: ${relPath}`);
-		}
-		return { root, target };
-	};
-
 	ipcMain.handle("fs:list", async (_e, cwd: string, relPath: string): Promise<FsEntry[]> => {
-		const { root, target } = resolveUnderRoot(cwd, relPath);
-		const base = relative(root, target);
+		const { target, relPath: base } = resolveUnderRoot(cwd, relPath);
 		const dirents = await readdir(target, { withFileTypes: true });
 		return dirents
 			.filter((entry) => entry.isDirectory() || entry.isFile())
@@ -407,18 +640,28 @@ function registerIpc(): void {
 	ipcMain.handle(
 		"fs:readFile",
 		async (_e, cwd: string, relPath: string): Promise<FsReadResult> => {
-			const { target } = resolveUnderRoot(cwd, relPath);
-			const info = await stat(target);
+			const resolved = resolveUnderRoot(cwd, relPath);
+			const info = await stat(resolved.target);
 			if (!info.isFile()) throw new Error(`Not a file: ${relPath}`);
-			const buffer = await readFile(target);
+			const buffer = await readFile(resolved.target);
 			if (buffer.includes(0)) throw new Error(`Binary file: ${relPath}`);
 			const truncated = info.size > FS_READ_MAX_BYTES;
 			return {
+				// The caller may have asked by absolute path; answer with the one the
+				// pane can navigate and display.
+				relPath: resolved.relPath,
 				text: buffer.subarray(0, FS_READ_MAX_BYTES).toString("utf8"),
 				truncated,
 			};
 		},
 	);
+	ipcMain.handle("directory:list", (_e, path: unknown) => listHostDirectories(path));
+	ipcMain.handle("lan:addProjectPath", (_e, path: unknown) => {
+		if (typeof path !== "string" || !path || path.length > 4096 || !lanService) {
+			throw new Error("无效的项目目录");
+		}
+		return lanService.addProject(path);
+	});
 	ipcMain.handle("dialog:openDirectory", async (e) => {
 		const win = BrowserWindow.fromWebContents(e.sender);
 		if (!win) return null;
@@ -444,6 +687,50 @@ function registerIpc(): void {
 		return result.canceled ? lanService.status() : lanService.addProject(result.filePaths[0]);
 	});
 
+	ipcMain.handle("relay:status", () => relayService?.status());
+	ipcMain.handle("relay:login", (_e, request: RelayLoginRequest) => {
+		if (!request || typeof request !== "object" || typeof request.email !== "string" || request.email.length > 254 ||
+			typeof request.password !== "string" || request.password.length === 0 || request.password.length > 256) {
+			throw new Error("Invalid relay login request");
+		}
+		if (!relayService) throw new Error("Relay service unavailable");
+		return relayService.login(request);
+	});
+	ipcMain.handle("relay:register", (_e, request: RelayRegisterRequest) => {
+		if (!request || typeof request !== "object" || typeof request.email !== "string" ||
+			!request.email.trim() || request.email.length > 254 ||
+			typeof request.password !== "string" || request.password.length < 8 || request.password.length > 256) {
+			throw new Error("Invalid relay register request");
+		}
+		if (!relayService) throw new Error("Relay service unavailable");
+		return relayService.register(request);
+	});
+	ipcMain.handle("relay:verify", (_e, request: RelayVerifyRequest) => {
+		if (!request || typeof request !== "object" || typeof request.email !== "string" ||
+			!request.email.trim() || request.email.length > 254 ||
+			typeof request.code !== "string" || !/^\d{6}$/.test(request.code.trim())) {
+			throw new Error("Invalid relay verify request");
+		}
+		if (!relayService) throw new Error("Relay service unavailable");
+		return relayService.verify(request);
+	});
+	ipcMain.handle("relay:resend", (_e, request: RelayResendRequest) => {
+		if (!request || typeof request !== "object" || typeof request.email !== "string" ||
+			!request.email.trim() || request.email.length > 254) {
+			throw new Error("Invalid relay resend request");
+		}
+		if (!relayService) throw new Error("Relay service unavailable");
+		return relayService.resend(request);
+	});
+	ipcMain.handle("relay:logout", () => {
+		if (!relayService) throw new Error("Relay service unavailable");
+		return relayService.logout();
+	});
+	ipcMain.handle("relay:reconnect", () => {
+		if (!relayService) throw new Error("Relay service unavailable");
+		return relayService.reconnect();
+	});
+
 	ipcMain.handle("agent:listSessions", (_e, cwd?: string) =>
 		taskManager?.list(cwd),
 	);
@@ -456,9 +743,83 @@ function registerIpc(): void {
 	ipcMain.handle("agent:rename", (_e, req: RenameSessionRequest) =>
 		taskManager?.rename(req),
 	);
-	ipcMain.handle("agent:delete", (_e, req: DeleteSessionRequest) =>
-		taskManager?.remove(req.sessionFile),
-	);
+	ipcMain.handle("agent:delete", async (_e, req: DeleteSessionRequest) => {
+		await taskManager?.remove(req.sessionFile);
+		// The transcript is gone, so nothing can reach the checkout any more —
+		// leaving it would strand both the directory and its branch.
+		worktrees ??= new WorktreeService(app.getPath("userData"));
+		await worktrees.releaseByFile(req.sessionFile);
+	});
+
+	ipcMain.handle("worktree:status", (_e, sessionId: string): Promise<WorktreeStatus | null> => {
+		worktrees ??= new WorktreeService(app.getPath("userData"));
+		return worktrees.status(sessionId);
+	});
+	ipcMain.handle("worktree:list", (): WorktreeRecord[] => {
+		worktrees ??= new WorktreeService(app.getPath("userData"));
+		return worktrees.list();
+	});
+	ipcMain.handle("worktree:merge", (_e, req: WorktreeMergeRequest): Promise<WorktreeMergeResult> => {
+		worktrees ??= new WorktreeService(app.getPath("userData"));
+		return worktrees.merge(req);
+	});
+	ipcMain.handle("worktree:discard", (_e, sessionId: string): Promise<void> => {
+		worktrees ??= new WorktreeService(app.getPath("userData"));
+		return worktrees.discard(sessionId);
+	});
+
+	ipcMain.handle("mcp:list", (): McpSnapshot => {
+		if (!mcpService) throw new Error("MCP service unavailable");
+		return mcpService.snapshot();
+	});
+	ipcMain.handle("mcp:save", (_e, req: SaveMcpServerRequest): Promise<McpSnapshot> => {
+		if (!mcpService) throw new Error("MCP service unavailable");
+		return mcpService.save(req);
+	});
+	ipcMain.handle("mcp:remove", (_e, id: string): Promise<McpSnapshot> => {
+		if (!mcpService) throw new Error("MCP service unavailable");
+		return mcpService.remove(id);
+	});
+	ipcMain.handle("mcp:reconnect", (_e, id: string): Promise<McpSnapshot> => {
+		if (!mcpService) throw new Error("MCP service unavailable");
+		return mcpService.reconnect(id);
+	});
+
+	ipcMain.handle("qqbot:status", (): QqBotStatus => {
+		qqBotService ??= createQqBotService();
+		return qqBotService.snapshot();
+	});
+	ipcMain.handle("qqbot:save", (_e, config: QqBotConfig): QqBotStatus => {
+		qqBotService ??= createQqBotService();
+		return qqBotService.save(config);
+	});
+	/** Redial without an edit — what a user presses after fixing the bot backend. */
+	ipcMain.handle("qqbot:reconnect", (): QqBotStatus => {
+		qqBotService ??= createQqBotService();
+		qqBotService.refresh();
+		return qqBotService.snapshot();
+	});
+	ipcMain.handle("qqbot:pairing", (): QqBotStatus => {
+		qqBotService ??= createQqBotService();
+		return qqBotService.newPairing();
+	});
+	ipcMain.handle("qqbot:revoke", (_e, id: string): QqBotStatus => {
+		qqBotService ??= createQqBotService();
+		return qqBotService.revoke(id);
+	});
+	ipcMain.handle("qqbot:clearLog", (): QqBotStatus => {
+		qqBotService ??= createQqBotService();
+		return qqBotService.clearLog();
+	});
+	ipcMain.handle("qqbot:chooseProject", async (e): Promise<string | null> => {
+		const win = BrowserWindow.fromWebContents(e.sender);
+		if (!win) return null;
+		const result = await dialog.showOpenDialog(win, {
+			properties: ["openDirectory"],
+			title: "允许 QQ 创建任务的项目",
+		});
+		return result.canceled ? null : result.filePaths[0];
+	});
 	ipcMain.handle("agent:snapshot", () => taskManager?.active.getSnapshot() ?? null);
 	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
 		taskManager?.active.getDefaults(cwd),
@@ -466,6 +827,29 @@ function registerIpc(): void {
 	ipcMain.handle("agent:send", (_e, req: SendPromptRequest) =>
 		taskManager?.active.send(req),
 	);
+	/**
+	 * Run a prompt in a new session while the window stays where it is.
+	 *
+	 * Created unselected, so the task never steals the transcript the user is
+	 * reading — it joins the sidebar with a running dot and is opened by clicking
+	 * it like any other. Create and send are one round trip because a renderer
+	 * that did them in two could have the selection change in between and prompt
+	 * the wrong session.
+	 */
+	ipcMain.handle("agent:startBackground", (_e, req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult> =>
+		startBackgroundTask(req.cwd, req.text),
+	);
+
+	ipcMain.handle("preferences:get", (): AppPreferences => {
+		preferences ??= new AppPreferencesStore(app.getPath("userData"));
+		return preferences.get();
+	});
+	ipcMain.handle("preferences:update", (_e, patch: Partial<AppPreferences>): AppPreferences => {
+		preferences ??= new AppPreferencesStore(app.getPath("userData"));
+		const next = preferences.update(patch);
+		taskNotifier?.setEnabled(next.notifyOnTaskFinish);
+		return next;
+	});
 	ipcMain.handle("agent:abort", () => taskManager?.active.abort());
 	ipcMain.handle("agent:setFusion", (_e, config: FusionConfig) => taskManager?.active.setFusion(config));
 	ipcMain.handle("agent:setModel", (_e, modelKey: string) =>
@@ -627,6 +1011,35 @@ function registerIpc(): void {
 		return automationService.runNow(id);
 	});
 	ipcMain.handle("automation:abort", (_e, id: string) => automationService?.abort(id));
+
+	ipcMain.handle("webui:status", () => webUiService?.status());
+	ipcMain.handle("webui:save", (_e, request: SaveWebUiConfigRequest) => {
+		if (!webUiService) throw new Error("WebUI service unavailable");
+		return webUiService.save(request);
+	});
+
+	ipcMain.on("webui:ready", (event) => {
+		if (webUiBridge && webUiBridge !== event.sender) webUiBridgeGone(webUiBridge);
+		webUiBridge = event.sender;
+		for (const [id, pending] of webUiPending) {
+			clearTimeout(pending.timer);
+			pending.reject(new Error("WebUI bridge reloaded"));
+			webUiPending.delete(id);
+		}
+	});
+	ipcMain.on("webui:rpcResult", (event, response: unknown) => {
+		if (event.sender !== webUiBridge || !isWebUiBridgeResponse(response)) return;
+		const pending = webUiPending.get(response.id);
+		if (!pending) return;
+		webUiPending.delete(response.id);
+		clearTimeout(pending.timer);
+		if (response.ok) pending.resolve(response.value);
+		else pending.reject(new Error(response.error));
+	});
+	ipcMain.on("webui:event", (event, channel: unknown, payload: unknown) => {
+		if (event.sender !== webUiBridge || !isWebUiEventChannel(channel)) return;
+		webUiService?.broadcast(channel, payload);
+	});
 }
 
 /** How long startup waits for the proxy before showing a window regardless. */
@@ -668,7 +1081,18 @@ app.whenReady().then(async () => {
 	// option, so a preference saved last run has to be known by now.
 	windowMaterialStore = new WindowMaterialStore(app.getPath("userData"));
 	activeMaterial = windowMaterialStore.resolve(supportedMaterials);
+	webUiService = new WebUiService({
+		userDataDir: app.getPath("userData"),
+		rendererDir: join(__dirname, "../renderer"),
+		rendererDevUrl: process.env.ELECTRON_RENDERER_URL,
+		homeDir: app.getPath("home"),
+		shell: { material: "opaque", materials: ["opaque"], titleBarHeight: TITLE_BAR_HEIGHT },
+		invoke: webUiInvoke,
+	});
 	createWindow();
+	void webUiService.startConfigured().catch((error: unknown) =>
+		console.error("Could not start the WebUI server:", error),
+	);
 
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -676,8 +1100,14 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+	void webUiService?.stop();
 	automationService?.stop();
 	terminalService?.killAll();
+	// Stdio servers are child processes: not killing them leaks one per launch.
+	mcpService?.close();
+	qqBotService?.close();
+	relayService?.close();
+	relayService = null;
 	taskManager?.close(); void lanService?.stop();
 });
 

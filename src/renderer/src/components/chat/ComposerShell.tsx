@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTheme } from "../../hooks/useTheme";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
+import { BackgroundTrayIcon, ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
 import { Button } from "../ui/button";
 import { ComposerColumnFrame } from "./ComposerColumnFrame";
 import { ComposerCommandMenu, filterCommands } from "./ComposerCommandMenu";
@@ -39,6 +39,12 @@ interface ComposerShellProps {
 	placeholder?: string;
 	autoFocus?: boolean;
 	onSend: (text: string) => void;
+	/**
+	 * Run the draft as a task in a session of its own, leaving this one on
+	 * screen. Absent where there is nothing to stay on — the welcome screen has
+	 * no open session, so every prompt there is the foreground one.
+	 */
+	onSendBackground?: (text: string) => void;
 	onAbort?: () => void;
 	/**
 	 * Skills and prompt templates for the slash menu. Absent on surfaces with no
@@ -190,13 +196,21 @@ export function ComposerShell(props: ComposerShellProps) {
 	// A command with no arguments is a complete message — several skills take none.
 	const sendable = command !== null || text.trim().length > 0;
 
-	const submit = () => {
+	/**
+	 * Hand the draft off and clear the box.
+	 *
+	 * `background` routes it to a new session instead of this one; the composer
+	 * is emptied either way, because in both cases the draft is gone from here.
+	 */
+	const submit = (background = false) => {
 		if (!sendable || disabled) return;
+		const send = background ? props.onSendBackground : props.onSend;
+		if (!send) return;
 		const value = composed();
 		setText("");
 		setCommand(null);
 		closeMenu();
-		props.onSend(value);
+		send(value);
 	};
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -242,7 +256,8 @@ export function ComposerShell(props: ComposerShellProps) {
 		}
 		if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
 			event.preventDefault();
-			submit();
+			// Held modifier: the prompt goes to a new task rather than to this one.
+			submit(event.ctrlKey || event.metaKey);
 		}
 	};
 
@@ -322,6 +337,21 @@ export function ComposerShell(props: ComposerShellProps) {
 							<div data-slot="composer-footer" className={cn(COMPOSER_FOOTER_ROW_CLASS_NAME, "gap-1 pb-1.5 pr-1.5")}>
 								<div data-slot="composer-toolbar" className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>
 
+								{/* Stays put while the session streams: firing off a second task
+								    without waiting for this one is the whole point of it. */}
+								{props.onSendBackground ? (
+									<Button
+										aria-label={t("composer.sendBackground")}
+										disabled={disabled || !sendable}
+										onClick={() => submit(true)}
+										size="icon-sm"
+										title={t("composer.sendBackgroundHint")}
+										variant="outline"
+									>
+										<BackgroundTrayIcon className="size-3.5" />
+									</Button>
+								) : null}
+
 								{streaming && props.onAbort ? (
 									<Button
 										aria-label={t("composer.stop")}
@@ -335,7 +365,7 @@ export function ComposerShell(props: ComposerShellProps) {
 									<Button
 										aria-label={t("composer.send")}
 										disabled={disabled || !sendable}
-										onClick={submit}
+										onClick={() => submit()}
 										size="icon-sm"
 										variant="prominent"
 									>

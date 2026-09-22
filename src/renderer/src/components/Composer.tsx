@@ -23,6 +23,7 @@ interface ComposerProps {
 	workMode: WorkMode;
 	agentPhase: AgentPhase;
 	onSend: (text: string) => void;
+	onSendBackground?: (text: string) => void;
 	onAbort: () => void;
 	onSetFusion: (config: FusionConfig) => void;
 	onSetModel: (modelKey: string) => void;
@@ -43,6 +44,7 @@ export function Composer(props: ComposerProps) {
 			disabled={props.disabled}
 			onAbort={props.onAbort}
 			onSend={props.onSend}
+			onSendBackground={props.onSendBackground}
 			streaming={props.streaming}
 			loadCommands={props.loadCommands ?? (() => api.agentCommands())}
 			openCommandsSignal={openCommands}
