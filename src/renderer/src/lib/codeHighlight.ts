@@ -5,55 +5,11 @@
 // Depends on: shiki (JS regex engine — no WASM, safe under file://), VS Code's
 //   bundled light-plus/dark-plus themes so colors track the real editor.
 
-import { createHighlighterCore, type HighlighterCore } from "shiki/core";
+import { createHighlighterCore, type HighlighterCore, type LanguageInput } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
 import darkPlus from "@shikijs/themes/dark-plus";
 import lightPlus from "@shikijs/themes/light-plus";
-
-import langBash from "@shikijs/langs/bash";
-import langBat from "@shikijs/langs/bat";
-import langC from "@shikijs/langs/c";
-import langCMake from "@shikijs/langs/cmake";
-import langCpp from "@shikijs/langs/cpp";
-import langCSharp from "@shikijs/langs/csharp";
-import langCss from "@shikijs/langs/css";
-import langDart from "@shikijs/langs/dart";
-import langDiff from "@shikijs/langs/diff";
-import langDockerfile from "@shikijs/langs/dockerfile";
-import langDotenv from "@shikijs/langs/dotenv";
-import langGo from "@shikijs/langs/go";
-import langGraphql from "@shikijs/langs/graphql";
-import langHtml from "@shikijs/langs/html";
-import langIni from "@shikijs/langs/ini";
-import langJava from "@shikijs/langs/java";
-import langJavascript from "@shikijs/langs/javascript";
-import langJson from "@shikijs/langs/json";
-import langJson5 from "@shikijs/langs/json5";
-import langJsonc from "@shikijs/langs/jsonc";
-import langJsx from "@shikijs/langs/jsx";
-import langKotlin from "@shikijs/langs/kotlin";
-import langLess from "@shikijs/langs/less";
-import langLua from "@shikijs/langs/lua";
-import langMakefile from "@shikijs/langs/makefile";
-import langMarkdown from "@shikijs/langs/markdown";
-import langMdx from "@shikijs/langs/mdx";
-import langPhp from "@shikijs/langs/php";
-import langPowershell from "@shikijs/langs/powershell";
-import langPython from "@shikijs/langs/python";
-import langRuby from "@shikijs/langs/ruby";
-import langRust from "@shikijs/langs/rust";
-import langScss from "@shikijs/langs/scss";
-import langShellscript from "@shikijs/langs/shellscript";
-import langSql from "@shikijs/langs/sql";
-import langSvelte from "@shikijs/langs/svelte";
-import langSwift from "@shikijs/langs/swift";
-import langToml from "@shikijs/langs/toml";
-import langTsx from "@shikijs/langs/tsx";
-import langTypescript from "@shikijs/langs/typescript";
-import langVue from "@shikijs/langs/vue";
-import langXml from "@shikijs/langs/xml";
-import langYaml from "@shikijs/langs/yaml";
 
 /** Filename matches win over extensions (lowercased). */
 const NAME_TO_LANG: Record<string, string> = {
@@ -138,59 +94,82 @@ function langForFile(name: string): string | null {
 	return EXT_TO_LANG[lower.slice(dot + 1)] ?? null;
 }
 
+/**
+ * Grammars by Shiki language id, loaded on first use.
+ *
+ * Compiling a grammar is the expensive part of highlighting — all of these at
+ * once cost the first file edit on screen about half a second of blocked
+ * renderer. Loaded one at a time as a transcript actually shows that language,
+ * each is paid once, and the ones a project never uses are never paid at all.
+ */
+const LANG_LOADERS: Record<string, () => Promise<{ default: LanguageInput }>> = {
+	bash: () => import("@shikijs/langs/bash"),
+	bat: () => import("@shikijs/langs/bat"),
+	c: () => import("@shikijs/langs/c"),
+	cmake: () => import("@shikijs/langs/cmake"),
+	cpp: () => import("@shikijs/langs/cpp"),
+	csharp: () => import("@shikijs/langs/csharp"),
+	css: () => import("@shikijs/langs/css"),
+	dart: () => import("@shikijs/langs/dart"),
+	diff: () => import("@shikijs/langs/diff"),
+	dockerfile: () => import("@shikijs/langs/dockerfile"),
+	dotenv: () => import("@shikijs/langs/dotenv"),
+	go: () => import("@shikijs/langs/go"),
+	graphql: () => import("@shikijs/langs/graphql"),
+	html: () => import("@shikijs/langs/html"),
+	ini: () => import("@shikijs/langs/ini"),
+	java: () => import("@shikijs/langs/java"),
+	javascript: () => import("@shikijs/langs/javascript"),
+	json: () => import("@shikijs/langs/json"),
+	json5: () => import("@shikijs/langs/json5"),
+	jsonc: () => import("@shikijs/langs/jsonc"),
+	jsx: () => import("@shikijs/langs/jsx"),
+	kotlin: () => import("@shikijs/langs/kotlin"),
+	less: () => import("@shikijs/langs/less"),
+	lua: () => import("@shikijs/langs/lua"),
+	makefile: () => import("@shikijs/langs/makefile"),
+	markdown: () => import("@shikijs/langs/markdown"),
+	mdx: () => import("@shikijs/langs/mdx"),
+	php: () => import("@shikijs/langs/php"),
+	powershell: () => import("@shikijs/langs/powershell"),
+	python: () => import("@shikijs/langs/python"),
+	ruby: () => import("@shikijs/langs/ruby"),
+	rust: () => import("@shikijs/langs/rust"),
+	scss: () => import("@shikijs/langs/scss"),
+	shellscript: () => import("@shikijs/langs/shellscript"),
+	sql: () => import("@shikijs/langs/sql"),
+	svelte: () => import("@shikijs/langs/svelte"),
+	swift: () => import("@shikijs/langs/swift"),
+	toml: () => import("@shikijs/langs/toml"),
+	tsx: () => import("@shikijs/langs/tsx"),
+	typescript: () => import("@shikijs/langs/typescript"),
+	vue: () => import("@shikijs/langs/vue"),
+	xml: () => import("@shikijs/langs/xml"),
+	yaml: () => import("@shikijs/langs/yaml"),
+};
+
 let highlighterPromise: Promise<HighlighterCore> | null = null;
+const languageLoads = new Map<string, Promise<void>>();
 
 function getHighlighter(): Promise<HighlighterCore> {
 	highlighterPromise ??= createHighlighterCore({
 		themes: [lightPlus, darkPlus],
-		langs: [
-			langBash,
-			langBat,
-			langC,
-			langCMake,
-			langCpp,
-			langCSharp,
-			langCss,
-			langDart,
-			langDiff,
-			langDockerfile,
-			langDotenv,
-			langGo,
-			langGraphql,
-			langHtml,
-			langIni,
-			langJava,
-			langJavascript,
-			langJson,
-			langJson5,
-			langJsonc,
-			langJsx,
-			langKotlin,
-			langLess,
-			langLua,
-			langMakefile,
-			langMarkdown,
-			langMdx,
-			langPhp,
-			langPowershell,
-			langPython,
-			langRuby,
-			langRust,
-			langScss,
-			langShellscript,
-			langSql,
-			langSvelte,
-			langSwift,
-			langToml,
-			langTsx,
-			langTypescript,
-			langVue,
-			langXml,
-			langYaml,
-		],
+		langs: [],
 		engine: createJavaScriptRegexEngine(),
 	});
 	return highlighterPromise;
+}
+
+function ensureLanguage(highlighter: HighlighterCore, lang: string): Promise<void> {
+	let load = languageLoads.get(lang);
+	if (!load) {
+		const loader = LANG_LOADERS[lang];
+		load = loader
+			? loader().then((module) => highlighter.loadLanguage(module.default))
+			: Promise.reject(new Error(`No grammar for ${lang}`));
+		languageLoads.set(lang, load);
+	}
+	return load;
 }
 
 /**
@@ -206,9 +185,60 @@ export async function highlightFileToHtml(
 	const lang = langForFile(filename);
 	if (!lang) return null;
 	const highlighter = await getHighlighter();
+	await ensureLanguage(highlighter, lang);
 	return highlighter.codeToHtml(code, {
 		lang,
 		themes: { light: "light-plus", dark: "dark-plus" },
 		defaultColor: false,
+	});
+}
+
+interface HighlightJob {
+	code: string;
+	filename: string;
+	signal: AbortSignal;
+	resolve: (html: string | null) => void;
+	reject: (error: unknown) => void;
+}
+
+const highlightQueue: HighlightJob[] = [];
+let highlightDraining = false;
+
+const whenIdle = (callback: () => void) => {
+	if (typeof requestIdleCallback === "function") requestIdleCallback(callback, { timeout: 500 });
+	else setTimeout(callback, 16);
+};
+
+function drainHighlights(): void {
+	if (highlightDraining) return;
+	highlightDraining = true;
+	whenIdle(() => {
+		let job = highlightQueue.shift();
+		while (job?.signal.aborted) job = highlightQueue.shift();
+		const finish = () => {
+			highlightDraining = false;
+			if (highlightQueue.length > 0) drainHighlights();
+		};
+		if (!job) return finish();
+		const current = job;
+		highlightFileToHtml(current.code, current.filename)
+			.then(current.resolve, current.reject)
+			.finally(finish);
+	});
+}
+
+/**
+ * {@link highlightFileToHtml}, one file at a time and only when the renderer
+ * is idle.
+ *
+ * Opening a session mounts every edit in it at once; tokenizing them all in
+ * the same task is a frame the user sees freeze. Queued, each one waits for a
+ * gap between frames, and one that is no longer wanted by the time its turn
+ * comes (the row unmounted, the text moved on) is skipped for free.
+ */
+export function highlightWhenIdle(code: string, filename: string, signal: AbortSignal): Promise<string | null> {
+	return new Promise((resolve, reject) => {
+		highlightQueue.push({ code, filename, signal, resolve, reject });
+		drainHighlights();
 	});
 }

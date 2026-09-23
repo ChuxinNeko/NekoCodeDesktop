@@ -1,4 +1,5 @@
 import type { ComposerInsertion } from "../../../shared/browser";
+import type { FastContextConfig } from "../../../shared/fast-context";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode, WorkflowAnswer } from "../../../shared/workflow";
 import type { SlashCommandSummary } from "../../../shared/commands";
@@ -7,6 +8,7 @@ import type {
 	AgentDefaults,
 	AgentSnapshot,
 	ExecutionMode,
+	SendPromptRequest,
 	ThinkingLevel,
 } from "../../../shared/agent";
 import { useTranslation } from "../i18n";
@@ -92,7 +94,7 @@ interface ChatViewProps {
 	browserAvailable?: boolean;
 	browserOpen: boolean;
 	onPickProject: () => void;
-	onSend: (text: string) => void;
+	onSend: (request: SendPromptRequest) => void;
 	/**
 	 * Run this prompt as a task of its own without leaving the open session.
 	 * Absent on surfaces that cannot hold more than one task at a time.
@@ -100,6 +102,7 @@ interface ChatViewProps {
 	onSendBackground?: (text: string) => void;
 	onAbort: () => void;
 	onSetFusion: (config: FusionConfig) => void;
+	onSetFastContext: (config: FastContextConfig) => void;
 	onSetModel: (modelKey: string) => void;
 	onSetThinking: (level: ThinkingLevel) => void;
 	onSetMode: (mode: ExecutionMode) => void;
@@ -113,7 +116,7 @@ interface ChatViewProps {
 	onOpenFile?: (path: string) => void;
 	onDismissError: () => void;
 	/** Opens a session in `cwd` and sends this as its first prompt. */
-	onStartSession: (text: string) => void;
+	onStartSession: (request: SendPromptRequest) => void;
 	/** Ask to rewind to a checkpoint; the confirmation is App's to show. */
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
 	/** Show the list of every restore point in the right dock. */
@@ -314,9 +317,11 @@ export function ChatView(props: ChatViewProps) {
 				onSetMode={props.onSetMode}
 				onSetWorkMode={props.onSetWorkMode}
 				onSetFusion={props.onSetFusion}
+				onSetFastContext={props.onSetFastContext}
 				onSetModel={props.onSetModel}
 				onSetThinking={props.onSetThinking}
 				onStart={props.onStartSession}
+				allowImageAttachments={props.mobile !== true}
 			/>
 		);
 	}
@@ -334,7 +339,7 @@ export function ChatView(props: ChatViewProps) {
 							: snapshot.session.title}
 					</span>
 					<span className="shrink-0 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/60">
-						{t("chat.cells", { count: snapshot.cells.length })}
+						{t("chat.cells", { count: snapshot.cells.length + (snapshot.earlierCells ?? 0) })}
 					</span>
 				</div>
 				{!props.mobile && <><Button onClick={props.onOpenCheckpoints} size="xs" variant="chrome-outline">
@@ -457,6 +462,7 @@ export function ChatView(props: ChatViewProps) {
 				models={snapshot.models}
 				context={snapshot.context}
 				modelKey={snapshot.modelKey}
+				fastContext={snapshot.fastContext}
 				fusion={snapshot.fusion}
 				thinkingLevel={snapshot.thinkingLevel}
 				thinkingLevels={snapshot.thinkingLevels}
@@ -465,8 +471,10 @@ export function ChatView(props: ChatViewProps) {
 				agentPhase={snapshot.agentPhase}
 				onSend={props.onSend}
 				onSendBackground={props.onSendBackground}
+				allowImageAttachments={props.mobile !== true}
 				onAbort={props.onAbort}
 				onSetFusion={props.onSetFusion}
+				onSetFastContext={props.onSetFastContext}
 				onSetModel={props.onSetModel}
 				onSetThinking={props.onSetThinking}
 				onSetMode={props.onSetMode}

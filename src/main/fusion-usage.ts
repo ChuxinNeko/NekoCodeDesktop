@@ -5,6 +5,7 @@ import { FUSION_ENTRY } from "./fusion-config";
 
 /** Custom entries stay out of the model context but survive session reopening. */
 export const FUSION_USAGE_ENTRY = "nekocode.fusion-usage.v1";
+export const FAST_CONTEXT_USAGE_ENTRY = "nekocode.fast-context-usage.v1";
 
 export interface FusionUsageRecord {
 	turnTimestamp: number;
@@ -46,16 +47,23 @@ export function withFusionUsage(
 ): AgentCell[] {
 	let config: FusionConfig | undefined;
 	let latestTurn: number | undefined;
-	const turns = new Map<number, { config: FusionConfig; parts: TurnUsage[] }>();
+	const turns = new Map<
+		number,
+		{ config?: FusionConfig; fusionParts: TurnUsage[]; fastContextParts: TurnUsage[] }
+	>();
 	for (const entry of entries) {
 		if (entry.type === "custom" && entry.customType === FUSION_ENTRY) {
 			config = isFusionConfig(entry.data) ? entry.data : undefined;
 		} else if (entry.type === "message" && entry.message.role === "user") {
 			latestTurn = entry.message.timestamp;
-			if (config) turns.set(latestTurn, { config, parts: [] });
+			turns.set(latestTurn, { config, fusionParts: [], fastContextParts: [] });
 		} else if (entry.type === "custom" && entry.customType === FUSION_USAGE_ENTRY) {
 			const record = readRecord(entry.data);
-			if (record) turns.get(record.turnTimestamp)?.parts.push(record.usage);
+			const turn = record && turns.get(record.turnTimestamp);
+			if (record && turn?.config) turn.fusionParts.push(record.usage);
+		} else if (entry.type === "custom" && entry.customType === FAST_CONTEXT_USAGE_ENTRY) {
+			const record = readRecord(entry.data);
+			if (record) turns.get(record.turnTimestamp)?.fastContextParts.push(record.usage);
 		}
 	}
 	let turnTimestamp: number | undefined;
@@ -63,25 +71,41 @@ export function withFusionUsage(
 		if (cell.type === "user") turnTimestamp = cell.timestamp;
 		if (cell.type !== "assistant" || !cell.usage || turnTimestamp === undefined) return cell;
 		const turn = turns.get(turnTimestamp);
-		if (!turn) return cell;
+		if (!turn || (!turn.config && !turn.fastContextParts.length)) return cell;
 		if (helpersRunning && turnTimestamp === latestTurn) return { ...cell, usage: undefined };
 		const lead = cell.usage;
-		const sidekickUsage = turn.parts.length ? sumUsage(turn.parts) : undefined;
-		const separator = turn.config.sidekickModelKey.indexOf("/");
-		const sidekick = {
-			provider: turn.config.sidekickModelKey.slice(0, separator),
-			model: turn.config.sidekickModelKey.slice(separator + 1),
-			usage: sidekickUsage,
-		};
+		const sidekickUsage = turn.fusionParts.length ? sumUsage(turn.fusionParts) : undefined;
+		const sidekick = turn.config
+			? {
+					provider: turn.config.sidekickModelKey.slice(0, turn.config.sidekickModelKey.indexOf("/")),
+					model: turn.config.sidekickModelKey.slice(turn.config.sidekickModelKey.indexOf("/") + 1),
+					usage: sidekickUsage,
+				}
+			: undefined;
+		const fastContextUsage = turn.fastContextParts.length
+			? sumUsage(turn.fastContextParts)
+			: undefined;
 		return {
 			...cell,
 			usage: {
-				...sumUsage([lead, ...turn.parts]),
+				...sumUsage([lead, ...turn.fusionParts, ...turn.fastContextParts]),
 				provider: lead.provider,
 				model: lead.model,
 				// Lead's elapsed span already includes waiting for Sidekick.
 				durationMs: lead.durationMs,
-				fusion: { lead, sidekick },
+				...(turn.config ? { fusion: { lead, sidekick: sidekick! } } : {}),
+				...(fastContextUsage
+					? {
+							fastContext: {
+								primary: lead,
+								search: {
+									provider: fastContextUsage.provider,
+									model: fastContextUsage.model,
+									usage: fastContextUsage,
+								},
+							},
+						}
+					: {}),
 			},
 		};
 	});

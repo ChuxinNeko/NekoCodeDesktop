@@ -9,6 +9,7 @@ import type { LanTaskOptions } from "../shared/lan";
 import type { RelayRequest, RelayResponse } from "../shared/relay";
 import type { AgentService } from "./agent-service";
 import { isWorkMode } from "../shared/workflow";
+import { isFastContextConfig } from "../shared/fast-context";
 import { isFusionConfig } from "../shared/fusion";
 import type { TaskManager } from "./task-manager";
 
@@ -160,6 +161,7 @@ export class LanService {
 		if (opts.workMode !== undefined && !isWorkMode(opts.workMode)) throw new HttpError(400, "Invalid work mode");
 		if (opts.thinkingLevel !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(opts.thinkingLevel)) throw new HttpError(400, "Invalid thinking level");
 		if (opts.fusion !== undefined && !isFusionConfig(opts.fusion)) throw new HttpError(400, "Invalid Fusion configuration");
+		if (opts.fastContext !== undefined && !isFastContextConfig(opts.fastContext)) throw new HttpError(400, "Invalid Fast Context configuration");
 		return opts;
 	}
 
@@ -168,6 +170,7 @@ export class LanService {
 		if (options.workMode) agent.setWorkMode(options.workMode);
 		if (options.modelKey) await agent.setModel(options.modelKey);
 		if (options.fusion) await agent.setFusion(options.fusion);
+		if (options.fastContext) await agent.setFastContext(options.fastContext);
 		if (options.thinkingLevel) await agent.setThinkingLevel(options.thinkingLevel);
 	}
 

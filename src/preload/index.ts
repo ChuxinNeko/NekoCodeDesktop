@@ -1,3 +1,4 @@
+import type { FastContextConfig } from "../shared/fast-context";
 import type { FusionConfig } from "../shared/fusion";
 import type { LanStatus } from "../shared/lan";
 import type { AppVersionInfo, UpdateCheckResult } from "../shared/updates";
@@ -190,6 +191,10 @@ const api = {
 		ipcRenderer.invoke("agent:open", req),
 	agentSnapshot: (): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:snapshot"),
+	agentLoadEarlier: (): Promise<AgentSnapshot | null> =>
+		ipcRenderer.invoke("agent:loadEarlier"),
+	agentToolOutput: (toolCallId: string, offset: number): Promise<{ text: string; offset: number; total: number } | null> =>
+		ipcRenderer.invoke("agent:toolOutput", toolCallId, offset),
 	agentSend: (req: SendPromptRequest): Promise<SendPromptResult> =>
 		ipcRenderer.invoke("agent:send", req),
 	agentStartBackground: (req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult> =>
@@ -238,6 +243,8 @@ const api = {
 	// and pushed back through onAgentDefaults.
 	agentSetFusion: (config: FusionConfig): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setFusion", config),
+	agentSetFastContext: (config: FastContextConfig): Promise<AgentSnapshot | null> =>
+		ipcRenderer.invoke("agent:setFastContext", config),
 	agentSetModel: (modelKey: string): Promise<AgentSnapshot | null> =>
 		ipcRenderer.invoke("agent:setModel", modelKey),
 	agentSetThinking: (level: ThinkingLevel): Promise<AgentSnapshot | null> =>

@@ -18,6 +18,53 @@ export const REMOTE_NEW_BUDGET = 384 * 1024;
 /** How deep into a tool's arguments the trim walks before giving up. */
 const MAX_DEPTH = 6;
 
+/**
+ * The bounds one kind of client reads a transcript under.
+ *
+ * The phone and the desktop window take the same shape of view — a tail that
+ * grows backwards on request, with oversized tool payloads cut to a head —
+ * and differ only in how much they can afford: a relay frame on one side, a
+ * render on the other.
+ */
+export interface TranscriptViewLimits {
+	/** Cells sent when the client does not say how far back it already is. */
+	window: number;
+	/** Most one request may extend the window backwards. */
+	step: number;
+	/** Largest string carried inline, per field. */
+	fieldLimit: number;
+	/** Most one response may spend on cells the client does not already hold. */
+	budget: number;
+	/** What stands in for the part of a field that was cut. */
+	omitted: (dropped: number) => string;
+}
+
+function sizeLabel(dropped: number): string {
+	return dropped >= 1024 ? `${(dropped / 1024).toFixed(0)} KB` : `${String(dropped)} 字符`;
+}
+
+export const REMOTE_LIMITS: TranscriptViewLimits = {
+	window: REMOTE_WINDOW,
+	step: REMOTE_WINDOW_STEP,
+	fieldLimit: REMOTE_FIELD_LIMIT,
+	budget: REMOTE_NEW_BUDGET,
+	omitted: (dropped) => `\n…（另有 ${sizeLabel(dropped)} 未传输，请在电脑端查看完整内容）`,
+};
+
+/**
+ * The desktop window's view: what it mounts on open is bounded by what is on
+ * screen, not by how long the session has run. Wider than the phone's, since
+ * nothing here crosses a network, but still a bound — every cell sent is a
+ * cell rendered.
+ */
+export const DESKTOP_LIMITS: TranscriptViewLimits = {
+	window: 80,
+	step: 80,
+	fieldLimit: 16 * 1024,
+	budget: 1024 * 1024,
+	omitted: (dropped) => `\n…（另有 ${sizeLabel(dropped)} 未显示）`,
+};
+
 export interface RemoteViewRequest {
 	/** Earliest cell the client already holds; the window starts there. */
 	from?: string;
@@ -29,6 +76,8 @@ export interface RemoteView {
 	snapshot: AgentSnapshot;
 	/** There are older cells before the window starts. */
 	more: boolean;
+	/** How many: the index of the window's first cell in the whole transcript. */
+	earlier: number;
 }
 
 /** Most of a trimmed tool result one fetch returns. */
@@ -64,14 +113,9 @@ export function remoteToolOutput(
 	return null;
 }
 
-function omitted(dropped: number): string {
-	const size = dropped >= 1024 ? `${(dropped / 1024).toFixed(0)} KB` : `${String(dropped)} 字符`;
-	return `\n…（另有 ${size} 未传输，请在电脑端查看完整内容）`;
-}
-
-function trimText(value: string): string {
-	if (value.length <= REMOTE_FIELD_LIMIT) return value;
-	return value.slice(0, REMOTE_FIELD_LIMIT) + omitted(value.length - REMOTE_FIELD_LIMIT);
+function trimText(value: string, limits: TranscriptViewLimits): string {
+	if (value.length <= limits.fieldLimit) return value;
+	return value.slice(0, limits.fieldLimit) + limits.omitted(value.length - limits.fieldLimit);
 }
 
 /**
@@ -81,51 +125,56 @@ function trimText(value: string): string {
  * and whatever the next tool names its payload all cost the same bandwidth, and
  * a list of field names would only be right until someone adds a tool.
  */
-function trimValue(value: unknown, depth = 0): unknown {
-	if (typeof value === "string") return trimText(value);
+function trimValue(value: unknown, limits: TranscriptViewLimits, depth = 0): unknown {
+	if (typeof value === "string") return trimText(value, limits);
 	if (depth >= MAX_DEPTH || typeof value !== "object" || value === null) return value;
-	if (Array.isArray(value)) return value.map((item) => trimValue(item, depth + 1));
+	if (Array.isArray(value)) return value.map((item) => trimValue(item, limits, depth + 1));
 	const out: Record<string, unknown> = {};
-	for (const [key, item] of Object.entries(value)) out[key] = trimValue(item, depth + 1);
+	for (const [key, item] of Object.entries(value)) out[key] = trimValue(item, limits, depth + 1);
 	return out;
 }
 
-function trimCell(cell: AgentCell): AgentCell {
+function trimCell(cell: AgentCell, limits: TranscriptViewLimits): AgentCell {
 	// Only tool payloads. An assistant message is the thing the user opened the
 	// session to read; truncating that to save bytes trades away the point.
 	if (cell.type !== "tool") return cell;
 	// `task` results are a JSON control payload the transcript parses to find the
 	// worker a row started — a truncated one parses to nothing.
 	if (cell.toolName === "task") return cell;
-	const trimmed: AgentCell = { ...cell, args: trimValue(cell.args) };
-	if (cell.details !== undefined) trimmed.details = trimValue(cell.details);
+	const trimmed: AgentCell = { ...cell, args: trimValue(cell.args, limits) };
+	if (cell.details !== undefined) trimmed.details = trimValue(cell.details, limits);
 	// The output keeps a clean prefix and a length instead of an inline marker:
 	// it is the one field with a way to fetch the rest, and appending a chunk to
 	// a prefix beats splicing it around a notice.
-	if (cell.output.length > REMOTE_FIELD_LIMIT) {
-		trimmed.output = cell.output.slice(0, REMOTE_FIELD_LIMIT);
+	if (cell.output.length > limits.fieldLimit) {
+		trimmed.output = cell.output.slice(0, limits.fieldLimit);
 		trimmed.outputTotal = cell.output.length;
 	}
 	return trimmed;
 }
 
 /**
- * The slice of a transcript worth sending to a phone.
+ * The slice of a transcript worth sending to a client — the phone by default,
+ * the desktop window under {@link DESKTOP_LIMITS}.
  *
  * Two independent bounds, because either alone still lets the first load run
  * away: a window keeps a thousand-turn session from arriving at once, and the
  * per-field trim keeps one `read` of a large file from blowing past the relay's
  * frame limit on its own.
  */
-export function remoteView(snapshot: AgentSnapshot, request: RemoteViewRequest = {}): RemoteView {
+export function remoteView(
+	snapshot: AgentSnapshot,
+	request: RemoteViewRequest = {},
+	limits: TranscriptViewLimits = REMOTE_LIMITS,
+): RemoteView {
 	const cells = snapshot.cells;
 	const held = request.from ? cells.findIndex((cell) => cell.id === request.from) : -1;
 	// An unknown `from` means a rewind dropped the cell the client was anchored
 	// to. The tail is the one window that always exists.
-	const anchor = held === -1 ? Math.max(0, cells.length - REMOTE_WINDOW) : held;
-	const back = Math.min(Math.max(request.back ?? 0, 0), REMOTE_WINDOW_STEP);
+	const anchor = held === -1 ? Math.max(0, cells.length - limits.window) : held;
+	const back = Math.min(Math.max(request.back ?? 0, 0), limits.step);
 	const offset = Math.max(0, anchor - back);
-	const trimmed = cells.slice(offset).map(trimCell);
+	const trimmed = cells.slice(offset).map((cell) => trimCell(cell, limits));
 	// Everything before the cell the client is anchored to is new to it, and a
 	// client that holds nothing is new to all of it. A plain poll brings none, so
 	// its window is never clipped and the user keeps what they scrolled back to.
@@ -135,11 +184,12 @@ export function remoteView(snapshot: AgentSnapshot, request: RemoteViewRequest =
 	for (let i = newest; i >= offset; i--) {
 		spent += JSON.stringify(trimmed[i - offset]).length;
 		// One cell always goes, or a single oversized turn would be unreachable.
-		if (spent > REMOTE_NEW_BUDGET && i < newest) break;
+		if (spent > limits.budget && i < newest) break;
 		start = i;
 	}
 	return {
 		snapshot: { ...snapshot, cells: trimmed.slice(start - offset) },
 		more: start > 0,
+		earlier: start,
 	};
 }

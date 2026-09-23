@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentService } from "./agent-service";
-import type { AgentSnapshot, OpenSessionRequest, SessionSummary } from "../shared/agent";
+import type { AgentCell, AgentSnapshot, OpenSessionRequest, SessionSummary } from "../shared/agent";
+import { DESKTOP_LIMITS } from "./agent-remote-view";
 import { TaskManager } from "./task-manager";
 
 function fixture() {
@@ -22,7 +23,7 @@ function fixture() {
 			const id = `task-${++nextId}`;
 			this.snapshot = {
 				session: { id, cwd, sessionFile: `/sessions/${id}.jsonl`, title: id, titlePending: false, preview: "", createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0 },
-				cells: [], checkpoints: [], workflow: { request: null, todos: [], tasks: [] }, streaming: false,
+				cells: [], checkpoints: [], fastContext: { modelKey: null, thinkingLevel: "low" }, workflow: { request: null, todos: [], tasks: [] }, streaming: false,
 				models: [], modelKey: null, thinkingLevel: "off", thinkingLevels: ["off"], mode: "auto", workMode: "agent", agentPhase: "execute",
 			};
 			this.emit("agent:snapshot", this.snapshot);
@@ -95,6 +96,38 @@ describe("parallel task execution", () => {
 		expect((await f.manager.list()).find((s) => s.id === b.snapshot!.session.id)?.running).toBe(false);
 	});
 
+	test("a growing transcript only nudges the sidebar when it gets its first message", async () => {
+		const f = fixture();
+		const agent = f.fake(await f.manager.create("/project"));
+		agent.run();
+		const grow = (messageCount: number) => {
+			agent.snapshot = { ...agent.snapshot!, session: { ...agent.snapshot!.session, messageCount } };
+			agent.emit("agent:snapshot", agent.snapshot);
+		};
+		const nudges = () => f.events.filter((e) => e.channel === "agent:sessionsChanged").length;
+		f.events.length = 0;
+		grow(1);
+		expect(nudges()).toBe(1);
+		for (let count = 2; count < 50; count++) grow(count);
+		expect(nudges()).toBe(1);
+		// The run ending is still announced.
+		agent.run(false);
+		expect(nudges()).toBe(2);
+	});
+
+	test("opening a session answers with the snapshot it selected, without building another", async () => {
+		const f = fixture();
+		const agent = await f.manager.create("/project");
+		const fake = f.fake(agent);
+		let builds = 0;
+		const getSnapshot = fake.getSnapshot.bind(fake);
+		fake.getSnapshot = () => { builds++; return getSnapshot(); };
+		const opened = await f.manager.open(fake.snapshot!.session);
+		expect(builds).toBe(1);
+		expect(f.manager.viewOf(opened)?.session).toEqual(fake.snapshot!.session);
+		expect(builds).toBe(1);
+	});
+
 	test("simultaneous history reads create only one execution owner without changing desktop selection", async () => {
 		const f = fixture(); const active = await f.manager.create("/active");
 		const req = { cwd: "/history", sessionFile: "/sessions/history.jsonl" };
@@ -149,5 +182,90 @@ describe("parallel task execution", () => {
 		expect(f.manager.active).toBe(active);
 		expect((await f.manager.list()).some((s) => s.id === row.id)).toBe(false);
 		f.manager.close(); expect(f.agents.every((a) => a.closed)).toBe(true);
+	});
+});
+
+describe("desktop transcript window", () => {
+	const userCell = (i: number): AgentCell => ({ id: `u${String(i)}`, type: "user", text: `prompt ${String(i)}`, timestamp: i });
+	const cells = (count: number, from = 0) => Array.from({ length: count }, (_, i) => userCell(from + i));
+	const pushed = (f: ReturnType<typeof fixture>) =>
+		f.events.filter((e) => e.channel === "agent:snapshot").map((e) => e.payload as AgentSnapshot).at(-1)!;
+
+	async function longSession(f: ReturnType<typeof fixture>, count: number) {
+		const agent = f.fake(await f.manager.create("/project", false));
+		agent.snapshot = { ...agent.snapshot!, cells: cells(count) };
+		return agent;
+	}
+
+	test("opening a long session sends only its tail, and says how much is behind it", async () => {
+		const f = fixture();
+		const agent = await longSession(f, 500);
+		const opened = await f.manager.open(agent.snapshot!.session);
+		const view = f.manager.viewOf(opened)!;
+		expect(view.cells).toHaveLength(DESKTOP_LIMITS.window);
+		expect(view.cells.at(-1)!.id).toBe("u499");
+		expect(view.earlierCells).toBe(500 - DESKTOP_LIMITS.window);
+		expect(pushed(f).cells).toHaveLength(DESKTOP_LIMITS.window);
+	});
+
+	test("a short session is sent whole, with nothing marked as behind it", async () => {
+		const f = fixture();
+		const agent = await longSession(f, 5);
+		const view = f.manager.viewOf(await f.manager.open(agent.snapshot!.session))!;
+		expect(view.cells).toHaveLength(5);
+		expect(view.earlierCells).toBeUndefined();
+	});
+
+	test("the window stays pinned while the run adds cells, and pages back on request", async () => {
+		const f = fixture();
+		const agent = await longSession(f, 500);
+		await f.manager.open(agent.snapshot!.session);
+		const first = pushed(f).cells[0].id;
+		agent.snapshot = { ...agent.snapshot!, cells: [...agent.snapshot!.cells, ...cells(10, 500)] };
+		agent.emit("agent:snapshot", agent.snapshot);
+		expect(pushed(f).cells[0].id).toBe(first);
+		expect(pushed(f).cells).toHaveLength(DESKTOP_LIMITS.window + 10);
+
+		const earlier = f.manager.loadEarlier()!;
+		expect(earlier.cells).toHaveLength(DESKTOP_LIMITS.window + DESKTOP_LIMITS.step + 10);
+		expect(earlier.earlierCells).toBe(500 - DESKTOP_LIMITS.window - DESKTOP_LIMITS.step);
+		// Later pushes keep what was paged in.
+		agent.emit("agent:snapshot", agent.snapshot);
+		expect(pushed(f).cells[0].id).toBe(earlier.cells[0].id);
+	});
+
+	test("switching back to a session starts it at its end again", async () => {
+		const f = fixture();
+		const agent = await longSession(f, 500);
+		const other = f.fake(await f.manager.create("/other", false));
+		await f.manager.open(agent.snapshot!.session);
+		f.manager.loadEarlier();
+		await f.manager.open(other.snapshot!.session);
+		await f.manager.open(agent.snapshot!.session);
+		expect(pushed(f).cells).toHaveLength(DESKTOP_LIMITS.window);
+	});
+
+	test("oversized tool output reaches the window as a head it can fetch the rest of", async () => {
+		const f = fixture();
+		const agent = f.fake(await f.manager.create("/project", false));
+		const output = "x".repeat(DESKTOP_LIMITS.fieldLimit + 100);
+		agent.snapshot = {
+			...agent.snapshot!,
+			cells: [{ id: "t1", type: "tool", toolCallId: "call-1", toolName: "read", args: {}, output, status: "done", timestamp: 1 }],
+		};
+		const view = f.manager.viewOf(await f.manager.open(agent.snapshot!.session))!;
+		const [cell] = view.cells;
+		if (cell.type !== "tool") throw new Error("expected a tool cell");
+		expect(cell.output).toHaveLength(DESKTOP_LIMITS.fieldLimit);
+		expect(cell.outputTotal).toBe(output.length);
+	});
+
+	test("every snapshot pushed for the selected session is windowed", async () => {
+		const f = fixture();
+		const agent = await longSession(f, 500);
+		await f.manager.open(agent.snapshot!.session);
+		agent.emit("agent:snapshot", agent.snapshot);
+		for (const event of f.events.filter((e) => e.channel === "agent:snapshot"))
+			expect((event.payload as AgentSnapshot).cells.length).toBeLessThanOrEqual(DESKTOP_LIMITS.window);
 	});
 });

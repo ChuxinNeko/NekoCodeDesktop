@@ -58,6 +58,7 @@ export interface RegistrationProfile {
 	apiKey: string;
 	modelIds: string[];
 	reasoning: boolean;
+	imageInput: boolean;
 	contextWindow: number;
 	maxTokens: number;
 	modelOverrides: Record<string, ModelTokenLimits>;
@@ -221,6 +222,7 @@ export class ModelConfigService {
 					encryptedApiKey,
 					modelIds,
 					reasoning: req.reasoning === true,
+					imageInput: req.imageInput ?? existing.imageInput ?? false,
 					// Omitted means "leave the stored limit alone": the models tab
 					// edits per-model overrides but still omits the provider defaults.
 					contextWindow: req.contextWindow ?? existing.contextWindow,
@@ -238,6 +240,7 @@ export class ModelConfigService {
 					encryptedApiKey,
 					modelIds,
 					reasoning: req.reasoning === true,
+					imageInput: req.imageInput === true,
 					contextWindow: req.contextWindow,
 					maxTokens: req.maxTokens,
 					modelOverrides,
@@ -329,6 +332,7 @@ export class ModelConfigService {
 					apiKey: this.decryptApiKey(p),
 					modelIds: [...p.modelIds],
 					reasoning: p.reasoning === true,
+					imageInput: p.imageInput === true,
 					contextWindow: p.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 					maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
 					modelOverrides: Object.fromEntries(

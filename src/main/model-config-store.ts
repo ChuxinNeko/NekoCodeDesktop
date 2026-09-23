@@ -50,6 +50,7 @@ export interface StoredProfile {
 	modelIds: string[];
 	/** Optional: profiles written before the flag existed count as non-reasoning. */
 	reasoning?: boolean;
+	imageInput?: boolean;
 	/** Optional overrides; absent means the conservative defaults above. */
 	contextWindow?: number;
 	maxTokens?: number;
@@ -161,6 +162,9 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 		if (p.reasoning !== undefined && typeof p.reasoning !== "boolean") {
 			throw new Error(SHAPE_ERROR);
 		}
+		if (p.imageInput !== undefined && typeof p.imageInput !== "boolean") {
+			throw new Error(SHAPE_ERROR);
+		}
 		if (
 			!isValidTokenLimit(p.contextWindow, MAX_CONTEXT_WINDOW) ||
 			!isValidTokenLimit(p.maxTokens, MAX_OUTPUT_TOKENS)
@@ -203,6 +207,10 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 	return parsed.profiles as StoredProfile[];
 }
 
+export function modelInputList(imageInput: boolean): ("text" | "image")[] {
+	return imageInput ? ["text", "image"] : ["text"];
+}
+
 export function toSummary(p: StoredProfile): ModelProfileSummary {
 	return {
 		id: p.id,
@@ -213,6 +221,7 @@ export function toSummary(p: StoredProfile): ModelProfileSummary {
 		api: p.api,
 		modelIds: [...p.modelIds],
 		reasoning: p.reasoning === true,
+		imageInput: p.imageInput === true,
 		contextWindow: p.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 		maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
 		modelOverrides: Object.fromEntries(

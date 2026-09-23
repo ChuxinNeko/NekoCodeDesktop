@@ -1,3 +1,4 @@
+import type { FastContextConfig } from "../../shared/fast-context";
 import type { FusionConfig } from "../../shared/fusion";
 import { elementSelectionText, type BrowserPreviewRequest, type ComposerInsertion } from "../../shared/browser";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -5,6 +6,7 @@ import type {
 	AgentDefaults,
 	AgentSnapshot,
 	ExecutionMode,
+	SendPromptRequest,
 	SessionSummary,
 	ThinkingLevel,
 } from "../../shared/agent";
@@ -36,6 +38,7 @@ import { useTheme } from "./hooks/useTheme";
 import { DEFAULT_UI_DENSITY, type UiDensity } from "./lib/appDensity";
 import { DEFAULT_CHAT_WIDTH, type ChatWidthMode } from "./lib/chatWidth";
 import { cn } from "./lib/utils";
+import { shareStructure } from "./lib/structural-share";
 import { CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME } from "./components/chat/composerPickerStyles";
 
 const PROJECT_STORAGE_KEY = "nekocode:project-cwd";
@@ -115,13 +118,25 @@ export default function App() {
 		});
 	}, [cwd]);
 	const [snapshot, setSnapshot] = useState<AgentSnapshot | null>(null);
+	/**
+	 * Put a snapshot from main on screen, keeping every part of the current one
+	 * it left unchanged. Each snapshot arrives as a fresh copy of the whole
+	 * transcript; carrying the old objects over is what lets the rows that did
+	 * not change skip rendering while the tail streams.
+	 */
+	const showSnapshot = (next: AgentSnapshot | null) =>
+		setSnapshot((previous) => (next ? shareStructure(previous, next) : null));
 	const [browserPreview, setBrowserPreview] = useState<BrowserPreviewRequest | null>(null);
 	const [composerInsertion, setComposerInsertion] = useState<ComposerInsertion | null>(null);
 	const currentPreviewScope = useRef({ cwd, sessionId: snapshot?.session.id });
 	currentPreviewScope.current = { cwd, sessionId: snapshot?.session.id };
 	const [defaults, setDefaults] = useState<AgentDefaults | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [loadingEarlier, setLoadingEarlier] = useState(false);
+	const loadingEarlierRef = useRef(false);
 	const sessionTransition = useRef(false);
+	/** Bumped by every open or create; only the latest one's reply is applied. */
+	const transitionSeq = useRef(0);
 	const [error, setError] = useState<string | null>(null);
 	/**
 	 * The checkpoint a confirmation is open for.
@@ -259,7 +274,7 @@ export default function App() {
 
 	useEffect(() => {
 		const unsubscribe = api.onAgentSnapshot((next) => {
-			setSnapshot(next);
+			showSnapshot(next);
 			setError(next?.error ?? null);
 			const sessionCwd = next?.session.cwd;
 			if (!sessionCwd || sessionCwd === cwdRef.current) return;
@@ -341,22 +356,25 @@ export default function App() {
 		} catch (cause) { setError(errorMessage(cause)); }
 	};
 
+	/**
+	 * Opening a session neither locks the sidebar nor swallows the next click: a
+	 * long transcript can take a moment to arrive, and a user who clicks on
+	 * meanwhile means the later row. Main serializes the switches, so the last
+	 * one asked for is the one that ends up active — and the only reply that
+	 * gets to put itself on screen.
+	 */
 	const openSession = async (session: SessionSummary) => {
-		if (sessionTransition.current) return;
-		sessionTransition.current = true;
-		setBusy(true);
+		const seq = ++transitionSeq.current;
 		try {
 			const next = await api.agentOpen({ cwd: session.cwd, sessionFile: session.sessionFile });
+			if (seq !== transitionSeq.current) return;
 			setCwd(next.session.cwd);
 			writeStored(PROJECT_STORAGE_KEY, next.session.cwd);
-			setSnapshot(next);
+			showSnapshot(next);
 			setView("chat");
 			setError(null);
 		} catch (cause) {
-			setError(errorMessage(cause));
-		} finally {
-			sessionTransition.current = false;
-			setBusy(false);
+			if (seq === transitionSeq.current) setError(errorMessage(cause));
 		}
 	};
 	openSessionRef.current = openSession;
@@ -364,12 +382,16 @@ export default function App() {
 	const createSession = async (targetCwd = cwd): Promise<boolean> => {
 		if (!targetCwd || sessionTransition.current) return false;
 		sessionTransition.current = true;
+		const seq = ++transitionSeq.current;
 		setBusy(true);
 		try {
 			const next = await api.agentCreate(targetCwd);
+			// A session opened from the sidebar meanwhile is the one on screen now;
+			// the caller must not go on to prompt the one it is replacing.
+			if (seq !== transitionSeq.current) return false;
 			setCwd(next.session.cwd);
 			writeStored(PROJECT_STORAGE_KEY, next.session.cwd);
-			setSnapshot(next);
+			showSnapshot(next);
 			setView("chat");
 			setError(null);
 			return true;
@@ -382,9 +404,38 @@ export default function App() {
 		}
 	};
 
-	const send = async (text: string) => {
+	/**
+	 * Reach further back into a long session. Main only sends the tail of a
+	 * transcript, so opening one costs what is on screen rather than everything
+	 * the session ever did; scrolling to the top asks for the page before it.
+	 */
+	const loadEarlier = async () => {
+		if (loadingEarlierRef.current) return;
+		loadingEarlierRef.current = true;
+		setLoadingEarlier(true);
+		// A reply that lands after the user moved to another session is not theirs.
+		const seq = transitionSeq.current;
 		try {
-			const result = await api.agentSend({ text });
+			const next = await api.agentLoadEarlier();
+			if (next && seq === transitionSeq.current) showSnapshot(next);
+		} catch (cause) {
+			if (seq === transitionSeq.current) setError(errorMessage(cause));
+		} finally {
+			loadingEarlierRef.current = false;
+			setLoadingEarlier(false);
+		}
+	};
+
+	/** The rest of a tool result the window was only sent the head of. */
+	const loadToolOutput = async (toolCallId: string, offset: number) => {
+		const chunk = await api.agentToolOutput(toolCallId, offset);
+		if (!chunk) throw new Error("Tool output is unavailable");
+		return chunk;
+	};
+
+	const send = async (request: SendPromptRequest) => {
+		try {
+			const result = await api.agentSend(request);
 			if (!result.accepted) {
 				setError(result.error);
 				return;
@@ -421,9 +472,9 @@ export default function App() {
 	};
 
 	/** Welcome screen: the first prompt both opens the session and is sent to it. */
-	const startSession = async (text: string) => {
+	const startSession = async (request: SendPromptRequest) => {
 		if (!(await createSession())) return;
-		await send(text);
+		await send(request);
 	};
 
 	// A null return means the pick landed on the welcome screen: it is held as
@@ -431,14 +482,21 @@ export default function App() {
 	const setFusion = async (config: FusionConfig) => {
 		try {
 			const next = await api.agentSetFusion(config);
-			if (next) setSnapshot(next);
+			if (next) showSnapshot(next);
+		} catch (cause) { setError(errorMessage(cause)); }
+	};
+
+	const setFastContext = async (config: FastContextConfig) => {
+		try {
+			const next = await api.agentSetFastContext(config);
+			if (next) showSnapshot(next);
 		} catch (cause) { setError(errorMessage(cause)); }
 	};
 
 	const setModel = async (modelKey: string) => {
 		try {
 			const next = await api.agentSetModel(modelKey);
-			if (next) setSnapshot(next);
+			if (next) showSnapshot(next);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -447,7 +505,7 @@ export default function App() {
 	const setThinking = async (level: ThinkingLevel) => {
 		try {
 			const next = await api.agentSetThinking(level);
-			if (next) setSnapshot(next);
+			if (next) showSnapshot(next);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -456,14 +514,14 @@ export default function App() {
 	const setWorkMode = async (mode: WorkMode) => {
 		try {
 			const next = await api.agentSetWorkMode(mode);
-			if (next) setSnapshot(next);
+			if (next) showSnapshot(next);
 		} catch (cause) { setError(errorMessage(cause)); }
 	};
 
 	const setMode = async (mode: ExecutionMode) => {
 		try {
 			const next = await api.agentSetMode(mode);
-			if (next) setSnapshot(next);
+			if (next) showSnapshot(next);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		}
@@ -573,6 +631,10 @@ export default function App() {
 							onInsertionConsumed={(id) => setComposerInsertion((current) => current?.id === id ? null : current)}
 							cwd={cwd}
 							snapshot={snapshot}
+							earlierAvailable={(snapshot?.earlierCells ?? 0) > 0}
+							loadingEarlier={loadingEarlier}
+							onLoadEarlier={() => void loadEarlier()}
+							onLoadToolOutput={loadToolOutput}
 							defaults={defaults}
 							busy={busy}
 							error={error}
@@ -584,6 +646,7 @@ export default function App() {
 							onSendBackground={(text) => void startBackgroundTask(text)}
 							onAbort={() => void api.agentAbort()}
 							onSetFusion={setFusion}
+							onSetFastContext={setFastContext}
 							onSetModel={setModel}
 							onSetThinking={setThinking}
 							onSetMode={setMode}

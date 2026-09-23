@@ -144,6 +144,7 @@ export function ProviderModelSettings() {
 				...(draft.apiKey.trim() ? { apiKey: draft.apiKey } : {}),
 				modelIds: existing?.modelIds ?? [],
 				reasoning: draft.reasoning,
+				imageInput: draft.imageInput,
 				...(contextWindow === null ? {} : { contextWindow }),
 				...(maxTokens === null ? {} : { maxTokens }),
 			});
@@ -202,6 +203,7 @@ export function ProviderModelSettings() {
 				api: profile.api,
 				modelIds,
 				reasoning: profile.reasoning,
+				imageInput: profile.imageInput,
 			});
 			await reload();
 		});
@@ -238,6 +240,7 @@ export function ProviderModelSettings() {
 				api: profile.api,
 				modelIds: profile.modelIds,
 				reasoning: profile.reasoning,
+				imageInput: profile.imageInput,
 				modelOverrides,
 			});
 			await reload();

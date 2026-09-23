@@ -1,5 +1,6 @@
 import type { AgentPhase, WorkMode, WorkflowSnapshot } from "./workflow";
 import type { CheckpointSummary } from "./checkpoints";
+import type { FastContextConfig } from "./fast-context";
 import type { FusionConfig } from "./fusion";
 
 export type ExecutionMode = "read-only" | "auto" | "full-access";
@@ -14,6 +15,7 @@ export type ThinkingLevel =
 
 export interface ModelOption {
 	thinkingLevels?: ThinkingLevel[];
+	imageInput?: boolean;
 	key: string;
 	provider: string;
 	/** The provider's own label — "zai", not the `nekocode-…` id it registers under. */
@@ -62,6 +64,10 @@ export interface TurnUsage {
 	fusion?: {
 		lead: TurnUsage;
 		sidekick: { provider: string; model: string; usage?: TurnUsage };
+	};
+	fastContext?: {
+		primary: TurnUsage;
+		search: { provider: string; model: string; usage?: TurnUsage };
 	};
 	provider: string;
 	model: string;
@@ -168,6 +174,7 @@ export interface SessionSummary {
  * session starts with. Mirrors the pickers' half of AgentSnapshot.
  */
 export interface AgentDefaults {
+	fastContext: FastContextConfig;
 	fusion?: FusionConfig | null;
 	modelKey: string | null;
 	models: ModelOption[];
@@ -190,9 +197,16 @@ export interface ContextUsage {
 }
 
 export interface AgentSnapshot {
+	fastContext: FastContextConfig;
 	fusion?: FusionConfig | null;
 	session: SessionSummary;
 	cells: AgentCell[];
+	/**
+	 * Set when `cells` is only the tail of the transcript: how many cells come
+	 * before it. The window sent to the desktop starts at the end of a long
+	 * session and reaches further back only as the user scrolls up to it.
+	 */
+	earlierCells?: number;
 	/**
 	 * Points this session can be put back to, newest first. Each one carries the
 	 * `cellId` of the turn it sits in front of, which is what lets the transcript
@@ -241,8 +255,18 @@ export interface DeleteSessionRequest {
 	sessionFile: string;
 }
 
+export const MAX_PROMPT_IMAGES = 4;
+export const MAX_PROMPT_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_PROMPT_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024;
+export interface PromptImageAttachment {
+	name: string;
+	mimeType: string;
+	data: string;
+}
+
 export interface SendPromptRequest {
 	text: string;
+	images?: PromptImageAttachment[];
 }
 
 /**

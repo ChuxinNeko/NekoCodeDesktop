@@ -1,4 +1,9 @@
-import type { ContextUsage } from "../../../../shared/agent";
+import type { ContextUsage, PromptImageAttachment, SendPromptRequest } from "../../../../shared/agent";
+import {
+	MAX_PROMPT_IMAGE_BYTES,
+	MAX_PROMPT_IMAGE_TOTAL_BYTES,
+	MAX_PROMPT_IMAGES,
+} from "../../../../shared/agent";
 import type { ComposerInsertion } from "../../../../shared/browser";
 import type { SlashCommandSummary } from "../../../../shared/commands";
 import { BorderBeam } from "border-beam";
@@ -6,7 +11,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTheme } from "../../hooks/useTheme";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
+import { AddPlusIcon, ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
+import { fileToPromptImage, imageMimeType } from "./composer-images";
 import { ContextGauge } from "./ContextGauge";
 import { Button } from "../ui/button";
 import { ComposerColumnFrame } from "./ComposerColumnFrame";
@@ -40,7 +46,9 @@ interface ComposerShellProps {
 	streaming?: boolean;
 	placeholder?: string;
 	autoFocus?: boolean;
-	onSend: (text: string) => void;
+	onSend: (request: SendPromptRequest) => void;
+	supportsImages?: boolean;
+	allowImageAttachments?: boolean;
 	/**
 	 * Run the draft as a task in a session of its own, leaving this one on
 	 * screen. Absent where there is nothing to stay on — the welcome screen has
@@ -90,6 +98,14 @@ export function ComposerShell(props: ComposerShellProps) {
 	const [commands, setCommands] = useState<readonly SlashCommandSummary[]>([]);
 	const [query, setQuery] = useState<string | null>(null);
 	const [activeIndex, setActiveIndex] = useState(0);
+
+	const [images, setImages] = useState<{ id: string; attachment: PromptImageAttachment; bytes: number }[]>([]);
+	const [imageError, setImageError] = useState<string | null>(null);
+	const [dragActive, setDragActive] = useState(false);
+	const dragDepth = useRef(0);
+	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const imagesAllowed = props.allowImageAttachments !== false;
+	const imageCapable = imagesAllowed && props.supportsImages === true && !disabled;
 
 	const matches = query === null ? [] : filterCommands(commands, query);
 	const menuOpen = query !== null;
@@ -198,8 +214,80 @@ export function ComposerShell(props: ComposerShellProps) {
 		return body ? `/${command.name} ${body}` : `/${command.name}`;
 	};
 
+	const addFiles = async (files: readonly File[]) => {
+		if (!imagesAllowed || disabled || files.length === 0) return;
+		if (props.supportsImages !== true) {
+			setImageError(t("composer.imagesUnsupportedModel"));
+			return;
+		}
+		const accepted = [...images];
+		let total = accepted.reduce((sum, image) => sum + image.bytes, 0);
+		let failed: string | null = null;
+		for (const file of files) {
+			if (accepted.length >= MAX_PROMPT_IMAGES) {
+				failed = t("composer.imagesTooMany", { max: MAX_PROMPT_IMAGES });
+				break;
+			}
+			if (!imageMimeType(file)) {
+				failed = t("composer.imageUnsupportedType");
+				continue;
+			}
+			if (file.size > MAX_PROMPT_IMAGE_BYTES) {
+				failed = t("composer.imageTooLarge", { max: MAX_PROMPT_IMAGE_BYTES / 1024 / 1024 });
+				continue;
+			}
+			if (total + file.size > MAX_PROMPT_IMAGE_TOTAL_BYTES) {
+				failed = t("composer.imagesTotalTooLarge", { max: MAX_PROMPT_IMAGE_TOTAL_BYTES / 1024 / 1024 });
+				continue;
+			}
+			try {
+				const attachment = await fileToPromptImage(file);
+				accepted.push({ id: crypto.randomUUID(), attachment, bytes: file.size });
+				total += file.size;
+			} catch {
+				failed = t("composer.imageUnsupportedType");
+			}
+		}
+		setImages(accepted);
+		setImageError(failed);
+	};
+
+	const removeImage = (id: string) => {
+		setImages((current) => current.filter((image) => image.id !== id));
+		setImageError(null);
+	};
+
+	const isFileDrag = (event: React.DragEvent) => event.dataTransfer.types.includes("Files");
+
+	const onDragEnter = (event: React.DragEvent) => {
+		if (!isFileDrag(event)) return;
+		event.preventDefault();
+		dragDepth.current += 1;
+		if (imageCapable) setDragActive(true);
+	};
+	const onDragOver = (event: React.DragEvent) => {
+		if (!isFileDrag(event)) return;
+		event.preventDefault();
+	};
+	const onDragLeave = (event: React.DragEvent) => {
+		if (!isFileDrag(event)) return;
+		dragDepth.current = Math.max(0, dragDepth.current - 1);
+		if (dragDepth.current === 0) setDragActive(false);
+	};
+	const onDrop = (event: React.DragEvent) => {
+		if (!isFileDrag(event)) return;
+		event.preventDefault();
+		dragDepth.current = 0;
+		setDragActive(false);
+		const files = [...event.dataTransfer.files];
+		if (!imagesAllowed) return;
+		void addFiles(files);
+	};
+
 	// A command with no arguments is a complete message — several skills take none.
-	const sendable = command !== null || text.trim().length > 0;
+	const sendable = command !== null || text.trim().length > 0 || images.length > 0;
+	const imagesBlocked = images.length > 0 && props.supportsImages !== true;
+	const shownImageError = imageError ?? (imagesBlocked ? t("composer.imagesUnsupportedModel") : null);
 
 	/**
 	 * Hand the draft off and clear the box.
@@ -208,14 +296,28 @@ export function ComposerShell(props: ComposerShellProps) {
 	 * is emptied either way, because in both cases the draft is gone from here.
 	 */
 	const submit = (background = false) => {
-		if (!sendable || disabled) return;
-		const send = background ? props.onSendBackground : props.onSend;
-		if (!send) return;
+		if (!sendable || disabled || imagesBlocked) return;
 		const value = composed();
+		if (background && images.length === 0) {
+			if (!props.onSendBackground) return;
+			setText("");
+			setCommand(null);
+			setImages([]);
+			setImageError(null);
+			closeMenu();
+			props.onSendBackground(value);
+			return;
+		}
+		const request: SendPromptRequest = {
+			text: value || t("composer.imageOnlyPrompt"),
+			...(images.length ? { images: images.map((image) => image.attachment) } : {}),
+		};
 		setText("");
 		setCommand(null);
+		setImages([]);
+		setImageError(null);
 		closeMenu();
-		send(value);
+		props.onSend(request);
 	};
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -281,7 +383,48 @@ export function ComposerShell(props: ComposerShellProps) {
 						/>
 					) : null}
 					<BorderBeam active={streaming === true} theme={resolvedTheme} duration={6}>
-						<div className={COMPOSER_INPUT_SURFACE_CLASS_NAME}>
+						<div
+							className={cn(
+								COMPOSER_INPUT_SURFACE_CLASS_NAME,
+								dragActive && "border-[color:var(--color-border-focus)] bg-[color-mix(in_srgb,var(--color-border-focus)_6%,transparent)]",
+							)}
+							onDragEnter={onDragEnter}
+							onDragOver={onDragOver}
+							onDragLeave={onDragLeave}
+							onDrop={onDrop}
+						>
+							{images.length > 0 ? (
+								<div className="flex flex-wrap gap-2 px-3 pt-2">
+									{images.map((image) => (
+										<div
+											key={image.id}
+											className="flex items-center gap-1.5 rounded-lg border border-[color:var(--surface-border)] bg-[var(--color-background-elevated-secondary)] p-1"
+										>
+											<img
+												src={`data:${image.attachment.mimeType};base64,${image.attachment.data}`}
+												alt={image.attachment.name}
+												className="size-10 shrink-0 rounded-md object-cover"
+											/>
+											<span className="max-w-24 truncate text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+												{image.attachment.name}
+											</span>
+											<button
+												type="button"
+												aria-label={t("composer.removeImage")}
+												onClick={() => removeImage(image.id)}
+												className="flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
+											>
+												<XIcon className="size-2.5" />
+											</button>
+										</div>
+									))}
+								</div>
+							) : null}
+							{shownImageError ? (
+								<div className="px-3 pt-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
+									{shownImageError}
+								</div>
+							) : null}
 							<div className={COMPOSER_EDITOR_PADDING_CLASS_NAME}>
 								{/* The pill sits *in* the first line rather than above it: a
 								    textarea cannot hold an element, so it is laid over the
@@ -340,6 +483,30 @@ export function ComposerShell(props: ComposerShellProps) {
 								</div>
 							</div>
 							<div data-slot="composer-footer" className={cn(COMPOSER_FOOTER_ROW_CLASS_NAME, "gap-1 pb-1.5 pr-1.5")}>
+								{imagesAllowed ? (
+									<Button
+										aria-label={t("composer.addImage")}
+										title={props.supportsImages === true ? t("composer.addImage") : t("composer.imagesUnsupportedModel")}
+										disabled={disabled || props.supportsImages !== true}
+										onClick={() => fileInputRef.current?.click()}
+										size="icon-sm"
+										variant="outline"
+									>
+										<AddPlusIcon className="size-3.5" />
+									</Button>
+								) : null}
+								<input
+									ref={fileInputRef}
+									type="file"
+									accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+									multiple
+									className="hidden"
+									onChange={(event) => {
+										const files = [...(event.target.files ?? [])];
+										event.target.value = "";
+										void addFiles(files);
+									}}
+								/>
 								<div data-slot="composer-toolbar" className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>
 
 								{/* Sits next to send because that is where the eye already is at
@@ -358,7 +525,7 @@ export function ComposerShell(props: ComposerShellProps) {
 								) : (
 									<Button
 										aria-label={t("composer.send")}
-										disabled={disabled || !sendable}
+										disabled={disabled || !sendable || imagesBlocked}
 										onClick={() => submit()}
 										size="icon-sm"
 										variant="prominent"

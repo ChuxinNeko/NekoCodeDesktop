@@ -1,5 +1,7 @@
 import { useState } from "react";
+import type { FastContextConfig } from "../../../../shared/fast-context";
 import type { FusionConfig } from "../../../../shared/fusion";
+import { FastContextPicker } from "./FastContextPicker";
 import { FusionPicker } from "./FusionPicker";
 import {
 	DEFAULT_AGENT_PHASE,
@@ -63,6 +65,7 @@ const MODE_LABEL_KEYS: Record<ExecutionMode, TranslationKey> = {
 interface ComposerPickersProps {
 	models: ModelOption[];
 	modelKey: string | null;
+	fastContext: FastContextConfig;
 	fusion?: FusionConfig | null;
 	thinkingLevel: ThinkingLevel;
 	thinkingLevels: ThinkingLevel[];
@@ -72,6 +75,7 @@ interface ComposerPickersProps {
 	agentPhase: AgentPhase;
 	disabled?: boolean;
 	onSetFusion: (config: FusionConfig) => void;
+	onSetFastContext: (config: FastContextConfig) => void;
 	onSetModel: (modelKey: string) => void;
 	onSetThinking: (level: ThinkingLevel) => void;
 	onSetMode: (mode: ExecutionMode) => void;
@@ -257,6 +261,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 					</MenuGroup>
 					<MenuSeparator />
 					<FusionPicker models={models} modelKey={modelKey} fusion={props.fusion} onApply={props.onSetFusion} />
+					<FastContextPicker models={models} modelKey={modelKey} fastContext={props.fastContext} onApply={props.onSetFastContext} />
 				</ComposerPickerMenuPopup>
 			</Menu>
 

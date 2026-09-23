@@ -87,6 +87,7 @@ export interface ModelProfileSummary {
 	modelIds: string[];
 	/** The endpoint serves reasoning models, so thinking levels apply to them. */
 	reasoning: boolean;
+	imageInput: boolean;
 	/** Always resolved: a profile that stored no override reports the default. */
 	contextWindow: number;
 	/**
@@ -139,6 +140,7 @@ export interface SaveModelProfileRequest {
 	/** May be empty: a provider is saved before its models are picked. */
 	modelIds: string[];
 	reasoning?: boolean;
+	imageInput?: boolean;
 	/** Omitted keeps the stored value; the store's default applies if unset. */
 	contextWindow?: number;
 	maxTokens?: number;

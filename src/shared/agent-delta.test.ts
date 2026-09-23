@@ -30,6 +30,7 @@ function snapshot(cells: AgentCell[], overrides: Partial<AgentSnapshot> = {}): A
 		},
 		cells,
 		checkpoints: [],
+		fastContext: { modelKey: null, thinkingLevel: "low" },
 		workflow: { request: null, todos: [], tasks: [] },
 		streaming: false,
 		modelKey: "m1",

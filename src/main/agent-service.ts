@@ -12,7 +12,7 @@ import type {
 	SettingsManager,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, ImageContent, Model } from "@earendil-works/pi-ai";
 import type {
 	AgentDefaults,
 	AgentSnapshot,
@@ -68,6 +68,7 @@ import {
 	type ProjectionEvent,
 } from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
+import { modelInputList } from "./model-config-store";
 import { decideModelAfterReload } from "./model-refresh";
 import { registerOAuthClientIdentity } from "./oauth-service";
 import type { AntigravityOAuthService } from "./antigravity-oauth-service";
@@ -88,8 +89,14 @@ import {
 	WEBSITE_CLONE_TOOL_NAMES,
 } from "./website-clone-tools";
 import { isFusionConfig, type FusionConfig } from "../shared/fusion";
+import {
+	DEFAULT_FAST_CONTEXT_CONFIG,
+	isFastContextConfig,
+	type FastContextConfig,
+} from "../shared/fast-context";
 import { resolveFusion } from "./fusion-config";
 import { withFusionUsage } from "./fusion-usage";
+import { preparePromptImages } from "./prompt-images";
 import { BrowserPreview } from "./browser-preview";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
@@ -118,6 +125,9 @@ const HELP_TEXT = [
 
 const NO_MODEL_ERROR =
 	"No model configured. Add credentials to ~/.nekocode/agent/auth.json or set a provider API key environment variable, then restart.";
+
+/** How often a streaming run pushes a snapshot — about the pace text is read at. */
+const STREAM_EMIT_INTERVAL_MS = 50;
 
 const MODES: ExecutionMode[] = ["read-only", "auto", "full-access"];
 
@@ -213,6 +223,29 @@ export class AgentService {
 	private pendingError: string | undefined;
 	private generation = 0;
 	private wasStreaming = false;
+	/**
+	 * Session events have arrived since the persisted cells were last projected.
+	 * Projecting walks the whole transcript, so it waits for the next snapshot
+	 * instead of running once per streamed token.
+	 */
+	private projectionDirty = false;
+	/** A coalesced emit for the high-frequency streaming events. */
+	private emitTimer: ReturnType<typeof setTimeout> | null = null;
+	/** See {@link currentBranch}. */
+	private branchCache: {
+		sm: SessionManager;
+		leaf: string | null;
+		branch: ReturnType<SessionManager["getBranch"]>;
+	} | null = null;
+	/** See {@link listCheckpoints}. */
+	private checkpointCache: {
+		branch: ReturnType<SessionManager["getBranch"]>;
+		messages: AgentSession["messages"];
+		messageCount: number;
+		list: CheckpointSummary[];
+	} | null = null;
+	/** The transcript's birth time, read from disk once per file rather than per snapshot. */
+	private createdAtCache: { file: string; at: number } | null = null;
 	private customProviderIds = new Set<string>();
 	/**
 	 * Composer picks made on the welcome screen, applied to the next new session
@@ -221,6 +254,7 @@ export class AgentService {
 	 */
 	private pendingModelKey: string | null = null;
 	private pendingFusion: FusionConfig | null = null;
+	private fastContext: FastContextConfig = { ...DEFAULT_FAST_CONTEXT_CONFIG };
 	private preview: BrowserPreview | null = null;
 	private supportedThinking: typeof import("@earendil-works/pi-ai").getSupportedThinkingLevels | undefined;
 	private pendingThinkingLevel: ThinkingLevel | null = null;
@@ -444,6 +478,8 @@ export class AgentService {
 			const workMode = (raw as { workMode?: unknown }).workMode;
 			const fusion = (raw as { fusion?: unknown }).fusion;
 			if (isFusionConfig(fusion)) this.pendingFusion = fusion;
+			const fastContext = (raw as { fastContext?: unknown }).fastContext;
+			if (isFastContextConfig(fastContext)) this.fastContext = { ...fastContext };
 			if (isWorkMode(workMode)) this.workMode = workMode;
 			const mode = (raw as { mode?: unknown }).mode;
 			if (MODES.includes(mode as ExecutionMode)) {
@@ -458,7 +494,7 @@ export class AgentService {
 		try {
 			writeFileSync(
 				this.preferencesPath,
-				`${JSON.stringify({ mode: this.mode, workMode: this.workMode, fusion: this.pendingFusion })}\n`,
+				`${JSON.stringify({ mode: this.mode, workMode: this.workMode, fusion: this.pendingFusion, fastContext: this.fastContext })}\n`,
 			);
 		} catch {
 			// Best-effort — the pick still applies for this run.
@@ -520,7 +556,7 @@ export class AgentService {
 						// PI clamps every thinking level to "off" on a model that is not
 						// flagged as reasoning, so this is what makes the picker do anything.
 						reasoning: profile.reasoning,
-						input: ["text"],
+						input: modelInputList(profile.imageInput),
 						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 						// A custom endpoint advertises neither limit, and PI clamps every
 						// response to the one declared here — too low and long writes are
@@ -836,6 +872,7 @@ export class AgentService {
 		this.pendingModelKey = source.pendingModelKey;
 		this.pendingThinkingLevel = source.pendingThinkingLevel;
 		this.pendingFusion = source.pendingFusion;
+		this.fastContext = { ...source.fastContext };
 		this.mode = source.mode;
 		this.workMode = source.workMode;
 	}
@@ -849,7 +886,11 @@ export class AgentService {
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
 		const text = expandNekoSlashAlias(req.text);
-		if (!text.trim()) return { accepted: false, error: "Empty message" };
+		const imagesSupplied = req.images !== undefined;
+		const emptyImages = Array.isArray(req.images) && req.images.length === 0;
+		if (!text.trim() && (!imagesSupplied || emptyImages)) {
+			return { accepted: false, error: "Empty message" };
+		}
 		const slash = parseSlashCommand(text);
 		if (slash?.command === "abort") {
 			await this.abort();
@@ -884,21 +925,41 @@ export class AgentService {
 			catch (error) { return { accepted: false, error: String(error) }; }
 		}
 
+		let images: ImageContent[] | undefined;
+		if (imagesSupplied) {
+			try {
+				const { processImage } = await pi();
+				images = await preparePromptImages(req.images, processImage, session.settingsManager.getImageAutoResize());
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this.projector.notice("error", message);
+				this.emit();
+				return { accepted: false, error: message };
+			}
+			if (images.length > 0 && !session.model.input.includes("image")) {
+				const msg = "当前模型不支持图片输入，请更换支持图片的模型或移除附件";
+				this.projector.notice("error", msg);
+				this.emit();
+				return { accepted: false, error: msg };
+			}
+		}
+		const promptText = text.trim() ? text : "请检查所附图片。";
+
 		// The opening prompt is what the session gets named after — by the model,
 		// in the background. Until that lands the row shows a placeholder.
 		const firstPrompt = !session.messages.some((m) => m.role === "user");
-		if (firstPrompt) this.startTitleGeneration(session, text);
+		if (firstPrompt) this.startTitleGeneration(session, promptText);
 
 		// Before the agent can touch anything, so everything the turn changes is
 		// recorded after the marker. Steering joins the turn already running, and
 		// that turn has a marker already.
-		if (!session.isStreaming) this.markCheckpoint(session, text);
+		if (!session.isStreaming) this.markCheckpoint(session, promptText);
 
 		try {
 			if (session.isStreaming) {
-				await session.prompt(text, { streamingBehavior: "steer" });
+				await session.prompt(promptText, { images: images?.length ? images : undefined, streamingBehavior: "steer" });
 			} else {
-				session.prompt(text).catch((error: unknown) => {
+				session.prompt(promptText, { images: images?.length ? images : undefined }).catch((error: unknown) => {
 					this.projector.notice("error", error instanceof Error ? error.message : String(error));
 					this.emit();
 				});
@@ -955,8 +1016,15 @@ export class AgentService {
 		const session = this.session;
 		if (!session) return [];
 		const sessionId = session.sessionManager.getSessionId();
-		const branch = session.sessionManager.getBranch();
+		const branch = this.currentBranch(session.sessionManager);
 		const messages = session.messages;
+		// Every snapshot carries this list, and building it walks the branch once
+		// per checkpoint. It only changes when an entry lands or the conversation
+		// moves (the leaf, hence the branch array) or the messages the cell ids
+		// index into do — not per streamed token.
+		const cached = this.checkpointCache;
+		if (cached && cached.branch === branch && cached.messages === messages && cached.messageCount === messages.length)
+			return cached.list;
 		const summaries = checkpointEntries(branch).map((marker) => {
 			const turn = findTurnEntry(branch, marker.id);
 			const plan = planReversal(branch, marker.id);
@@ -976,7 +1044,23 @@ export class AgentService {
 				shellRuns: plan.opaqueRuns,
 			} satisfies CheckpointSummary;
 		});
-		return summaries.reverse();
+		const list = summaries.reverse();
+		this.checkpointCache = { branch, messages, messageCount: messages.length, list };
+		return list;
+	}
+
+	/**
+	 * The active path through the session tree. Entries are append-only and the
+	 * path is fixed by its leaf, so the walk is only redone once the leaf moves;
+	 * the array identity doubles as the cache key for what is derived from it.
+	 */
+	private currentBranch(sm: SessionManager): ReturnType<SessionManager["getBranch"]> {
+		const leaf = sm.getLeafId();
+		const cached = this.branchCache;
+		if (cached && cached.sm === sm && cached.leaf === leaf) return cached.branch;
+		const branch = sm.getBranch();
+		this.branchCache = { sm, leaf, branch };
+		return branch;
 	}
 
 	/** The reversal plan for one checkpoint, or null when it is off the branch. */
@@ -1105,6 +1189,7 @@ export class AgentService {
 		return {
 			modelKey: model ? modelKeyOf(model) : null,
 			fusion: this.pendingFusion,
+			fastContext: { ...this.fastContext },
 			models: this.modelOptions(),
 			thinkingLevel: model ? (clampThinkingLevel(model, requested) as ThinkingLevel) : "off",
 			thinkingLevels,
@@ -1233,6 +1318,30 @@ export class AgentService {
 		return this.buildSnapshot();
 	}
 
+	async setFastContext(value: FastContextConfig): Promise<AgentSnapshot | null> {
+		this.assertWorkflowIdle();
+		if (!isFastContextConfig(value)) throw new Error("Invalid Fast Context configuration");
+		const runtime = await this.getModelRuntime();
+		const { clampThinkingLevel } = await piAi();
+		let thinkingLevel = value.thinkingLevel;
+		if (value.modelKey !== null) {
+			const model = runtime
+				.getAvailableSnapshot()
+				.find((m) => modelKeyOf(m) === value.modelKey);
+			if (!model) throw new Error("Fast Context 模型不可用，请重新选择模型");
+			thinkingLevel = clampThinkingLevel(model, thinkingLevel);
+		} else {
+			const fallback = this.session?.model;
+			if (fallback) thinkingLevel = clampThinkingLevel(fallback, thinkingLevel);
+		}
+		this.fastContext = { modelKey: value.modelKey, thinkingLevel };
+		this.savePreferences();
+		if (!this.session) { this.emitDefaults(); return null; }
+		const snapshot = this.buildSnapshot();
+		this.emit(snapshot);
+		return snapshot;
+	}
+
 	private assertWorkflowIdle(): void {
 		if (
 			this.session?.isStreaming ||
@@ -1284,6 +1393,8 @@ export class AgentService {
 		this.session?.dispose();
 		this.session = null;
 		this.wasStreaming = false;
+		this.cancelScheduledEmit();
+		this.projectionDirty = false;
 		this.projector.reset();
 		this.pendingError = undefined;
 		this.journal?.reset();
@@ -1315,6 +1426,8 @@ export class AgentService {
 		this.unsubscribe = null;
 		this.session?.dispose();
 		this.session = null;
+		this.cancelScheduledEmit();
+		this.projectionDirty = false;
 		this.projector.reset();
 		this.pendingError = undefined;
 		this.journal?.reset();
@@ -1356,6 +1469,7 @@ export class AgentService {
 			fusionError,
 		} = await createWorkflowSession({
 			initialFusion: freshCwd ? this.pendingFusion : undefined,
+			getFastContextConfig: () => ({ ...this.fastContext }),
 			onHelperEvent: (event, source) => preview.handle(event, source),
 			cwd: sessionManager.getCwd(),
 			sessionManager,
@@ -1433,8 +1547,13 @@ export class AgentService {
 		if (!session) return;
 		this.preview?.handle(event as ProjectionEvent);
 		this.projector.handleEvent(event as ProjectionEvent);
-		this.projector.rebuild(session.messages, session.isStreaming);
-		this.emit();
+		this.projectionDirty = true;
+		// Token and partial-output updates arrive dozens of times a second, and
+		// every snapshot carries the whole transcript: coalesce those, and send
+		// every other event (a message landing, a tool finishing, the run ending)
+		// straight away so the transitions themselves are never delayed.
+		if (event.type === "message_update" || event.type === "tool_execution_update") this.scheduleEmit();
+		else this.emit();
 		// A finished run is when the row's message count and timestamp settle.
 		if (this.wasStreaming && !session.isStreaming) this.emitSessionsChanged();
 		this.wasStreaming = session.isStreaming;
@@ -1561,19 +1680,27 @@ export class AgentService {
 			id: m.id,
 			name: m.name,
 			thinkingLevels: this.supportedThinking?.(m) ?? ["off"],
+			imageInput: m.input.includes("image"),
 		}));
 	}
 
 	private buildSnapshot(): AgentSnapshot {
 		const session = this.session;
 		if (!session) throw new Error("No active session");
+		if (this.projectionDirty) {
+			this.projectionDirty = false;
+			this.projector.rebuild(session.messages, session.isStreaming);
+		}
 		const sm = session.sessionManager;
 		const messages = session.messages;
 		const sessionFile = sm.getSessionFile() ?? "";
 		let createdAt = this.createdAt;
-		if (sessionFile && existsSync(sessionFile)) {
+		if (this.createdAtCache?.file === sessionFile) {
+			createdAt = this.createdAtCache.at;
+		} else if (sessionFile && existsSync(sessionFile)) {
 			try {
 				createdAt = statSync(sessionFile).birthtimeMs || this.createdAt;
+				this.createdAtCache = { file: sessionFile, at: createdAt };
 			} catch {
 				// keep fallback
 			}
@@ -1595,12 +1722,13 @@ export class AgentService {
 				messageCount: messages.length,
 				running: session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks,
 			},
-			cells: withFusionUsage(this.projector.cells(), sm.getBranch(), this.workflow?.state.hasRunningTasks),
+			cells: withFusionUsage(this.projector.cells(), this.currentBranch(sm), this.workflow?.state.hasRunningTasks),
 			...(() => {
 				const context = contextUsage(messages, model?.contextWindow);
 				return context ? { context } : {};
 			})(),
 			checkpoints: this.listCheckpoints(),
+			fastContext: { ...this.fastContext },
 			fusion: this.workflow?.fusion ?? null,
 			workflow: this.workflow?.state.snapshot() ?? { request: null, todos: [], tasks: [] },
 			streaming: session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks,
@@ -1627,9 +1755,26 @@ export class AgentService {
 	 * snapshot would throw out of whatever triggered the emit.
 	 */
 	private emit(snapshot?: AgentSnapshot): void {
+		// Whatever was waiting to go out is covered by this one.
+		this.cancelScheduledEmit();
 		if (this.win.isDestroyed()) return;
 		const payload = snapshot ?? (this.session ? this.buildSnapshot() : null);
 		this.publish("agent:snapshot", payload);
+	}
+
+	/** Emit soon, folding every call until then into one snapshot. */
+	private scheduleEmit(): void {
+		if (this.emitTimer) return;
+		this.emitTimer = setTimeout(() => {
+			this.emitTimer = null;
+			this.emit();
+		}, STREAM_EMIT_INTERVAL_MS);
+	}
+
+	private cancelScheduledEmit(): void {
+		if (!this.emitTimer) return;
+		clearTimeout(this.emitTimer);
+		this.emitTimer = null;
 	}
 
 	/**

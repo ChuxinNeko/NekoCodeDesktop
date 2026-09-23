@@ -77,6 +77,7 @@ function snapshotOf(id: string, streaming: boolean, answer: string): AgentSnapsh
 			? [{ id: "a1", type: "assistant", text: answer, thinking: "", streaming: false, timestamp: 0 }]
 			: [],
 		checkpoints: [],
+		fastContext: { modelKey: null, thinkingLevel: "low" },
 		workflow: { request: null } as unknown as AgentSnapshot["workflow"],
 		streaming,
 		modelKey: null,
@@ -174,6 +175,7 @@ function setup(
 			return path;
 		},
 		defaults: async () => ({
+			fastContext: { modelKey: null, thinkingLevel: "low" },
 			modelKey: "anthropic/claude-opus-5",
 			models: MODELS,
 			thinkingLevel: "off",

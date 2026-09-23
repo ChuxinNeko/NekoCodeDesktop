@@ -1,4 +1,4 @@
-import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ThinkingOrb } from "thinking-orbs";
@@ -19,7 +19,7 @@ import { cn } from "../lib/utils";
 import { ChevronDownIcon, ChevronRightIcon, CircleAlertIcon, FileIcon, FolderIcon, Loader2Icon, SearchIcon, TerminalIcon, TriangleAlertIcon, HammerIcon, Undo2Icon } from "../lib/icons";
 import { Spinner } from "./ui/spinner";
 import { FileTypeIcon } from "../lib/fileIcons";
-import { highlightFileToHtml } from "../lib/codeHighlight";
+import { highlightWhenIdle } from "../lib/codeHighlight";
 import { TaskCard } from "./chat/AgentTask";
 import { EditedFilesCard } from "./chat/EditedFilesCard";
 import { lastThinkingLine, ThinkingBlock } from "./chat/Thinking";
@@ -28,15 +28,20 @@ import {
 	SOFT_SURFACE_FILL_CLASS_NAME,
 } from "../surfaceStyles";
 
-function Markdown({ text, user }: { text: string; user?: boolean }) {
+// Parsing is the dearest thing a transcript row does, and a long session has
+// hundreds of rows: only a message whose text actually changed re-parses.
+const Markdown = memo(function Markdown({ text, user }: { text: string; user?: boolean }) {
 	return (
 		<div className={cn("chat-markdown", user && "chat-markdown--user")}>
 			<ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
 		</div>
 	);
-}
+});
 
-function UserCell({
+// The row components below are memoized on their props. Snapshots reach them
+// structurally shared (see `shareStructure`), so a settled cell is the same
+// object from one streamed token to the next and its row is skipped.
+const UserCell = memo(function UserCell({
 	cell,
 	anchor,
 	checkpoint,
@@ -90,10 +95,10 @@ function UserCell({
 			</div>
 		</div>
 	);
-}
+});
 
 /** A cell's reasoning, in the shared block the worker panel also uses. */
-function CellThinking({ cell }: { cell: AssistantCellData }) {
+const CellThinking = memo(function CellThinking({ cell }: { cell: AssistantCellData }) {
 	return (
 		<ThinkingBlock
 			text={cell.thinking}
@@ -102,13 +107,13 @@ function CellThinking({ cell }: { cell: AssistantCellData }) {
 			endedAt={cell.thinkingEndedAt}
 		/>
 	);
-}
+});
 
 /**
  * What the model said, with nothing it did: the reasoning that produced this
  * text lives in the work group above it, so the answer reads at the top level.
  */
-function MessageCell({ cell }: { cell: AssistantCellData }) {
+const MessageCell = memo(function MessageCell({ cell }: { cell: AssistantCellData }) {
 	return (
 		<div className="flex w-full flex-col gap-2">
 			{cell.text ? <Markdown text={cell.text} /> : null}
@@ -121,7 +126,7 @@ function MessageCell({ cell }: { cell: AssistantCellData }) {
 			{cell.usage ? <UsagePanel usage={cell.usage} /> : null}
 		</div>
 	);
-}
+});
 
 function toolArgsPreview(args: unknown): string {
 	if (args === undefined || args === null) return "";
@@ -272,24 +277,34 @@ function FileEditCell({
 		wasLive.current = live;
 	}, [code, live]);
 
+	// Colors are for reading, and only the edits on screen are being read: one
+	// scrolled out of view keeps its plain text until it is scrolled to.
+	const [seen, setSeen] = useState(false);
 	useEffect(() => {
-		let cancelled = false;
-		setHighlighted(null);
+		const body = bodyRef.current;
+		if (seen || !body) return;
+		const observer = new IntersectionObserver((entries) => {
+			if (entries.some((entry) => entry.isIntersecting)) setSeen(true);
+		});
+		observer.observe(body);
+		return () => observer.disconnect();
+	}, [seen]);
+
+	useEffect(() => {
 		// Do not re-tokenize the entire growing file on every input delta.
 		// Plain text arrives immediately; syntax colors settle with the input.
-		if (cell.inputStreaming) return;
-		highlightFileToHtml(code, preview.path)
+		if (cell.inputStreaming || !seen) return;
+		const controller = new AbortController();
+		highlightWhenIdle(code, preview.path, controller.signal)
 			.then((html) => {
-				if (cancelled || !html) return;
+				if (controller.signal.aborted || !html) return;
 				const doc = new DOMParser().parseFromString(html, "text/html");
 				const spans = Array.from(doc.querySelectorAll(".line"));
 				setHighlighted({ code, path: preview.path, lines: spans.map((node) => node.innerHTML) });
 			})
 			.catch(() => undefined);
-		return () => {
-			cancelled = true;
-		};
-	}, [code, preview.path, cell.inputStreaming]);
+		return () => controller.abort();
+	}, [code, preview.path, cell.inputStreaming, seen]);
 
 	const basename = preview.path.split(/[\\/]/).pop() || t(cell.toolName === "write" ? "fileEdit.write" : "fileEdit.edit");
 	const additions = lines.filter((line) => line.kind === "add").length;
@@ -468,7 +483,7 @@ function toolPresentation(
 	}
 }
 
-function ToolCell({ cell, active }: { cell: Extract<AgentCell, { type: "tool" }>; active: boolean }) {
+const ToolCell = memo(function ToolCell({ cell, active }: { cell: Extract<AgentCell, { type: "tool" }>; active: boolean }) {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const view = useContext(TaskLookupContext);
@@ -603,9 +618,9 @@ function ToolCell({ cell, active }: { cell: Extract<AgentCell, { type: "tool" }>
 			) : null}
 		</div>
 	);
-}
+});
 
-function NoticeCell({ cell }: { cell: Extract<AgentCell, { type: "notice" }> }) {
+const NoticeCell = memo(function NoticeCell({ cell }: { cell: Extract<AgentCell, { type: "notice" }> }) {
 	return (
 		<div
 			className={cn(
@@ -620,7 +635,7 @@ function NoticeCell({ cell }: { cell: Extract<AgentCell, { type: "notice" }> }) 
 			{cell.text}
 		</div>
 	);
-}
+});
 
 /** The shimmer that stands in for the step the model has not shown yet. */
 function PlanningLine() {
@@ -646,6 +661,31 @@ function workItemSummary(item: WorkItem): string {
 }
 
 /**
+ * A work row is regrouped from the cells on every render, so the row object is
+ * always new; what it shows only changes when one of its cells does.
+ */
+/**
+ * One transcript row, which the browser may skip laying out while it is off
+ * screen. A long session's rows carry whole files and command outputs, and
+ * laying out all of them is what opening one used to wait on; with this only
+ * the rows in view are measured, the rest hold the height they last rendered
+ * at (or an estimate, until they first do).
+ */
+const TRANSCRIPT_ROW_CLASS_NAME =
+	"flex flex-col gap-4 [content-visibility:auto] [contain-intrinsic-size:auto_160px]";
+
+function sameWorkingBlock(
+	prev: { row: WorkRow; active: boolean; waiting: boolean },
+	next: { row: WorkRow; active: boolean; waiting: boolean },
+): boolean {
+	if (prev.active !== next.active || prev.waiting !== next.waiting) return false;
+	const a = prev.row;
+	const b = next.row;
+	if (a.startedAt !== b.startedAt || a.endedAt !== b.endedAt || a.items.length !== b.items.length) return false;
+	return a.items.every((item, index) => item.cell === b.items[index].cell && item.kind === b.items[index].kind);
+}
+
+/**
  * The outermost level of a turn: everything the model did between the prompt
  * and the answer, under one header that can be folded away.
  *
@@ -656,7 +696,7 @@ function workItemSummary(item: WorkItem): string {
  * readable. The header sits a step above "Thinking for" in size because it
  * contains it.
  */
-function WorkingBlock({
+const WorkingBlock = memo(function WorkingBlock({
 	row,
 	active,
 	waiting,
@@ -733,7 +773,7 @@ function WorkingBlock({
 			) : null}
 		</div>
 	);
-}
+}, sameWorkingBlock);
 
 /**
  * True while the run is streaming but the model has produced nothing visible
@@ -785,13 +825,26 @@ export function Transcript({
 	 */
 	onLoadToolOutput?: (toolCallId: string, offset: number) => Promise<{ text: string; total: number }>;
 }) {
+	// The handlers come from parents that recreate them every render. Reached
+	// through a ref, they stop being a reason for every row to re-render: the
+	// context value and the memoized rows only change with what they show.
+	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint });
+	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint };
+	const openTask = useCallback((taskId: string) => handlers.current.onOpenTask?.(taskId), []);
+	const openFile = useCallback((path: string) => handlers.current.onOpenFile?.(path), []);
+	const restoreCheckpoint = useCallback(
+		(checkpoint: CheckpointSummary) => handlers.current.onRestoreCheckpoint?.(checkpoint),
+		[],
+	);
+	const canOpenTask = onOpenTask !== undefined;
+	const canOpenFile = onOpenFile !== undefined;
 	const taskLookup = useMemo<TaskView>(
 		() => ({
 			tasks: new Map((tasks ?? []).map((task) => [task.id, task])),
-			open: onOpenTask,
-			openFile: onOpenFile,
+			open: canOpenTask ? openTask : undefined,
+			openFile: canOpenFile ? openFile : undefined,
 		}),
-		[tasks, onOpenTask, onOpenFile],
+		[tasks, canOpenTask, canOpenFile, openTask, openFile],
 	);
 	// Keyed by the cell the main process resolved each checkpoint onto; ones that
 	// have no cell (compacted away, or on an abandoned branch) only show in the
@@ -844,13 +897,13 @@ export function Transcript({
 					const last = index === rows.length - 1;
 					const card = cardByRowId.get(row.id);
 					return (
-						<Fragment key={row.id}>
+						<div key={row.id} className={TRANSCRIPT_ROW_CLASS_NAME}>
 							{row.kind === "user" ? (
 								<UserCell
 									cell={row.cell}
 									anchor={row.cell.id === lastUserId}
 									checkpoint={checkpointByCell.get(row.cell.id)}
-									onRestore={onRestoreCheckpoint}
+									onRestore={onRestoreCheckpoint ? restoreCheckpoint : undefined}
 									restoreDisabled={streaming === true}
 								/>
 							) : row.kind === "message" ? (
@@ -875,7 +928,7 @@ export function Transcript({
 									onOpenFile={onOpenFile}
 								/>
 							) : null}
-						</Fragment>
+						</div>
 					);
 				})}
 				{waiting && !waitingInWork ? <PlanningLine /> : null}

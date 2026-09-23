@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionSummary } from "../../../shared/agent";
 import { api, errorMessage } from "../api";
 
+const SESSIONS_CHANGED_DEBOUNCE_MS = 200;
+
 export interface SessionsState {
 	sessions: SessionSummary[];
 	loading: boolean;
@@ -55,7 +57,23 @@ export function useSessions(): SessionsState {
 		return () => { requestRef.current++; };
 	}, [load]);
 
-	useEffect(() => api.onSessionsChanged(() => refresh()), [refresh]);
+	// Several tasks settling at once, or a run starting and naming itself, each
+	// push a change; listing re-reads every transcript on disk, so a burst is
+	// answered with one read once it has passed.
+	useEffect(() => {
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const unsubscribe = api.onSessionsChanged(() => {
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(() => {
+				timer = null;
+				refresh();
+			}, SESSIONS_CHANGED_DEBOUNCE_MS);
+		});
+		return () => {
+			if (timer) clearTimeout(timer);
+			unsubscribe();
+		};
+	}, [refresh]);
 
 	const rename = useCallback(
 		async (session: SessionSummary, title: string) => {

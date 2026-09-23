@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { AgentService } from "./agent-service";
+import { DESKTOP_LIMITS, remoteView } from "./agent-remote-view";
 import type {
 	AgentSnapshot,
 	OpenSessionRequest,
@@ -34,6 +35,12 @@ export class TaskManager {
 	private closed = false;
 	private transition: Promise<unknown> = Promise.resolve();
 	private listCache: { at: number; rows: SessionSummary[] } | undefined;
+	/**
+	 * Where the transcript window the desktop holds begins: the first cell it was
+	 * sent. Pinned rather than recomputed from the tail, so a run adding cells at
+	 * the bottom never pulls rows out from under the top of the viewport.
+	 */
+	private viewFrom: { sessionId: string; cellId: string } | null = null;
 
 	constructor(
 		private factory: AgentFactory,
@@ -55,8 +62,14 @@ export class TaskManager {
 				const next = payload as AgentSnapshot | null;
 				if (next) this.snapshots.set(agent, next);
 				else this.snapshots.delete(agent);
+				// Not on every message: re-listing re-reads every transcript on disk,
+				// and a long run adds messages by the hundred. The row only needs to
+				// hear when its session starts having any (its file appears), when it
+				// is named, and when a run starts or stops.
+				const hadMessages = (previous?.session.messageCount ?? 0) > 0;
+				const hasMessages = (next?.session.messageCount ?? 0) > 0;
 				if (previous?.session.id !== next?.session.id || previous?.streaming !== next?.streaming ||
-					previous?.session.title !== next?.session.title || previous?.session.messageCount !== next?.session.messageCount) {
+					previous?.session.title !== next?.session.title || hadMessages !== hasMessages) {
 					this.changed();
 				}
 				// A run ending is the one transition nobody is necessarily watching:
@@ -67,7 +80,8 @@ export class TaskManager {
 				if (next) this.onSnapshot?.(next);
 			}
 			if (channel === "agent:sessionsChanged") this.changed();
-			else if (this.active === agent) this.emit(channel, payload);
+			else if (this.active === agent)
+				this.emit(channel, channel === "agent:snapshot" ? this.view(payload as AgentSnapshot | null) : payload);
 		}, this.owner);
 		this.agents.add(agent);
 		return agent;
@@ -82,8 +96,46 @@ export class TaskManager {
 		const snapshot = agent.getSnapshot();
 		if (!snapshot) throw new Error("Session is unavailable");
 		this.active = agent;
-		this.emit("agent:snapshot", snapshot);
+		this.snapshots.set(agent, snapshot);
+		// A session is always opened at its end; how far back it was read last
+		// time belongs to that visit.
+		this.viewFrom = null;
+		this.emit("agent:snapshot", this.view(snapshot));
 		return snapshot;
+	}
+
+	/**
+	 * What the desktop window is sent of the selected session's snapshot.
+	 *
+	 * A long session is a transcript of thousands of cells, and mounting them
+	 * all is what made opening one stall. The window gets the tail, grows
+	 * backwards only through {@link loadEarlier}, and carries oversized tool
+	 * payloads as a head it can fetch the rest of. Every snapshot bound for the
+	 * window goes through here — pushed ones and replies alike — or one full
+	 * transcript slipping through would put the whole session back on screen.
+	 */
+	view(snapshot: AgentSnapshot | null, back = 0): AgentSnapshot | null {
+		if (!snapshot) return null;
+		const sessionId = snapshot.session.id;
+		const from = this.viewFrom?.sessionId === sessionId ? this.viewFrom.cellId : undefined;
+		const view = remoteView(snapshot, { from, back }, DESKTOP_LIMITS);
+		const first = view.snapshot.cells[0];
+		this.viewFrom = first ? { sessionId, cellId: first.id } : null;
+		return view.earlier > 0 ? { ...view.snapshot, earlierCells: view.earlier } : view.snapshot;
+	}
+
+	/**
+	 * The selected session's window as last reported, falling back to building
+	 * one. A reply to an open or a create reads this rather than building its
+	 * own: `select` has just built the snapshot.
+	 */
+	viewOf(agent: AgentService): AgentSnapshot | null {
+		return this.view(this.snapshots.get(agent) ?? agent.getSnapshot());
+	}
+
+	/** Reach one page further back into the selected session. */
+	loadEarlier(): AgentSnapshot | null {
+		return this.view(this.active.getSnapshot(), DESKTOP_LIMITS.step);
 	}
 
 	/** Serialize view changes; task execution itself never holds this queue. */

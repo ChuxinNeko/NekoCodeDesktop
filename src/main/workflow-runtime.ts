@@ -13,8 +13,13 @@ import type {
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExecutionMode, ThinkingLevel } from "../shared/agent";
 import type { FusionConfig } from "../shared/fusion";
+import type { FastContextConfig } from "../shared/fast-context";
 import { FUSION_ENTRY, resolveFusion, savedFusion } from "./fusion-config";
-import { FUSION_USAGE_ENTRY, type FusionUsageRecord } from "./fusion-usage";
+import {
+	FAST_CONTEXT_USAGE_ENTRY,
+	FUSION_USAGE_ENTRY,
+	type FusionUsageRecord,
+} from "./fusion-usage";
 import { completeHelper } from "./helper-completion";
 import {
 	aggregateTurnUsage,
@@ -49,7 +54,7 @@ import { NEKOCODE_TOOL_OPTIONS } from "./shell-environment";
 import { containsPath, resolveWorkspacePath } from "./workflow-paths";
 import { readSavedWorkflow, WorkflowState } from "./workflow-state";
 import { createWorkflowTools } from "./workflow-tools";
-import { pi } from "./pi";
+import { pi, piAi } from "./pi";
 
 const runFile = promisify(execFile);
 export const WORKFLOW_ENTRY = "nekocode.workflow.v1";
@@ -215,6 +220,27 @@ interface WorkflowRuntimeOptions {
 	getPluginTools?: () => readonly string[];
 	/** The skills that ship with the app; absent in tests and helper sessions. */
 	builtinSkills?: BuiltinSkillSource;
+	getFastContextConfig: () => FastContextConfig;
+}
+interface HelperRunOptions {
+	model?: Model<Api>;
+	thinkingLevel?: ThinkingLevel;
+	fastContext?: boolean;
+	usage?: "fusion" | "fast-context";
+}
+
+export function selectFastContextModel(
+	config: FastContextConfig,
+	available: readonly Model<Api>[],
+	parent: Model<Api>,
+	fusion: Awaited<ReturnType<typeof resolveFusion>> | null,
+): { model: Model<Api>; requestedThinkingLevel: ThinkingLevel } {
+	const dedicated = config.modelKey
+		? available.find((m) => `${m.provider}/${m.id}` === config.modelKey)
+		: undefined;
+	if (dedicated) return { model: dedicated, requestedThinkingLevel: config.thinkingLevel };
+	if (fusion) return { model: fusion.sidekick, requestedThinkingLevel: fusion.config.sidekickThinkingLevel };
+	return { model: parent, requestedThinkingLevel: config.thinkingLevel };
 }
 export class WorkflowRuntime {
 	private fusionConfig: FusionConfig | null;
@@ -527,6 +553,7 @@ export class WorkflowRuntime {
 		signal?: AbortSignal,
 		scopes: string[] = [],
 		onStep?: (step: TaskStep) => void,
+		helperOptions?: HelperRunOptions,
 	): Promise<string> {
 		const parent = this.session;
 		if (!parent?.model) throw new Error("Select a model before running a helper");
@@ -536,16 +563,17 @@ export class WorkflowRuntime {
 		const { createAgentSession, SessionManager } = await pi();
 		const fusion = this.fusionConfig
 			? await resolveFusion(this.fusionConfig, this.options.modelRuntime) : null;
-		const helperModel = fusion?.sidekick ?? parent.model;
-		const allowWorkerShell = !!fusion && role === "agent" &&
+		const helperModel = helperOptions?.model ?? fusion?.sidekick ?? parent.model;
+		const allowWorkerShell = !!fusion && role === "agent" && !helperOptions?.fastContext &&
 			scopes.some((scope) => scope === resolveWorkspacePath(this.options.cwd, "."));
 		const context: PromptContext = {
-			fusionRole: fusion ? "sidekick" : undefined,
+			fusionRole: fusion && !helperOptions?.fastContext ? "sidekick" : undefined,
 			allowWorkerShell,
 			mode: role,
 			permission: scopes.length ? this.options.getPermission() : "read-only",
 			child: true,
 			interactive: false,
+			fastContext: helperOptions?.fastContext,
 			modelId: helperModel.provider + "/" + helperModel.id,
 		};
 		const resourceLoader = await createPromptResources(
@@ -560,11 +588,15 @@ export class WorkflowRuntime {
 			sessionManager: SessionManager.inMemory(this.options.cwd),
 			modelRuntime: this.options.modelRuntime,
 			model: helperModel,
-			thinkingLevel: fusion?.config.sidekickThinkingLevel ?? parent.thinkingLevel,
+			thinkingLevel:
+				helperOptions?.thinkingLevel ?? fusion?.config.sidekickThinkingLevel ?? parent.thinkingLevel,
 			resourceLoader,
 			tools: toolsForMode(context).filter((name) =>
-				["read", "grep", "find", "ls", STAT_TOOL_NAME, "edit", "write",
-					...(allowWorkerShell ? ["bash", "powershell"] : [])].includes(name),
+				(helperOptions?.fastContext
+					? ["read", "grep", "find", "ls", STAT_TOOL_NAME]
+					: ["read", "grep", "find", "ls", STAT_TOOL_NAME, "edit", "write",
+						...(allowWorkerShell ? ["bash", "powershell"] : [])]
+				).includes(name),
 			),
 			customTools: [createStatTool(this.options.cwd)],
 			toolOptions: NEKOCODE_TOOL_OPTIONS,
@@ -582,8 +614,11 @@ export class WorkflowRuntime {
 		const reasoning = new Map<number, Reasoning>();
 		const callTiming = new Map<number, { startedAt: number; endedAt?: number }>();
 		let previousCallEnd: number | undefined;
+		const usageKind =
+			helperOptions?.usage ?? (fusion && role !== "commit" ? "fusion" : undefined);
 		const unsubscribeUsage = session.subscribe((event) => {
-			if (!fusion || role === "commit" || turnTimestamp === undefined) return;
+			if (!usageKind || role === "commit" || turnTimestamp === undefined) return;
+			if (usageKind === "fusion" && !fusion) return;
 			if (event.type !== "message_start" && event.type !== "message_end") return;
 			if (event.message.role !== "assistant") return;
 			const timestamp = event.message.timestamp;
@@ -601,11 +636,15 @@ export class WorkflowRuntime {
 			}
 			if (usage && !this.closed) {
 				try {
-					this.options.sessionManager.appendCustomEntry(FUSION_USAGE_ENTRY, {
-						turnTimestamp, usage,
-					} satisfies FusionUsageRecord);
+					this.options.sessionManager.appendCustomEntry(
+						usageKind === "fast-context" ? FAST_CONTEXT_USAGE_ENTRY : FUSION_USAGE_ENTRY,
+						{ turnTimestamp, usage } satisfies FusionUsageRecord,
+					);
 				} catch (error) {
-					this.options.onError?.("Sidekick 用量未能保存：" + String(error));
+					this.options.onError?.(
+						(usageKind === "fast-context" ? "Fast Context 用量未能保存：" : "Sidekick 用量未能保存：") +
+							String(error),
+					);
 				}
 			}
 		});
@@ -704,6 +743,31 @@ export class WorkflowRuntime {
 			unsubscribe?.();
 			session.dispose();
 		}
+	}
+	async searchCode(query: string, signal?: AbortSignal): Promise<string> {
+		const parent = this.session;
+		if (!parent?.model) throw new Error("Select a model before running a helper");
+		const config = this.options.getFastContextConfig();
+		const runtime = this.options.modelRuntime;
+		const { clampThinkingLevel } = await piAi();
+		const fusion = this.fusionConfig
+			? await resolveFusion(this.fusionConfig, runtime)
+			: null;
+		const { model, requestedThinkingLevel } = selectFastContextModel(
+			config,
+			runtime.getAvailableSnapshot(),
+			parent.model,
+			fusion,
+		);
+		const thinkingLevel = clampThinkingLevel(model, requestedThinkingLevel);
+		return this.runHelper(
+			"subagent",
+			"Explore the repository and answer this request.\n\nRequest: " + query,
+			signal,
+			[],
+			undefined,
+			{ model, thinkingLevel, fastContext: true, usage: "fast-context" },
+		);
 	}
 	async commitMessage(instructions = "", signal?: AbortSignal): Promise<string> {
 		const options = { cwd: this.options.cwd, windowsHide: true, maxBuffer: 512 * 1024, signal };

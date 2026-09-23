@@ -10,7 +10,7 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 	usage?: TurnUsage;
 	provider: string;
 	model: string;
-	role?: "lead" | "sidekick";
+	role?: "lead" | "sidekick" | "fastContext";
 }) {
 	const { t } = useTranslation();
 	const stats = usage ? usageStats(usage) : undefined;
@@ -30,10 +30,12 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 		{ key: "cost", label: t("usage.cost"),
 			value: usage?.costUsd !== undefined ? formatCost(usage.costUsd) : "—" },
 	];
+	const roleLabel = role === "fastContext" ? "Fast Context" : role ? t(role === "lead" ? "fusion.lead" : "fusion.sidekick") : t("usage.model");
+	const badge = role === "lead" ? "Lead" : role === "sidekick" ? "SideKick" : role === "fastContext" ? "Fast Context" : null;
 	return (
-		<section className="min-w-0 space-y-2" aria-label={role ? t(`fusion.${role}`) : t("usage.model")}>
+		<section className="min-w-0 space-y-2" aria-label={roleLabel}>
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-				{role ? <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">{role === "lead" ? "Lead" : "SideKick"}</span> : null}
+				{badge ? <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">{badge}</span> : null}
 				<span className="min-w-0 break-all text-xs font-medium text-foreground">{provider ? `${provider}/${model}` : model}</span>
 			</div>
 			{usage?.responseModel ? <p className="break-all text-xs text-muted-foreground">{t("usage.servedBy")}: {usage.responseModel}</p> : null}
@@ -61,17 +63,32 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 
 export function UsageDetails({ usage }: { usage: TurnUsage }) {
 	const { t } = useTranslation();
+	const breakdown = usage.fusion || usage.fastContext;
 	return (
 		<div className="w-full max-w-xl space-y-4 rounded-xl border border-border/60 bg-background/60 p-3">
 			<div className="flex flex-wrap items-center justify-between gap-2 text-xs">
 				<span className="font-medium text-foreground">{usage.fusion ? `Fusion · ${t("usage.title")}` : t("usage.title")}</span>
-				{usage.fusion ? <span className="font-mono tabular-nums text-muted-foreground">{formatTokens(usage.totalTokens)} tokens</span> : null}
+				{breakdown ? <span className="font-mono tabular-nums text-muted-foreground">{formatTokens(usage.totalTokens)} tokens</span> : null}
 			</div>
-			{usage.fusion ? (
+			{breakdown ? (
 				<>
-					<ModelUsageGrid role="lead" usage={usage.fusion.lead} provider={usage.fusion.lead.provider} model={usage.fusion.lead.model} />
-					<div className="border-t border-border/60" />
-					<ModelUsageGrid role="sidekick" {...usage.fusion.sidekick} />
+					{usage.fusion ? (
+						<ModelUsageGrid role="lead" usage={usage.fusion.lead} provider={usage.fusion.lead.provider} model={usage.fusion.lead.model} />
+					) : usage.fastContext ? (
+						<ModelUsageGrid usage={usage.fastContext.primary} provider={usage.fastContext.primary.provider} model={usage.fastContext.primary.model} />
+					) : null}
+					{usage.fusion ? (
+						<>
+							<div className="border-t border-border/60" />
+							<ModelUsageGrid role="sidekick" {...usage.fusion.sidekick} />
+						</>
+					) : null}
+					{usage.fastContext ? (
+						<>
+							<div className="border-t border-border/60" />
+							<ModelUsageGrid role="fastContext" {...usage.fastContext.search} />
+						</>
+					) : null}
 				</>
 			) : <ModelUsageGrid usage={usage} provider={usage.provider} model={usage.model} />}
 		</div>

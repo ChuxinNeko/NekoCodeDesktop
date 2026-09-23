@@ -365,7 +365,7 @@ export function createWebsiteCloneTools(options: {
 		name: "browser_screenshot",
 		label: "browser_screenshot",
 		description:
-			"Save a PNG screenshot of the inspected page inside the workspace. fullPage captures the whole scroll height, capped at 2560x20000.",
+			"Save a PNG screenshot of the inspected page inside the workspace and attach the image to the result for direct visual inspection. fullPage captures the whole scroll height, capped at 2560x20000.",
 		parameters: screenshotSchema,
 		executionMode: "sequential",
 		async execute(_id, params, signal) {
@@ -423,6 +423,11 @@ export function createWebsiteCloneTools(options: {
 					{
 						type: "text",
 						text: `Saved ${path} (${captured.width}x${captured.height}${captured.capped ? ", capped" : ""})`,
+					},
+					{
+						type: "image",
+						data: captured.bytes.toString("base64"),
+						mimeType: "image/png",
 					},
 				],
 				details: {

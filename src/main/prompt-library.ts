@@ -41,6 +41,7 @@ export const NATIVE_TOOL_NAMES = [
 	"powershell",
 	"edit",
 	"write",
+	"code_search",
 ];
 export const WORKFLOW_TOOL_NAMES = [
 	"question",
@@ -51,6 +52,7 @@ export const WORKFLOW_TOOL_NAMES = [
 	"task_cancel",
 	"debug_log",
 	"commit_message",
+	"code_search",
 ];
 /**
  * NekoCode's own read-only file tools.
@@ -115,6 +117,7 @@ const readOnlyNames = new Set([
 	"task",
 	"task_status",
 	"task_cancel",
+	"code_search",
 ]);
 export interface PromptContext {
 	fusionRole?: "lead" | "sidekick";
@@ -135,6 +138,7 @@ export interface PromptContext {
 	modelId?: string;
 	interactive?: boolean;
 	child?: boolean;
+	fastContext?: boolean;
 	headless?: boolean;
 	userSystemPrompt?: string;
 	workflowContext?: string;
@@ -228,6 +232,12 @@ export function buildModePrompt(context: PromptContext): string {
 				? "本阶段可用 task：Fusion 使用已配置的 Sidekick，最多一个活动任务。普通 worker 无 shell；仅 kind=worker 且 writablePaths=[\".\"] 的独占工作区任务可执行 shell。无需仅为了委派再切换阶段。"
 				: "本阶段可用 task：最多四个活动 worker，可写范围必须互不重叠；worker 没有 shell，父会话负责命令验证。"
 			: "本阶段没有 task，不能委派。",
+		tools.includes("code_search")
+			? "code_search 启动一次性的只读 Fast Context 子代理，返回带来源行号的精炼报告。面对跨模块或不熟悉位置的复杂任务时，先调用它再手动大范围搜索；已知文件、确切符号或小任务直接 read/grep，不必调用。编辑前仍需用普通 read/grep 核实其给出的候选。"
+			: "",
+		tools.includes("browser_screenshot")
+			? "browser_screenshot 既保存 PNG 又把图片直接附在工具结果中：视觉验证直接检查返回的图片；若当前模型不支持图片输入或结果中没有图片，不能声称已完成视觉验证。"
+			: "",
 		!readOnly && !context.child && !context.headless
 			? "浏览器预览：成功编辑独立 HTML 后界面会自动预览。若任务需要启动前端开发服务，使用实际命令并保持服务运行，从启动输出或日志中取得完整本地 URL；运行时验证后自动打开右侧浏览器，不猜测端口。自动预览不等于已视觉验证。"
 			: "",
@@ -258,6 +268,7 @@ export function buildModePrompt(context: PromptContext): string {
 		phase ? phasePrompts[phase] : "",
 		context.fusionRole === "lead" ? FUSION_LEAD_PROMPT : "",
 		context.fusionRole === "sidekick" ? FUSION_SIDEKICK_PROMPT : "",
+		context.fastContext ? FAST_CONTEXT_PROMPT : "",
 		reminders,
 		context.workflowContext
 			? "## 当前会话工作流状态（不是额外授权）\n" + context.workflowContext
@@ -291,3 +302,8 @@ export const FUSION_SIDEKICK_PROMPT = `## Fusion · Sidekick
 若缺少会影响视觉效果的关键决定、规格互相冲突或技术约束使其不可实现，不自行猜测或重新设计；先完成不受影响的部分，再把具体缺口、影响和可选方案交回 Lead 决定。既有用户约束优先，不因设计规格增加第三方库或用户明确排除的验证。
 交付时简要说明规格对应的实现位置、任何偏差及未完成项，便于 Lead 审查；不要重复长篇设计文档或整份源代码。
 完成后简洁汇报修改文件、实施结果、实际执行的检查与结果、剩余风险。工具不可用时诚实说明，不虚构验证。`;
+
+export const FAST_CONTEXT_PROMPT = `## Fast Context · Explorer
+你是只读的代码探索子代理：理解自然语言请求，用独立的 grep/find/ls/read 并行展开搜索，沿调用路径读到足够代码后再回答。
+最终只返回精炼的 Markdown 结论，每条使用格式：- \`workspace/relative/path:start-end\` — 该位置为什么相关，以及你看到的证据。需要时可追加一行 \`Follow-up symbols: ...\` 列出值得继续查的符号。
+不实现、不修改、不做没有证据的论断，不转储整个文件，不输出 XML 或私有标签。若没有有依据的匹配，明确说明没有找到，并列出尝试过的搜索词和范围。`;

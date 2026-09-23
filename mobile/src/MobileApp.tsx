@@ -2,7 +2,7 @@ import { PairingView } from "./PairingView";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
-import type { AgentDefaults, AgentSnapshot, SessionSummary } from "../../src/shared/agent";
+import type { AgentDefaults, AgentSnapshot, SendPromptRequest, SessionSummary } from "../../src/shared/agent";
 import type { LanProject, LanTaskOptions } from "../../src/shared/lan";
 import type { ComposerInsertion } from "../../src/shared/browser";
 import { ChatView } from "../../src/renderer/src/components/ChatView";
@@ -217,7 +217,8 @@ export function MobileApp() {
 		});
 	};
 
-	const send = (text: string) => action(async () => {
+	const send = (request: SendPromptRequest) => action(async () => {
+		const text = request.text;
 		try {
 			const target = selected.current;
 			if (target) {
@@ -269,7 +270,7 @@ export function MobileApp() {
 			{view === "chat" && <main className="mobile-chat flex min-h-0 flex-1 flex-col">
 				<ChatView key={id ?? `new:${projectId}`} mobile earlierAvailable={earlier} loadingEarlier={loadingEarlier} onLoadEarlier={loadEarlier} onLoadToolOutput={loadToolOutput} loadingSession={id !== null && snapshot === null} cwd={snapshot?.session.cwd ?? project?.path ?? null} snapshot={snapshot} defaults={defaults} busy={busy || !online || (!id && !defaults)} error={error} insertion={insertion} onInsertionConsumed={() => setInsertion(null)} terminalOpen={false} browserOpen={false}
 					onPickProject={() => setProjectSheet(true)} onSend={send} onStartSession={send} onAbort={() => { const target = selected.current; if (target) void action(async () => { const next = await desktop.abort(target); if (selected.current === target) setSnapshot(next); }); }}
-					onSetModel={(modelKey) => configure({ modelKey })} onSetThinking={(thinkingLevel) => configure({ thinkingLevel })} onSetMode={(mode) => configure({ mode })} onSetWorkMode={(workMode) => configure({ workMode })} onSetFusion={(fusion) => configure({ fusion })}
+					onSetModel={(modelKey) => configure({ modelKey })} onSetThinking={(thinkingLevel) => configure({ thinkingLevel })} onSetMode={(mode) => configure({ mode })} onSetWorkMode={(workMode) => configure({ workMode })} onSetFusion={(fusion) => configure({ fusion })} onSetFastContext={(fastContext) => configure({ fastContext })}
 					onToggleBrowser={noop} onToggleTerminal={noop} onOpenCheckpoints={noop} onDismissError={() => setError(null)}
 					loadCommands={() => selected.current ? desktop.commands(selected.current) : Promise.resolve([])}
 					onAnswerWorkflow={async (answer) => { const target = selected.current; if (!target) return; const next = await desktop.answer(target, answer); if (selected.current === target) setSnapshot(next); }}

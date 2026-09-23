@@ -13,6 +13,7 @@ import type {
 	RelayResendRequest,
 	RelayVerifyRequest,
 } from "../shared/relay";
+import type { FastContextConfig } from "../shared/fast-context";
 import type { FusionConfig } from "../shared/fusion";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
@@ -50,6 +51,7 @@ import type {
 } from "../shared/plugins";
 import type { WorkMode, WorkflowAnswer } from "../shared/workflow";
 import type {
+	AgentSnapshot,
 	DeleteSessionRequest,
 	ExecutionMode,
 	OpenSessionRequest,
@@ -519,8 +521,12 @@ function createWindow(): void {
 		automationService.start();
 	}
 
+	// Taken now: by "closed" the window is destroyed, and reading `webContents`
+	// off it throws — which used to abort this handler on its first line and
+	// skip every shutdown step below it.
+	const contents = win.webContents;
 	win.on("closed", () => {
-		webUiBridgeGone(win.webContents);
+		webUiBridgeGone(contents);
 		oauthService?.close();
 		terminalService?.killAll();
 		relayService?.close();
@@ -735,10 +741,25 @@ function registerIpc(): void {
 		taskManager?.list(cwd),
 	);
 	ipcMain.handle("agent:create", (_e, cwd: string) =>
-		taskManager?.create(cwd).then((agent) => agent.getSnapshot()),
+		taskManager?.create(cwd).then((agent) => taskManager?.viewOf(agent) ?? null),
 	);
 	ipcMain.handle("agent:open", (_e, req: OpenSessionRequest) =>
-		taskManager?.open(req).then((agent) => agent.getSnapshot()),
+		taskManager?.open(req).then((agent) => taskManager?.viewOf(agent) ?? null),
+	);
+	/**
+	 * A snapshot on its way back to the window, cut to the window's view of it.
+	 * Every handler that answers with the selected session's snapshot goes
+	 * through this — see `TaskManager.view` for why none may skip it.
+	 */
+	const toWindow = async (
+		result: AgentSnapshot | null | undefined | Promise<AgentSnapshot | null | undefined>,
+	): Promise<AgentSnapshot | null> => {
+		const snapshot = await result;
+		return snapshot && taskManager ? taskManager.view(snapshot) : (snapshot ?? null);
+	};
+	ipcMain.handle("agent:loadEarlier", () => taskManager?.loadEarlier() ?? null);
+	ipcMain.handle("agent:toolOutput", (_e, toolCallId: string, offset: number) =>
+		taskManager?.active.toolOutput(toolCallId, offset) ?? null,
 	);
 	ipcMain.handle("agent:rename", (_e, req: RenameSessionRequest) =>
 		taskManager?.rename(req),
@@ -820,7 +841,7 @@ function registerIpc(): void {
 		});
 		return result.canceled ? null : result.filePaths[0];
 	});
-	ipcMain.handle("agent:snapshot", () => taskManager?.active.getSnapshot() ?? null);
+	ipcMain.handle("agent:snapshot", () => toWindow(taskManager?.active.getSnapshot()));
 	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
 		taskManager?.active.getDefaults(cwd),
 	);
@@ -851,14 +872,17 @@ function registerIpc(): void {
 		return next;
 	});
 	ipcMain.handle("agent:abort", () => taskManager?.active.abort());
-	ipcMain.handle("agent:setFusion", (_e, config: FusionConfig) => taskManager?.active.setFusion(config));
+	ipcMain.handle("agent:setFusion", (_e, config: FusionConfig) => toWindow(taskManager?.active.setFusion(config)));
+	ipcMain.handle("agent:setFastContext", (_e, config: FastContextConfig) =>
+		toWindow(taskManager?.active.setFastContext(config)),
+	);
 	ipcMain.handle("agent:setModel", (_e, modelKey: string) =>
-		taskManager?.active.setModel(modelKey),
+		toWindow(taskManager?.active.setModel(modelKey)),
 	);
 	ipcMain.handle("agent:setThinking", (_e, level: ThinkingLevel) =>
-		taskManager?.active.setThinkingLevel(level),
+		toWindow(taskManager?.active.setThinkingLevel(level)),
 	);
-	ipcMain.handle("agent:setWorkMode", (_e, mode: WorkMode) => taskManager?.active.setWorkMode(mode));
+	ipcMain.handle("agent:setWorkMode", (_e, mode: WorkMode) => toWindow(taskManager?.active.setWorkMode(mode)));
 
 	ipcMain.handle("checkpoints:list", () => taskManager?.active.listCheckpoints() ?? []);
 	ipcMain.handle("checkpoints:fileDiff", (_e, id: string, path: string) => {
@@ -877,8 +901,8 @@ function registerIpc(): void {
 		return taskManager!.active.restoreCheckpoint(req);
 	});
 
-	ipcMain.handle("agent:answerWorkflow", (_e, answer: WorkflowAnswer) => taskManager?.active.answerWorkflow(answer));
-	ipcMain.handle("agent:cancelTask", (_e, id: string) => taskManager?.active.cancelTask(id));
+	ipcMain.handle("agent:answerWorkflow", (_e, answer: WorkflowAnswer) => toWindow(taskManager?.active.answerWorkflow(answer)));
+	ipcMain.handle("agent:cancelTask", (_e, id: string) => toWindow(taskManager?.active.cancelTask(id)));
 	const pluginCatalog = new PluginCatalogService();
 	ipcMain.handle("plugins:catalog", (_event, query: PluginCatalogQuery) => pluginCatalog.list(query));
 	ipcMain.handle("plugins:list", () => taskManager?.active.pluginsSnapshot());
@@ -893,7 +917,7 @@ function registerIpc(): void {
 		taskManager?.active.setPluginEnabled(request),
 	);
 	ipcMain.handle("agent:setMode", (_e, mode: ExecutionMode) =>
-		taskManager?.active.setMode(mode),
+		toWindow(taskManager?.active.setMode(mode)),
 	);
 
 	ipcMain.handle("terminal:create", (_e, req: TerminalCreateRequest) =>

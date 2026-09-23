@@ -8,6 +8,7 @@ export interface WorkflowToolHost {
 	requestMode(mode: WorkMode, reason: string, signal?: AbortSignal): Promise<unknown>;
 	debugLog(action: "status" | "read" | "clear"): Promise<unknown>;
 	commitMessage(instructions: string, signal?: AbortSignal): Promise<string>;
+	searchCode(query: string, signal?: AbortSignal): Promise<string>;
 }
 function define<T extends TSchema>(
 	name: string,
@@ -126,6 +127,12 @@ export function createWorkflowTools(host: WorkflowToolHost): ToolDefinition[] {
 				action: Type.Union([Type.Literal("status"), Type.Literal("read"), Type.Literal("clear")]),
 			}),
 			(args) => host.debugLog(args.action),
+		),
+		define(
+			"code_search",
+			"Fast Context: launch a fresh isolated read-only explorer subagent over the repository and get back a compact Markdown report of `path:start-end` findings with evidence. Prefer it before broad manual exploration for complex or cross-module questions and unknown code locations; skip it for known files, exact symbols, or small tasks, and verify its candidates with ordinary read/grep before editing.",
+			object({ query: text(30000) }),
+			(args, signal) => host.searchCode(args.query, signal),
 		),
 		define(
 			"commit_message",

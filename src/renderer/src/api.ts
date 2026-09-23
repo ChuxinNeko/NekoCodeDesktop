@@ -1,3 +1,4 @@
+import type { FastContextConfig } from "../../shared/fast-context";
 import type { FusionConfig } from "../../shared/fusion";
 import type { LanStatus } from "../../shared/lan";
 import type { AppVersionInfo, UpdateCheckResult } from "../../shared/updates";
@@ -159,6 +160,13 @@ export interface AgentApi {
 	agentCreate(cwd: string): Promise<AgentSnapshot>;
 	agentOpen(req: OpenSessionRequest): Promise<AgentSnapshot>;
 	agentSnapshot(): Promise<AgentSnapshot | null>;
+	/**
+	 * Reach one page further back into the open session. The window is only
+	 * sent the tail of a long transcript; this extends it as the user scrolls up.
+	 */
+	agentLoadEarlier(): Promise<AgentSnapshot | null>;
+	/** The rest of a tool result the window was only sent the head of. */
+	agentToolOutput(toolCallId: string, offset: number): Promise<{ text: string; offset: number; total: number } | null>;
 	agentSend(req: SendPromptRequest): Promise<SendPromptResult>;
 	/** Run a prompt in a new session without changing what the window is showing. */
 	agentStartBackground(req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult>;
@@ -196,6 +204,7 @@ export interface AgentApi {
 	onAgentDefaults(listener: (defaults: AgentDefaults) => void): () => void;
 	/** Null without a session: the pick becomes the welcome screen's default. */
 	agentSetFusion(config: FusionConfig): Promise<AgentSnapshot | null>;
+	agentSetFastContext(config: FastContextConfig): Promise<AgentSnapshot | null>;
 	agentSetModel(modelKey: string): Promise<AgentSnapshot | null>;
 	agentSetThinking(level: ThinkingLevel): Promise<AgentSnapshot | null>;
 	agentSetMode(mode: ExecutionMode): Promise<AgentSnapshot | null>;

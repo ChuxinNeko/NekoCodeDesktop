@@ -49,7 +49,7 @@ const SESSION_MAX = 64;
 const LOGIN_LIMIT = 10;
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const LOGIN_BODY_MAX = 4 * 1024;
-const RPC_BODY_MAX = 2 * 1024 * 1024;
+const RPC_BODY_MAX = 32 * 1024 * 1024;
 const RPC_ARGS_MAX = 16;
 const SSE_KEEPALIVE_MS = 25_000;
 

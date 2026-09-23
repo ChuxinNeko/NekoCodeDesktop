@@ -61,6 +61,7 @@ export interface ProviderDraft {
 	api: ModelApiProtocol;
 	apiKey: string;
 	reasoning: boolean;
+	imageInput: boolean;
 	/**
 	 * Token limits, held as typed text so a half-deleted number does not snap
 	 * back to a default mid-edit. Parsed on save.
@@ -128,6 +129,7 @@ export function emptyProviderDraft(): ProviderDraft {
 		api: "openai-completions",
 		apiKey: "",
 		reasoning: false,
+		imageInput: false,
 		contextWindow: String(DEFAULT_CONTEXT_WINDOW),
 		maxTokens: String(DEFAULT_MAX_TOKENS),
 		advanced: false,
@@ -147,6 +149,7 @@ export function providerDraftFrom(profile: ModelProfileSummary): ProviderDraft {
 		api: profile.api,
 		apiKey: "",
 		reasoning: profile.reasoning,
+		imageInput: profile.imageInput,
 		contextWindow: String(profile.contextWindow),
 		maxTokens: String(profile.maxTokens),
 		// A saved endpoint whose route is not the protocol default only got there
@@ -723,6 +726,22 @@ function ProviderForm({
 										variant={draft.reasoning ? "subtle" : "chrome-outline"}
 									>
 										{draft.reasoning ? t("common.on") : t("common.off")}
+									</Button>
+								</div>
+
+								<div className="flex items-start gap-3">
+									<div className="flex min-w-0 flex-1 flex-col">
+										<Label>{t("providers.imageInput")}</Label>
+										<span className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+											{t("providers.imageInputHint")}
+										</span>
+									</div>
+									<Button
+										onClick={() => onDraftChange({ ...draft, imageInput: !draft.imageInput })}
+										size="sm"
+										variant={draft.imageInput ? "subtle" : "chrome-outline"}
+									>
+										{draft.imageInput ? t("common.on") : t("common.off")}
 									</Button>
 								</div>
 							</>
