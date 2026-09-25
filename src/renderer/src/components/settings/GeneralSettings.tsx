@@ -3,7 +3,7 @@ import type { ProxyStatus } from "../../../../shared/settings";
 import type { AppPreferences } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
 import { LANGUAGE_OPTIONS, useTranslation, type TranslationKey } from "../../i18n";
-import { cn } from "../../lib/utils";
+import { cn, getNavigatorPlatform, isWindowsPlatform } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -101,6 +101,17 @@ export function GeneralSettings() {
 					onCheckedChange={(checked: boolean) => setPreference({ isolateBackgroundTasks: checked })}
 				/>
 			</SettingsRow>
+
+			{/* The driver behind it is Windows-only for now; see src/main/computer/service.ts. */}
+			{isWindowsPlatform(getNavigatorPlatform()) ? (
+				<SettingsRow hint={t("settings.computerUseHint")} label={t("settings.computerUse")}>
+					<Switch
+						checked={preferences?.computerUse ?? false}
+						disabled={!preferences}
+						onCheckedChange={(checked: boolean) => setPreference({ computerUse: checked })}
+					/>
+				</SettingsRow>
+			) : null}
 
 			<div className="flex flex-col gap-2 py-2.5">
 				<div className="flex min-w-0 flex-col">

@@ -221,6 +221,13 @@ interface WorkflowRuntimeOptions {
 	/** The skills that ship with the app; absent in tests and helper sessions. */
 	builtinSkills?: BuiltinSkillSource;
 	getFastContextConfig: () => FastContextConfig;
+	/**
+	 * The long-term memory section, read fresh on every prompt rebuild. Its
+	 * presence also means the session was given the memory tool.
+	 */
+	getMemory?: () => string;
+	/** The active `/goal` section, or "" when there is none. */
+	getGoal?: () => string;
 }
 interface HelperRunOptions {
 	model?: Model<Api>;
@@ -311,6 +318,8 @@ export class WorkflowRuntime {
 				? this.session.model.provider + "/" + this.session.model.id
 				: undefined,
 			interactive: true,
+			...(this.options.getMemory ? { memory: this.options.getMemory(), memoryTool: true } : {}),
+			...(this.options.getGoal?.() ? { goal: this.options.getGoal() } : {}),
 			workflowContext: JSON.stringify({
 				todos,
 				tasks: tasks.map(({ id, description, status, writablePaths }) => ({

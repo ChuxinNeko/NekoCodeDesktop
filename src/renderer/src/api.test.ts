@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { api, optionalApi } from "./api";
+import { describe, expect, test } from "bun:test";
+import { api, errorMessage, optionalApi } from "./api";
 
 /**
  * These run in order on purpose: `optionalApi` caches the bridge once it finds
@@ -28,4 +28,14 @@ test("optionalApi yields the preload bridge when the desktop app hosts the page"
 	Object.assign(globalThis, { window: { nekocode: bridge } });
 	expect(optionalApi()).toBe(bridge as never);
 	expect(api.homeDir).toBe("/home/neko");
+});
+
+describe("errorMessage", () => {
+	test("drops Electron's IPC wrapper and keeps the cause", async () => {
+		
+		expect(errorMessage(new Error("Error invoking remote method 'acp:open': Error: 项目目录不存在：D:/x"))).toBe("项目目录不存在：D:/x");
+		expect(errorMessage(new Error("Error invoking remote method 'x': TypeError: bad"))).toBe("bad");
+		expect(errorMessage(new Error("plain"))).toBe("plain");
+		expect(errorMessage("text")).toBe("text");
+	});
 });

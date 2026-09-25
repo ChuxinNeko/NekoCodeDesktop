@@ -8,65 +8,60 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-# Website Reverse-Engineer Template
+# Website Clone Project
 
-## What This Is
-A reusable template for reverse-engineering any website into a clean, modern Next.js codebase using AI coding agents. The Next.js + shadcn/ui + Tailwind v4 base is pre-scaffolded — just run `/clone-website <url1> [<url2> ...]`.
+A Next.js project that NekoCode's `/clone-website` skill fills with high-fidelity clones of target pages. The Next.js + shadcn/ui + Tailwind v4 base is pre-scaffolded. The cloning process itself is defined by the skill (its `SKILL.md` and `references/workflow.md`, shipped with NekoCode), not by this file; this file covers the project.
 
 ## Tech Stack
 - **Framework:** Next.js 16 (App Router, React 19, TypeScript strict)
-- **UI:** shadcn/ui (Radix primitives, Tailwind CSS v4, `cn()` utility)
-- **Icons:** Lucide React (default — will be replaced/supplemented by extracted SVGs)
-- **Styling:** Tailwind CSS v4 with oklch design tokens
-- **Deployment:** Vercel
+- **UI:** shadcn/ui primitives, Tailwind CSS v4, `cn()` from `@/lib/utils`
+- **Icons:** extracted SVGs as React components; Lucide React only where the source uses it
+- **Runtime:** Node.js ≥ 20.9.0, or Bun
 
 ## Commands
-- `npm run dev` — Start dev server
-- `npm run build` — Production build
-- `npm run lint` — ESLint check
-- `npm run typecheck` — TypeScript check
-- `npm run check` — Run lint + typecheck + build
 
-## Code Style
-- TypeScript strict mode, no `any`
-- Named exports, PascalCase components, camelCase utils
-- Tailwind utility classes, no inline styles
-- 2-space indentation
-- Responsive: mobile-first
+Use one package manager for the whole project — the one whose lockfile is present.
 
-## Design Principles
-- **Pixel-perfect emulation** — match the target's spacing, colors, typography exactly
-- **No personal aesthetic changes during emulation phase** — match 1:1 first, customize later
-- **Real content** — use actual text and assets from the target site, not placeholders
-- **Beauty-first** — every pixel matters
+| Task | npm | Bun |
+|---|---|---|
+| Install | `npm install` | `bun install` |
+| Dev server | `npm run dev -- --port <port>` | `bun --bun run dev -- --port <port>` |
+| Lint / types / build | `npm run lint` / `npm run typecheck` / `npm run build` | `bun --bun run lint` / `… typecheck` / `… build` |
+| Everything | `npm run check` | `bun --bun run check` |
+
+With Bun always pass `--bun`: otherwise the scripts run on whatever `node` is on PATH, and an old one fails the Node version check. Never call `next`, `npx next`, or `bunx next` directly; the scripts set the environment the build needs.
+
+Inside NekoCode, start and stop the dev server with the `website_clone_dev_server` tool, not a shell command: a shell command waits for the server to exit, which it never does.
 
 ## Project Structure
 ```
 src/
-  app/              # Next.js routes
-  components/       # React components
-    ui/             # shadcn/ui primitives
-    icons.tsx       # Extracted SVG icons as React components
-  lib/
-    utils.ts        # cn() utility (shadcn)
-  types/            # TypeScript interfaces
-  hooks/            # Custom React hooks
+  app/                                  # Routes; each clone at its source pathname
+  components/
+    ui/                                 # shadcn/ui primitives
+    sites/<site-key>/shared/            # Components and icons shared within one site
+    sites/<site-key>/<page-key>/        # One cloned page's components
+  lib/utils.ts                          # cn()
+  types/                                # Content types
+  hooks/                                # Custom hooks
 public/
-  images/           # Downloaded images from target site
-  videos/           # Downloaded videos from target site
-  seo/              # Favicons, OG images, webmanifest
+  sites/<site-key>/shared/              # Assets shared within one site
+  sites/<site-key>/<page-key>/          # One page's images, videos, fonts, icons
 docs/
-  research/         # Inspection output (design tokens, components, layout)
-  design-references/ # Screenshots and visual references
-scripts/            # Asset download scripts
-.agents/
-  skills/
-    clone-website/  # Canonical cross-agent cloning workflow
-.claude/
-  commands/
-    clone-website.md # Thin Claude Code invocation bridge
+  research/<site-key>/<page-key>/       # Extraction data, component specs, QA reports
+scripts/
+  download-assets-<site-key>-<page-key>.mjs
 ```
 
-## Agent Workflow
-- Edit `.agents/skills/clone-website/` for cloning-workflow changes. It is the canonical skill used by Codex, Cursor, and OpenCode.
-- Keep `.claude/commands/clone-website.md` as a thin Claude Code bridge to the canonical skill; do not duplicate the workflow there.
+Never write one page's files into another page's namespace, and never replace an existing route without explicit approval.
+
+Each cloned section's root element carries `data-section="<section-name>"`, the name its spec and the QA extractions use. Keep it when editing a section.
+
+## Code Style
+- TypeScript strict, no `any`; named exports; PascalCase components, camelCase utilities; 2-space indentation.
+- Tailwind utilities first. When a preset does not equal the extracted value, use an arbitrary value (`leading-[24px]`, `text-[#1a1a1a]`, `shadow-[0_4px_20px_rgba(0,0,0,0.1)]`) rather than the nearest preset. Use a `style` prop only for values Tailwind cannot express (for example computed or animated custom properties).
+- Mobile-first responsive classes, with breakpoints taken from the source site.
+
+## Fidelity
+- Match the source exactly: spacing, color, typography, behavior, and every interactive state. No aesthetic changes during cloning.
+- Real content and the site's own assets, never placeholders — except an explicitly marked placeholder for an asset that could not be downloaded.

@@ -1,5 +1,6 @@
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { SlashCommandSummary } from "../../../shared/commands";
+import type { MentionCandidate } from "../../../shared/mentions";
 import type { FastContextConfig } from "../../../shared/fast-context";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode } from "../../../shared/workflow";
@@ -14,6 +15,7 @@ import { Button } from "./ui/button";
 
 interface WelcomeViewProps {
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
+	loadMentions?: (query: string) => Promise<MentionCandidate[]>;
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	cwd: string | null;
@@ -32,6 +34,7 @@ interface WelcomeViewProps {
 	onSetThinking: (level: ThinkingLevel) => void;
 	onSetMode: (mode: ExecutionMode) => void;
 	onSetWorkMode: (mode: WorkMode) => void;
+	composerHeader?: React.ReactNode;
 }
 
 /**
@@ -72,6 +75,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 			</div>
 
 			<ComposerShell
+				header={props.composerHeader}
 				insertion={props.insertion}
 				onInsertionConsumed={props.onInsertionConsumed}
 				autoFocus
@@ -83,6 +87,8 @@ export function WelcomeView(props: WelcomeViewProps) {
 				// No session yet, so this lists the built-in skills; the session the
 				// first prompt creates is what expands whatever gets picked here.
 				loadCommands={props.loadCommands ?? (() => api.agentCommands())}
+				// The first prompt creates the session, which is what expands these.
+				loadMentions={props.loadMentions}
 				toolbar={
 					<>
 						{defaults ? (

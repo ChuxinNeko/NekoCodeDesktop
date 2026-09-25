@@ -30,20 +30,38 @@ export function describeSelectedElement(this: Element) {
 	return { tagName, name, selector: segments.join(" > "), url: element.ownerDocument.URL };
 }
 
+/**
+ * One session's view of browser automation: the page it bound with
+ * `browser_navigate`, and nobody else's.
+ */
+export interface BrowserAutomationHost {
+	requestAutomation(requestId: string, open: () => void, signal?: AbortSignal): Promise<WebContents>;
+	automationGuest(): WebContents;
+	/** Bring the automation page's tab on screen so it paints again. */
+	revealAutomation(): void;
+	watchAutomation(onInvalidate: (reason: string) => void): () => void;
+}
+
 /** Chrome's inspector intercepts the click, so selecting a link cannot follow it. */
 export class BrowserInspector {
 	private guests = new Map<number, WebContents>();
 	private active?: WebContents;
-	private automation?: WebContents;
+	/**
+	 * The page each session bound, by session id. Per session because two
+	 * conversations inspecting at once would otherwise evaluate in whichever page
+	 * was bound last, and one page closing would fail the other's calls.
+	 */
+	private automation = new Map<string, WebContents>();
 	private automationPending = new Map<
 		string,
 		{
+			sessionId: string;
 			resolve: (guest: WebContents) => void;
 			reject: (error: Error) => void;
 			timer: ReturnType<typeof setTimeout>;
 		}
 	>();
-	private automationWatchers = new Set<(reason: string) => void>();
+	private automationWatchers = new Map<string, Set<(reason: string) => void>>();
 	private generation = 0;
 	constructor(private win: BrowserWindow) {}
 	register(guest: WebContents): void {
@@ -51,16 +69,17 @@ export class BrowserInspector {
 		guest.once("destroyed", () => {
 			this.guests.delete(guest.id);
 			if (this.active === guest) void this.stop();
-			if (this.automation === guest) {
-				this.automation = undefined;
-				this.invalidateAutomation("The page bound for automation was closed");
+			for (const sessionId of this.sessionsBoundTo(guest)) {
+				this.automation.delete(sessionId);
+				this.invalidateAutomation(sessionId, "The page bound for automation was closed");
 			}
 		});
 		guest.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
 			if (!mainFrame || inPlace) return;
 			if (this.active === guest) void this.stop();
-			if (this.automation === guest) {
+			for (const sessionId of this.sessionsBoundTo(guest)) {
 				this.invalidateAutomation(
+					sessionId,
 					"The page navigated while the call was in flight, so it can no longer answer it. Never navigate or reload from inside an expression — use browser_navigate, then call again.",
 				);
 			}
@@ -125,8 +144,22 @@ export class BrowserInspector {
 		if (!this.win.isDestroyed()) this.win.webContents.send("browser:inspectStopped", { guestId });
 	}
 
-	private invalidateAutomation(reason: string): void {
-		for (const watcher of [...this.automationWatchers]) watcher(reason);
+	private sessionsBoundTo(guest: WebContents): string[] {
+		return [...this.automation].filter(([, bound]) => bound === guest).map(([sessionId]) => sessionId);
+	}
+
+	private invalidateAutomation(sessionId: string, reason: string): void {
+		for (const watcher of [...(this.automationWatchers.get(sessionId) ?? [])]) watcher(reason);
+	}
+
+	/** The automation calls one session may make: only ever against its own page. */
+	automationHost(sessionId: string): BrowserAutomationHost {
+		return {
+			requestAutomation: (requestId, open, signal) => this.requestAutomation(sessionId, requestId, open, signal),
+			automationGuest: () => this.automationGuest(sessionId),
+			revealAutomation: () => this.revealAutomation(sessionId),
+			watchAutomation: (onInvalidate) => this.watchAutomation(sessionId, onInvalidate),
+		};
 	}
 
 	/**
@@ -139,9 +172,20 @@ export class BrowserInspector {
 	 * waits on it wedges the agent run — and with it the stop button — so the tools
 	 * watch for the page going away instead of trusting it to reply.
 	 */
-	watchAutomation(onInvalidate: (reason: string) => void): () => void {
-		this.automationWatchers.add(onInvalidate);
-		return () => this.automationWatchers.delete(onInvalidate);
+	private watchAutomation(sessionId: string, onInvalidate: (reason: string) => void): () => void {
+		let watchers = this.automationWatchers.get(sessionId);
+		if (!watchers) {
+			watchers = new Set();
+			this.automationWatchers.set(sessionId, watchers);
+		}
+		const own = watchers;
+		own.add(onInvalidate);
+		return () => {
+			own.delete(onInvalidate);
+			if (own.size === 0 && this.automationWatchers.get(sessionId) === own) {
+				this.automationWatchers.delete(sessionId);
+			}
+		};
 	}
 
 	private failAutomation(requestId: string, error: Error): void {
@@ -152,7 +196,12 @@ export class BrowserInspector {
 		pending.reject(error);
 	}
 
-	requestAutomation(requestId: string, open: () => void, signal?: AbortSignal): Promise<WebContents> {
+	private requestAutomation(
+		sessionId: string,
+		requestId: string,
+		open: () => void,
+		signal?: AbortSignal,
+	): Promise<WebContents> {
 		if (signal?.aborted) return Promise.reject(new Error("Automation request aborted"));
 		if (this.automationPending.has(requestId)) {
 			return Promise.reject(new Error(`Duplicate automation request: ${requestId}`));
@@ -162,7 +211,7 @@ export class BrowserInspector {
 				this.automationPending.delete(requestId);
 				reject(new Error("Timed out waiting for the browser panel to bind the page"));
 			}, 30_000);
-			this.automationPending.set(requestId, { resolve, reject, timer });
+			this.automationPending.set(requestId, { sessionId, resolve, reject, timer });
 		});
 		const onAbort = () => this.failAutomation(requestId, new Error("Automation request aborted"));
 		signal?.addEventListener("abort", onAbort, { once: true });
@@ -187,24 +236,35 @@ export class BrowserInspector {
 		}
 		this.automationPending.delete(requestId);
 		clearTimeout(pending.timer);
-		this.automation = guest;
+		this.automation.set(pending.sessionId, guest);
 		pending.resolve(guest);
 	}
 
-	automationGuest(): WebContents {
-		const guest = this.automation;
+	private automationGuest(sessionId: string): WebContents {
+		const guest = this.automation.get(sessionId);
 		if (!guest || guest.isDestroyed()) {
 			throw new Error("No page is bound for automation; call browser_navigate first");
 		}
 		return guest;
 	}
 
+	/**
+	 * Ask the window to put a session's automation page on screen. The panel hides
+	 * the guests it is not showing with `visibility: hidden`, and Chromium paints no
+	 * frames for a hidden guest — so a screenshot of one waits forever.
+	 */
+	private revealAutomation(sessionId: string): void {
+		const guest = this.automationGuest(sessionId);
+		if (!this.win.isDestroyed()) this.win.webContents.send("browser:revealAutomation", { guestId: guest.id });
+	}
+
 	async dispose(): Promise<void> {
 		for (const requestId of [...this.automationPending.keys()]) {
 			this.failAutomation(requestId, new Error("Browser automation is shutting down"));
 		}
-		this.automation = undefined;
-		this.invalidateAutomation("Browser automation is shutting down");
+		const sessions = new Set([...this.automation.keys(), ...this.automationWatchers.keys()]);
+		this.automation.clear();
+		for (const sessionId of sessions) this.invalidateAutomation(sessionId, "Browser automation is shutting down");
 		await this.stop();
 	}
 

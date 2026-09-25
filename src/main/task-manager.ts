@@ -277,6 +277,13 @@ export class TaskManager {
 		await Promise.all([...this.agents].filter((s) => s !== this.owner).map((s) => s.reloadConfiguredModels(false)));
 	}
 
+	/** Every open session re-reads its project instructions; see {@link AgentService.reloadContext}. */
+	async reloadContext(): Promise<void> {
+		// One at a time: a reload resets the core's provider registry, which is
+		// process-wide, and two interleaved resets could each undo the other.
+		for (const agent of [...this.agents]) await agent.reloadContext();
+	}
+
 	private drop(agent: AgentService): void {
 		this.agents.delete(agent);
 		this.snapshots.delete(agent);

@@ -23,6 +23,8 @@ import multitaskTools from "../../pi/packages/prompt/multitask/tools.json";
 import subagentTools from "../../pi/packages/prompt/subagent/tools.json";
 import type { ExecutionMode } from "../shared/agent";
 import { STAT_TOOL_NAME } from "./file-tools";
+import { MEMORY_TOOL_NAME } from "./memory-tool";
+import { GOAL_TOOL_NAME } from "./goal";
 import {
 	AGENT_PHASES,
 	DEFAULT_AGENT_PHASE,
@@ -142,6 +144,16 @@ export interface PromptContext {
 	headless?: boolean;
 	userSystemPrompt?: string;
 	workflowContext?: string;
+	/** The long-term memory section for this session's project, already rendered. */
+	memory?: string;
+	/**
+	 * The session can write memory. Only where a user is on the other end: a
+	 * worker or an automation remembering things nobody asked for would fill
+	 * every future prompt with its own notes.
+	 */
+	memoryTool?: boolean;
+	/** The active `/goal` section, already rendered; its presence also offers the goal tool. */
+	goal?: string;
 }
 
 /** The phase in force, or undefined for the modes that do not have one. */
@@ -169,8 +181,21 @@ export function toolsForMode(context: PromptContext): string[] {
 	const names = isReadOnly(context.mode, context.permission, phase)
 		? base
 		: [...new Set([...base, ...(context.pluginTools ?? [])])];
-	return names.filter((name) => {
-		if (isReadOnly(context.mode, context.permission, phase) && !readOnlyNames.has(name))
+	const attended = !context.child && !context.headless;
+	const withMemory = [
+		...names,
+		...(context.memoryTool && attended ? [MEMORY_TOOL_NAME] : []),
+		...(context.goal && attended ? [GOAL_TOOL_NAME] : []),
+	];
+	return withMemory.filter((name) => {
+		// Memory lives in app data, not in the project, so it is not a write.
+		// Ending a goal is not a write either.
+		if (
+			isReadOnly(context.mode, context.permission, phase) &&
+			!readOnlyNames.has(name) &&
+			name !== MEMORY_TOOL_NAME &&
+			name !== GOAL_TOOL_NAME
+		)
 			return false;
 		if (context.headless && WORKFLOW_TOOL_NAMES.includes(name)) return false;
 		if (
@@ -276,6 +301,8 @@ export function buildModePrompt(context: PromptContext): string {
 		context.userSystemPrompt
 			? "## 用户自定义系统补充（不改变运行时权限）\n" + context.userSystemPrompt
 			: "",
+		context.memory ?? "",
+		context.goal ?? "",
 	]
 		.filter(Boolean)
 		.join("\n\n")

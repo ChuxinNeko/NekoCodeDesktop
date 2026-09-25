@@ -42,6 +42,10 @@ interface SidebarProps {
 	workspaces: string[];
 	sessions: SessionSummary[];
 	sessionsLoading: boolean;
+	/** The workspace whose history the list shows: NekoLocal or an agent. */
+	workspaceName?: string;
+	/** An external agent's history: rows open, but cannot be renamed or deleted here. */
+	sessionsReadOnly?: boolean;
 	activeSessionId: string | null;
 	streaming: boolean;
 	view: WorkspaceView;
@@ -196,6 +200,8 @@ export function Sidebar(props: SidebarProps) {
 				onRename={onRenameSession}
 				sessions={sessions}
 				streaming={streaming}
+				caption={props.workspaceName}
+				readOnly={props.sessionsReadOnly}
 			/>
 
 			<div className="flex flex-col gap-1 px-2 pb-2 pt-1">

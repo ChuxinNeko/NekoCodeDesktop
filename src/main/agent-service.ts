@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { app, type BrowserWindow } from "electron";
 import type {
 	AgentSession,
@@ -98,6 +98,33 @@ import { resolveFusion } from "./fusion-config";
 import { withFusionUsage } from "./fusion-usage";
 import { preparePromptImages } from "./prompt-images";
 import { BrowserPreview } from "./browser-preview";
+import { hookService, memorySection, memoryStore } from "./context-services";
+import { createMemoryTool } from "./memory-tool";
+import { expandMentions, searchMentions } from "./mentions";
+import { initPrompt } from "./project-instructions";
+import { formatCost, formatTokens } from "../shared/usage";
+import {
+	continuationPrompt,
+	createGoalTool,
+	decideAfterRun,
+	goalPromptSection,
+	kickoffPrompt,
+	newGoal,
+} from "./goal";
+import {
+	DEFAULT_GOAL_MAX_TURNS,
+	displayGoalPrompt,
+	GOAL_ENTRY,
+	GOAL_MESSAGE,
+	formatGoalElapsed,
+	goalElapsedMs,
+	readGoalState,
+	withGoalStatus,
+	type GoalAction,
+	type GoalState,
+} from "../shared/goal";
+import { displayInitPrompt, isInstructionFileName } from "../shared/instructions";
+import type { MentionCandidate } from "../shared/mentions";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
 	"off",
@@ -116,6 +143,9 @@ const HELP_TEXT = [
 	"/new, /clear — start a new session",
 	"/abort — stop the current run",
 	"/compact [focus] — compact context",
+	"/init [要求] — 分析项目并生成或改进 AGENTS.md",
+	"/goal <目标> — 设定持续目标，agent 自动工作直到完成；/goal pause|resume|stop 控制，/goal 查看状态",
+	"/remember [--global] <内容> — 记住一条项目约定（--global 为所有项目的个人偏好）",
 	"/mode <agent|ask|plan|debug|multitask> — change work mode",
 	"/commit-message [instructions] — propose a message for staged changes (no commit)",
 	"/model [provider/id] — list or select a model",
@@ -178,6 +208,24 @@ const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
 	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
 	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
 };
+
+/**
+ * The goal a session was left with. An active one comes back paused: it
+ * resumes when the user says so, not because the session was opened.
+ */
+function savedGoal(manager: Pick<SessionManager, "getBranch">): GoalState | null {
+	const entries = manager.getBranch();
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type !== "custom" || entry.customType !== GOAL_ENTRY) continue;
+		const goal = readGoalState(entry.data);
+		if (!goal || goal.status !== "active") return goal;
+		// The clock stopped when the app did, not now: close the active stretch at
+		// the last moment the goal was saved.
+		return withGoalStatus(goal, "paused", "会话重新打开，已暂停", goal.updatedAt);
+	}
+	return null;
+}
 
 function assertDirectory(cwd: string): void {
 	if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
@@ -269,6 +317,18 @@ export class AgentService {
 	/** What the open session's extensions registered; replaced on every reload. */
 	private extensions: LoadExtensionsResult | undefined;
 	private resourceLoader: ResourceLoader | undefined;
+	/**
+	 * The agent wrote an AGENTS.md-family file during this run. The core reads
+	 * those once, when the prompt is built, so the session reloads when the run
+	 * ends — otherwise `/init` would write a file the same session never sees.
+	 */
+	private instructionsDirty = false;
+	/**
+	 * The open session's `/goal`, if it has one. Restored from the transcript on
+	 * open — but never as active: a loop that restarted by itself because a
+	 * session was clicked would spend tokens nobody asked for.
+	 */
+	private goal: GoalState | null = null;
 
 	constructor(
 		private readonly win: BrowserWindow,
@@ -444,7 +504,12 @@ export class AgentService {
 		);
 		const byName = (a: SlashCommandSummary, b: SlashCommandSummary) =>
 			a.name.localeCompare(b.name);
-		return [...prompts.sort(byName), ...skills.sort(byName)];
+		const builtins: SlashCommandSummary[] = [
+			{ name: "goal", description: "设定持续目标，agent 自动工作直到完成（pause / resume / stop 控制）", kind: "builtin", argumentHint: "<目标>" },
+			{ name: "init", description: "分析项目并生成或改进 AGENTS.md", kind: "builtin", argumentHint: "[补充要求]" },
+			{ name: "remember", description: "记住一条项目约定；--global 记为所有项目的个人偏好", kind: "builtin", argumentHint: "[--global] <内容>" },
+		];
+		return [...builtins, ...prompts.sort(byName), ...skills.sort(byName)];
 	}
 
 	/**
@@ -466,6 +531,200 @@ export class AgentService {
 			this.emit();
 		}
 		return this.skillsSnapshot();
+	}
+
+	/**
+	 * Re-read what the core only reads when it builds the prompt — the
+	 * AGENTS.md family and the skills — into the open session.
+	 *
+	 * A running turn is left alone and reloaded when it ends: rebuilding the
+	 * system prompt under a model mid-answer would change its instructions
+	 * halfway through a thought.
+	 */
+	async reloadContext(): Promise<void> {
+		const session = this.session;
+		if (!session) return;
+		if (session.isStreaming) {
+			this.instructionsDirty = true;
+			return;
+		}
+		this.instructionsDirty = false;
+		try {
+			await session.reload();
+			if (session !== this.session) return;
+			this.extensions = this.resourceLoader?.getExtensions();
+			this.workflow?.refresh();
+			this.emit();
+		} catch (error) {
+			this.projector.notice("warning", "项目指令未能重新加载：" + (error instanceof Error ? error.message : String(error)));
+			this.emit();
+		}
+	}
+
+	// =========================================================================
+	// Goal
+	// =========================================================================
+
+	/**
+	 * Change the goal, save it into the transcript, and rebuild the prompt: the
+	 * goal section and the goal tool exist only while it is active.
+	 */
+	private setGoal(goal: GoalState | null): void {
+		this.goal = goal ? { ...goal, updatedAt: Date.now() } : null;
+		try {
+			this.session?.sessionManager.appendCustomEntry(GOAL_ENTRY, this.goal);
+		} catch (error) {
+			console.error("Could not save the goal:", error);
+		}
+		this.workflow?.refresh();
+		this.emit();
+	}
+
+	/**
+	 * Count a finished reply against the active goal. Held in memory only — the
+	 * next status change saves it — because a save per reply would put a
+	 * transcript entry after every model call.
+	 */
+	private addGoalUsage(message: AssistantMessage): void {
+		const goal = this.goal;
+		const usage = message.usage;
+		if (!goal || goal.status !== "active" || !usage) return;
+		const tokens = usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+		this.goal = {
+			...goal,
+			usage: { tokens: goal.usage.tokens + tokens, cost: goal.usage.cost + (usage.cost?.total ?? 0) },
+		};
+	}
+
+	/** `/goal` with a control word or nothing: handled here. Null for a new objective. */
+	private goalCommand(args: string): SendPromptResult | null {
+		const word = args.trim().toLowerCase();
+		const action: GoalAction | null =
+			word === "pause" || word === "暂停"
+				? { type: "pause" }
+				: word === "resume" || word === "继续"
+					? { type: "resume" }
+					: word === "stop" || word === "clear" || word === "结束" || word === "清除"
+						? { type: "clear" }
+						: null;
+		if (action) {
+			try {
+				this.goalAction(action);
+				return { accepted: true };
+			} catch (error) {
+				return { accepted: false, error: error instanceof Error ? error.message : String(error) };
+			}
+		}
+		if (word) return null;
+		const goal = this.goal;
+		this.projector.notice(
+			"info",
+			goal
+				? [
+						`目标：${goal.objective}`,
+						`状态：${goal.status} · 用时 ${formatGoalElapsed(goalElapsedMs(goal))} · 已自动续跑 ${goal.turns}/${goal.maxTurns} 轮`,
+						`花费：${formatTokens(goal.usage.tokens)} tokens${goal.usage.cost > 0 ? ` · ${formatCost(goal.usage.cost)}` : ""}`,
+						goal.reason ? `最近判断：${goal.reason}` : "",
+					]
+						.filter(Boolean)
+						.join("\n")
+				: "当前没有目标。用法：/goal <目标>",
+		);
+		this.emit();
+		return { accepted: true };
+	}
+
+	/** The banner's buttons and `/goal pause|resume|stop`. */
+	goalAction(action: GoalAction): AgentSnapshot | null {
+		const goal = this.goal;
+		if (!goal) throw new Error("当前没有目标");
+		if (action.type === "clear") {
+			this.setGoal(null);
+		} else if (action.type === "pause") {
+			if (goal.status === "active") this.setGoal(withGoalStatus(goal, "paused", "已手动暂停"));
+		} else if (goal.status !== "active") {
+			// Resuming past the limit is the user asking for more turns.
+			const maxTurns = goal.turns >= goal.maxTurns ? goal.turns + DEFAULT_GOAL_MAX_TURNS : goal.maxTurns;
+			this.setGoal({ ...withGoalStatus(goal, "active", "已手动继续"), maxTurns });
+			const session = this.session;
+			if (session && !session.isStreaming && !this.workflow?.state.hasRunningTasks) this.continueGoal(session);
+		}
+		return this.session ? this.buildSnapshot() : null;
+	}
+
+	/**
+	 * Everything that waits for a run to end: an instruction file the agent
+	 * wrote, then the goal loop's next turn.
+	 */
+	private async afterRun(generation: number): Promise<void> {
+		if (this.instructionsDirty) await this.reloadContext();
+		// Let the core finish closing the run — queued follow-ups included —
+		// before deciding nothing else is about to start one.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const session = this.session;
+		if (!session || generation !== this.generation || session.isStreaming) return;
+		const last = [...session.messages].reverse().find((message) => message.role === "assistant") as
+			| AssistantMessage
+			| undefined;
+		const decision = decideAfterRun(this.goal, {
+			aborted: last?.stopReason === "aborted",
+			error: last?.stopReason === "error" ? (last.errorMessage ?? "未知错误") : undefined,
+			runningTasks: this.workflow?.state.hasRunningTasks ?? false,
+			pendingQuestion: this.workflow?.state.hasPendingQuestion ?? false,
+		});
+		if (!this.goal || decision.type === "none") return;
+		if (decision.type === "pause") this.setGoal(withGoalStatus(this.goal, "paused", decision.reason));
+		else if (decision.type === "wait") this.setGoal({ ...this.goal, reason: decision.reason });
+		else this.continueGoal(session, decision.reason);
+	}
+
+	/** Send the next "keep going" turn. */
+	private continueGoal(session: AgentSession, reason?: string): void {
+		const goal = this.goal;
+		if (!goal || goal.status !== "active") return;
+		const next = { ...goal, turns: goal.turns + 1, reason: reason ?? goal.reason };
+		this.setGoal(next);
+		const label = `目标未完成，自动继续（第 ${next.turns}/${next.maxTurns} 轮）`;
+		this.markCheckpoint(session, label);
+		const generation = this.generation;
+		session
+			.sendCustomMessage(
+				{ customType: GOAL_MESSAGE, content: continuationPrompt(next), display: true, details: { label } },
+				{ triggerTurn: true },
+			)
+			.catch((error: unknown) => {
+				if (generation !== this.generation || !this.goal) return;
+				const message = error instanceof Error ? error.message : String(error);
+				this.setGoal(withGoalStatus(this.goal, "paused", `自动续跑失败：${message}`));
+			});
+	}
+
+	/** What the composer's `@` picker offers, from the open session's project. */
+	async mentionSearch(query: string, cwd?: string): Promise<MentionCandidate[]> {
+		const root = cwd || this.session?.sessionManager.getCwd();
+		if (!root || typeof query !== "string" || query.length > 200) return [];
+		return searchMentions(root, query);
+	}
+
+	/**
+	 * Notice the agent writing an instruction file, so the session reloads it
+	 * when the run ends. The shell could write one too; that is not watched —
+	 * the common case is `/init`, which uses the file tools.
+	 */
+	private watchInstructionEdits(session: AgentSession, generation: number): void {
+		const previousAfter = session.agent.afterToolCall;
+		session.agent.afterToolCall = async (context, signal) => {
+			const result = await previousAfter?.(context, signal);
+			if (
+				generation === this.generation &&
+				(context.toolCall.name === "write" || context.toolCall.name === "edit") &&
+				!(result?.isError ?? context.isError)
+			) {
+				const path = (context.args as { path?: unknown }).path;
+				if (typeof path === "string" && isInstructionFileName(basename(path))) this.instructionsDirty = true;
+			}
+			return result;
+		};
 	}
 
 	/**
@@ -885,7 +1144,7 @@ export class AgentService {
 	async send(req: SendPromptRequest): Promise<SendPromptResult> {
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
-		const text = expandNekoSlashAlias(req.text);
+		let text = expandNekoSlashAlias(req.text);
 		const imagesSupplied = req.images !== undefined;
 		const emptyImages = Array.isArray(req.images) && req.images.length === 0;
 		if (!text.trim() && (!imagesSupplied || emptyImages)) {
@@ -904,6 +1163,10 @@ export class AgentService {
 			const handled = await this.handleSlash(slash.command, slash.args);
 			if (handled) return handled;
 		}
+		// Rewritten rather than handled: /init is an ordinary turn with a prompt
+		// the user did not have to write, so it runs, streams and checkpoints like
+		// any other.
+		if (slash?.command === "init") text = initPrompt(session.sessionManager.getCwd(), slash.args);
 
 		if (!session.model || session.model.provider === "unknown") {
 			this.projector.notice("error", NO_MODEL_ERROR);
@@ -943,17 +1206,39 @@ export class AgentService {
 				return { accepted: false, error: msg };
 			}
 		}
-		const promptText = text.trim() ? text : "请检查所附图片。";
+		if (slash?.command === "goal") {
+			const control = this.goalCommand(slash.args);
+			if (control) return control;
+			if (session.isStreaming) return { accepted: false, error: "请先等待当前运行结束或停止，再设定目标" };
+			try {
+				this.setGoal(newGoal(slash.args));
+			} catch (error) {
+				return { accepted: false, error: error instanceof Error ? error.message : String(error) };
+			}
+			text = kickoffPrompt(this.goal!);
+		} else if (!slash && this.goal?.status === "blocked") {
+			// The goal stopped to ask the user something; this is the answer.
+			this.setGoal(withGoalStatus(this.goal, "active", "你已回复，目标继续"));
+		}
+		const typedText = text.trim() ? text : "请检查所附图片。";
+		let promptText = typedText;
+		try {
+			promptText = await expandMentions(session.sessionManager.getCwd(), typedText);
+		} catch (error) {
+			// A reference that cannot be read is the model's to discover; the
+			// prompt itself still goes.
+			console.error("Could not expand @ references:", error);
+		}
 
 		// The opening prompt is what the session gets named after — by the model,
 		// in the background. Until that lands the row shows a placeholder.
 		const firstPrompt = !session.messages.some((m) => m.role === "user");
-		if (firstPrompt) this.startTitleGeneration(session, promptText);
+		if (firstPrompt) this.startTitleGeneration(session, displayInitPrompt(typedText) ?? displayGoalPrompt(typedText) ?? typedText);
 
 		// Before the agent can touch anything, so everything the turn changes is
 		// recorded after the marker. Steering joins the turn already running, and
 		// that turn has a marker already.
-		if (!session.isStreaming) this.markCheckpoint(session, promptText);
+		if (!session.isStreaming) this.markCheckpoint(session, displayInitPrompt(typedText) ?? displayGoalPrompt(typedText) ?? typedText);
 
 		try {
 			if (session.isStreaming) {
@@ -974,6 +1259,8 @@ export class AgentService {
 	}
 
 	async abort(): Promise<void> {
+		// Before the run winds down, so the end of it is not read as a reason to go on.
+		if (this.goal?.status === "active") this.setGoal(withGoalStatus(this.goal, "paused", "已由用户停止"));
 		this.helperAbort?.abort();
 		this.workflow?.stop();
 		await this.session?.abort();
@@ -1397,6 +1684,7 @@ export class AgentService {
 		this.projectionDirty = false;
 		this.projector.reset();
 		this.pendingError = undefined;
+		this.goal = null;
 		this.journal?.reset();
 		this.journal = null;
 	}
@@ -1439,12 +1727,14 @@ export class AgentService {
 		const modelRuntime = await this.getModelRuntime();
 		const cloneTools = createWebsiteCloneTools({
 			cwd: sessionManager.getCwd(),
-			browser: this.browserInspector,
+			browser: this.browserInspector.automationHost(sessionManager.getSessionId()),
 			templateDir: resolveWebsiteCloneTemplateDir({
 				appPath: app.getAppPath(),
 				resourcesPath: process.resourcesPath,
 				override: process.env.NEKOCODE_WEBSITE_CLONER_TEMPLATE,
 			}),
+			// Read per call: the user can switch models mid-session.
+			acceptsImages: () => this.session?.model?.input.includes("image") ?? true,
 			onNavigate: (request) => {
 				if (!this.win.isDestroyed()) {
 					this.publish("browser:preview", {
@@ -1498,7 +1788,18 @@ export class AgentService {
 				]),
 			],
 			builtinSkills: this.builtinSkills,
-			customTools: [...cloneTools, ...(this.mcp?.tools() ?? [])],
+			getMemory: () => memorySection(sessionManager.getCwd()),
+			getGoal: () => goalPromptSection(this.goal),
+			customTools: [
+				...cloneTools,
+				...(this.mcp?.tools() ?? []),
+				createMemoryTool(sessionManager.getCwd(), memoryStore()),
+				createGoalTool((status, note) => {
+					if (generation !== this.generation || this.goal?.status !== "active") return "No active goal";
+					this.setGoal(withGoalStatus(this.goal, status, status === "completed" ? `已完成：${note}` : note));
+					return null;
+				}),
+			],
 			modelRuntime,
 			model,
 			thinkingLevel: freshCwd ? (this.pendingThinkingLevel ?? undefined) : undefined,
@@ -1513,6 +1814,7 @@ export class AgentService {
 		this.workflow = workflow;
 		this.extensions = extensionsResult;
 		this.resourceLoader = resourceLoader;
+		this.goal = savedGoal(sessionManager);
 		this.workMode = workflow.workMode;
 		this.createdAt = Date.now();
 		workflow.refresh();
@@ -1527,14 +1829,27 @@ export class AgentService {
 		// After the workflow gate, so a tool it blocks is never recorded as having
 		// changed anything. Nothing is scanned or copied here — the recorder only
 		// wakes up when a tool call names a file.
+		// Between the two: a call the workflow refuses never reaches a hook, and
+		// a call a hook refuses is never recorded as a change.
+		hookService().attach(session, sessionManager.getCwd());
+		this.watchInstructionEdits(session, generation);
 		this.journal = new FileJournalRecorder(sessionManager.getCwd());
 		this.journal.attach(session);
 		attachTruncationRecovery(session, (message) => {
 			if (generation === this.generation) this.projector.notice("warning", message);
 		});
-		this.unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+		const unsubscribeSession = session.subscribe((event: AgentSessionEvent) => {
 			this.onSessionEvent(event);
 		});
+		// Memory is shared by every session: one saved here, by the agent or in
+		// settings, belongs in every other open session's next prompt too.
+		const unsubscribeMemory = memoryStore().onChange(() => {
+			if (generation === this.generation) this.workflow?.refresh();
+		});
+		this.unsubscribe = () => {
+			unsubscribeSession();
+			unsubscribeMemory();
+		};
 		const snapshot = this.buildSnapshot();
 		this.emit(snapshot);
 		this.emitSessionsChanged();
@@ -1547,6 +1862,7 @@ export class AgentService {
 		if (!session) return;
 		this.preview?.handle(event as ProjectionEvent);
 		this.projector.handleEvent(event as ProjectionEvent);
+		if (event.type === "message_end" && event.message.role === "assistant") this.addGoalUsage(event.message as AssistantMessage);
 		this.projectionDirty = true;
 		// Token and partial-output updates arrive dozens of times a second, and
 		// every snapshot carries the whole transcript: coalesce those, and send
@@ -1555,7 +1871,10 @@ export class AgentService {
 		if (event.type === "message_update" || event.type === "tool_execution_update") this.scheduleEmit();
 		else this.emit();
 		// A finished run is when the row's message count and timestamp settle.
-		if (this.wasStreaming && !session.isStreaming) this.emitSessionsChanged();
+		if (this.wasStreaming && !session.isStreaming) {
+			this.emitSessionsChanged();
+			void this.afterRun(this.generation);
+		}
 		this.wasStreaming = session.isStreaming;
 	}
 
@@ -1654,6 +1973,22 @@ export class AgentService {
 			}
 			case "terminal":
 				return { accepted: true, action: "open-terminal" };
+			case "remember": {
+				const global = /^--global(?:\s+|$)/.test(args);
+				const body = global ? args.replace(/^--global\s*/, "") : args;
+				if (!body.trim()) return { accepted: false, error: "用法：/remember [--global] <要记住的内容>" };
+				try {
+					memoryStore().save(
+						{ scope: global ? "user" : "project", cwd: session.sessionManager.getCwd(), text: body },
+						"user",
+					);
+					this.projector.notice("info", global ? "已记住（所有项目）：" + body.trim() : "已记住（本项目）：" + body.trim());
+					this.emit();
+					return { accepted: true };
+				} catch (error) {
+					return { accepted: false, error: error instanceof Error ? error.message : String(error) };
+				}
+			}
 			default:
 				// Unknown slash commands go through prompt() so skills, prompt
 				// templates, and extension commands still work.
@@ -1742,6 +2077,7 @@ export class AgentService {
 			mode: this.mode,
 			workMode: this.workMode,
 			agentPhase: this.workflow?.agentPhase ?? DEFAULT_AGENT_PHASE,
+			goal: this.goal,
 			error: this.pendingError,
 		};
 	}

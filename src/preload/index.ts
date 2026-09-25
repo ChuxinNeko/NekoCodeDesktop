@@ -40,6 +40,11 @@ import type {
 } from "../shared/agent";
 import type { SlashCommandSummary } from "../shared/commands";
 import type { FsEntry, FsReadResult, HostDirectoryListing } from "../shared/files";
+import type { MentionCandidate } from "../shared/mentions";
+import type { GoalAction } from "../shared/goal";
+import type { ProjectInstructions, SaveInstructionsRequest } from "../shared/instructions";
+import type { MemorySnapshot, SaveMemoryRequest } from "../shared/memory";
+import type { HooksSnapshot, SaveHookRequest } from "../shared/hooks";
 import type { SetSkillEnabledRequest, SkillsSnapshot } from "../shared/skills";
 import type { AppPreferences } from "../shared/preferences";
 import type {
@@ -49,6 +54,18 @@ import type {
 	WorktreeStatus,
 } from "../shared/worktree";
 import type { McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
+import type {
+	AcpAgentInfo,
+	AcpCreateSessionRequest,
+	AcpHistory,
+	AcpOpenSessionRequest,
+	AcpPermissionResponse,
+	AcpPromptRequest,
+	AcpSaveAgentRequest,
+	AcpSessionSnapshot,
+	AcpSetConfigRequest,
+	AcpState,
+} from "../shared/acp";
 import type { QqBotConfig, QqBotStatus } from "../shared/qqbot";
 import type {
 	RelayLoginRequest,
@@ -148,6 +165,7 @@ const api = {
 	onBrowserPreview: (listener: (request: BrowserPreviewRequest) => void) => subscribe("browser:preview", listener),
 	onBrowserElementSelected: (listener: (selection: BrowserElementSelection) => void) => subscribe("browser:elementSelected", listener),
 	onBrowserInspectStopped: (listener: (state: { guestId: number }) => void) => subscribe("browser:inspectStopped", listener),
+	onBrowserRevealAutomation: (listener: (state: { guestId: number }) => void) => subscribe("browser:revealAutomation", listener),
 	browserSetInspect: (guestId: number, enabled: boolean): Promise<void> => ipcRenderer.invoke("browser:setInspect", guestId, enabled),
 	browserBindAutomation: (requestId: string, guestId: number): Promise<void> =>
 		ipcRenderer.invoke("browser:bindAutomation", requestId, guestId),
@@ -175,6 +193,25 @@ const api = {
 		ipcRenderer.invoke("directory:list", path),
 	lanAddProjectPath: (path: string): Promise<LanStatus> =>
 		ipcRenderer.invoke("lan:addProjectPath", path),
+
+	/** Pause, resume or clear the open session's `/goal`. */
+	agentGoal: (action: GoalAction): Promise<AgentSnapshot | null> => ipcRenderer.invoke("agent:goal", action),
+	agentMentions: (query: string, cwd?: string): Promise<MentionCandidate[]> =>
+		ipcRenderer.invoke("agent:mentions", query, cwd),
+	instructionsRead: (cwd: string): Promise<ProjectInstructions> => ipcRenderer.invoke("instructions:read", cwd),
+	instructionsSave: (request: SaveInstructionsRequest): Promise<ProjectInstructions> =>
+		ipcRenderer.invoke("instructions:save", request),
+	memoryList: (): Promise<MemorySnapshot> => ipcRenderer.invoke("memory:list"),
+	memorySave: (request: SaveMemoryRequest): Promise<MemorySnapshot> => ipcRenderer.invoke("memory:save", request),
+	memoryRemove: (id: string): Promise<MemorySnapshot> => ipcRenderer.invoke("memory:remove", id),
+	/** The agent saves memories on its own, mid-run. */
+	onMemoryChanged: (listener: (snapshot: MemorySnapshot) => void) => subscribe("memory:changed", listener),
+	hooksList: (): Promise<HooksSnapshot> => ipcRenderer.invoke("hooks:list"),
+	hooksSave: (request: SaveHookRequest): Promise<HooksSnapshot> => ipcRenderer.invoke("hooks:save", request),
+	hooksRemove: (id: string): Promise<HooksSnapshot> => ipcRenderer.invoke("hooks:remove", id),
+	hooksClearRecent: (): Promise<HooksSnapshot> => ipcRenderer.invoke("hooks:clearRecent"),
+	/** Every tool call can add a run to the log. */
+	onHooksChanged: (listener: (snapshot: HooksSnapshot) => void) => subscribe("hooks:changed", listener),
 
 	sessionList: (cwd?: string): Promise<SessionSummary[]> =>
 		ipcRenderer.invoke("agent:listSessions", cwd),
@@ -221,6 +258,21 @@ const api = {
 	mcpReconnect: (id: string): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:reconnect", id),
 	/** Connection states move on their own — a server can drop at any time. */
 	onMcpChanged: (listener: (snapshot: McpSnapshot) => void) => subscribe("mcp:changed", listener),
+	acpState: (): Promise<AcpState> => ipcRenderer.invoke("acp:state"),
+	acpSnapshot: (sessionId: string): Promise<AcpSessionSnapshot | null> => ipcRenderer.invoke("acp:snapshot", sessionId),
+	acpCreate: (request: AcpCreateSessionRequest): Promise<AcpSessionSnapshot> => ipcRenderer.invoke("acp:create", request),
+	acpOpen: (request: AcpOpenSessionRequest): Promise<AcpSessionSnapshot> => ipcRenderer.invoke("acp:open", request),
+	acpHistory: (agentId: string): Promise<AcpHistory> => ipcRenderer.invoke("acp:history", agentId),
+	acpSaveAgent: (request: AcpSaveAgentRequest): Promise<AcpAgentInfo[]> => ipcRenderer.invoke("acp:saveAgent", request),
+	acpRemoveAgent: (id: string): Promise<AcpAgentInfo[]> => ipcRenderer.invoke("acp:removeAgent", id),
+	onAcpHistoryChanged: (listener: (agentId: string) => void) => subscribe("acp:historyChanged", listener),
+	acpPrompt: (request: AcpPromptRequest): Promise<void> => ipcRenderer.invoke("acp:prompt", request),
+	acpCancel: (sessionId: string): Promise<void> => ipcRenderer.invoke("acp:cancel", sessionId),
+	acpSetConfig: (request: AcpSetConfigRequest): Promise<void> => ipcRenderer.invoke("acp:setConfig", request),
+	acpRespondPermission: (response: AcpPermissionResponse): Promise<void> => ipcRenderer.invoke("acp:permission", response),
+	acpClose: (sessionId: string): Promise<void> => ipcRenderer.invoke("acp:close", sessionId),
+	onAcpChanged: (listener: (state: AcpState) => void) => subscribe("acp:changed", listener),
+	onAcpSnapshot: (listener: (snapshot: AcpSessionSnapshot) => void) => subscribe("acp:snapshot", listener),
 
 	qqBotStatus: (): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:status"),
 	qqBotSave: (config: QqBotConfig): Promise<QqBotStatus> => ipcRenderer.invoke("qqbot:save", config),

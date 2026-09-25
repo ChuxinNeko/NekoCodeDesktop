@@ -1,22 +1,40 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import type { BrowserPreviewRequest } from "../shared/browser";
+import { devServers as defaultDevServers, type DevServerRegistry } from "./website-clone-dev-server";
+import {
+	compareExtractions,
+	extractionExpression,
+	renderComparison,
+	type Extraction,
+} from "./website-clone-extract";
 import { resolveWorkspacePath } from "./workflow-paths";
 
 export const WEBSITE_CLONE_TOOL_NAMES = [
 	"browser_navigate",
 	"browser_viewport",
 	"browser_evaluate",
+	"browser_extract",
 	"browser_screenshot",
 	"browser_action",
 	"website_clone_scaffold",
+	"website_clone_dev_server",
+	"website_clone_compare",
 ] as const;
 
 const EVALUATE_MAX_CHARS = 100_000;
+/** What a saved result shows the model: enough to see its shape, not to re-read it. */
+const SAVED_PREVIEW_CHARS = 1_500;
+/** A saved result is still one file a builder may be handed; keep it readable. */
+const SAVE_MAX_CHARS = 5_000_000;
+const EXTRACT_DEFAULT_DEPTH = 10;
+const EXTRACT_DEFAULT_NODES = 800;
+/** Files the template carries that a scaffolded project must not start with. */
+const SCAFFOLD_SKIP = new Set(["node_modules", ".next", ".git", "next-env.d.ts", "tsconfig.tsbuildinfo"]);
 const SCREENSHOT_MAX_WIDTH = 2560;
 const SCREENSHOT_MAX_HEIGHT = 20_000;
 const WAIT_MAX_MS = 10_000;
@@ -28,6 +46,23 @@ const WAIT_MAX_MS = 10_000;
 const GUEST_TIMEOUT_MS = 30_000;
 /** Capturing a tall page in one frame is legitimately slower than any evaluate. */
 const SCREENSHOT_TIMEOUT_MS = 120_000;
+/** How long a revealed page gets to report itself visible before the capture gives up. */
+const REVEAL_TIMEOUT_MS = 5_000;
+const REVEAL_POLL_MS = 100;
+/**
+ * Emulation is sent to the page's widget and the measuring script to its frame,
+ * over different channels, so a measurement can still see the old size. Measured
+ * in a real guest, about one call in twenty did.
+ */
+const VIEWPORT_SETTLE_MS = 2_000;
+const VIEWPORT_POLL_MS = 50;
+const MEASURE_VIEWPORT = "({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })";
+
+interface MeasuredViewport {
+	width?: number;
+	height?: number;
+	dpr?: number;
+}
 
 export interface WebsiteCloneGuest {
 	getURL(): string;
@@ -35,6 +70,14 @@ export interface WebsiteCloneGuest {
 	isDestroyed(): boolean;
 	executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 	capturePage(): Promise<{ toPNG(): Buffer; getSize(): { width: number; height: number } }>;
+	enableDeviceEmulation(parameters: {
+		screenPosition: "desktop" | "mobile";
+		screenSize?: { width: number; height: number };
+		viewPosition?: { x: number; y: number };
+		deviceScaleFactor?: number;
+		viewSize: { width: number; height: number };
+		scale?: number;
+	}): void;
 	sendInputEvent(
 		event:
 			| { type: "mouseMove"; x: number; y: number }
@@ -61,6 +104,8 @@ export interface WebsiteCloneBrowserHost {
 		signal?: AbortSignal,
 	): Promise<WebsiteCloneGuest>;
 	automationGuest(): WebsiteCloneGuest;
+	/** Bring the automation page's tab on screen so it paints again. */
+	revealAutomation(): void;
 	watchAutomation(onInvalidate: (reason: string) => void): () => void;
 }
 
@@ -119,9 +164,72 @@ const viewportSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+const saveToProperty = Type.Optional(
+	Type.String({
+		minLength: 1,
+		maxLength: 1000,
+		description:
+			"Workspace-relative .json/.md/.txt path. The full result is written there and only a short preview comes back — use it for every research artifact instead of re-typing the result with the write tool.",
+	}),
+);
+
 const evaluateSchema = Type.Object(
 	{
 		expression: Type.String({ minLength: 1, maxLength: 30_000 }),
+		saveTo: saveToProperty,
+	},
+	{ additionalProperties: false },
+);
+
+const extractSchema = Type.Object(
+	{
+		targets: Type.Array(
+			Type.Object(
+				{
+					name: Type.String({ minLength: 1, maxLength: 80 }),
+					selector: Type.String({ minLength: 1, maxLength: 2000 }),
+				},
+				{ additionalProperties: false },
+			),
+			{
+				minItems: 1,
+				maxItems: 50,
+				description:
+					"Named elements to extract, e.g. [{\"name\":\"header\",\"selector\":\"header\"},{\"name\":\"hero\",\"selector\":\"main > section:nth-of-type(1)\"}]. Use the same names on the source and the clone so website_clone_compare pairs them.",
+			},
+		),
+		maxDepth: Type.Optional(Type.Integer({ minimum: 0, maximum: 30 })),
+		maxNodes: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000 })),
+		saveTo: saveToProperty,
+	},
+	{ additionalProperties: false },
+);
+
+const compareSchema = Type.Object(
+	{
+		a: Type.String({ minLength: 1, maxLength: 1000, description: "Workspace-relative browser_extract output (source, or state before)." }),
+		b: Type.String({ minLength: 1, maxLength: 1000, description: "Workspace-relative browser_extract output (clone, or state after)." }),
+		match: Type.Optional(
+			Type.Union([Type.Literal("text"), Type.Literal("path")], {
+				description:
+					"text (default): pair nodes by their text — source vs clone. path: pair nodes by tree position — two states of the same page, to record a behavior.",
+			}),
+		),
+		tolerancePx: Type.Optional(Type.Number({ minimum: 0, maximum: 50 })),
+		saveTo: saveToProperty,
+	},
+	{ additionalProperties: false },
+);
+
+const devServerSchema = Type.Object(
+	{
+		action: Type.Union([Type.Literal("start"), Type.Literal("status"), Type.Literal("stop")]),
+		directory: Type.String({
+			minLength: 1,
+			maxLength: 1000,
+			description: "Workspace-relative project root containing package.json, e.g. example-com-clone.",
+		}),
+		port: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
 	},
 	{ additionalProperties: false },
 );
@@ -182,8 +290,25 @@ export function createWebsiteCloneTools(options: {
 	browser: WebsiteCloneBrowserHost;
 	templateDir: string | null;
 	onNavigate(request: Omit<BrowserPreviewRequest, "sessionId" | "cwd">): void;
+	/** Whether the model reading the results can see images. Unknown counts as yes. */
+	acceptsImages?: () => boolean;
+	devServers?: DevServerRegistry;
 }): ToolDefinition[] {
 	const { cwd, browser, templateDir, onNavigate } = options;
+	const devServers = options.devServers ?? defaultDevServers;
+
+	/** Write a result into the workspace and describe it in a few lines instead. */
+	const saveResult = async (path: string, text: string) => {
+		if (!/\.(json|md|txt)$/i.test(path)) throw new Error("saveTo must end in .json, .md or .txt");
+		if (text.length > SAVE_MAX_CHARS) {
+			throw new Error(`The result is ${text.length} characters, over the ${SAVE_MAX_CHARS} a saved file may hold; narrow it`);
+		}
+		const target = resolveWorkspacePath(cwd, path);
+		await mkdir(dirname(target), { recursive: true });
+		await writeFile(target, text, "utf8");
+		const preview = text.length > SAVED_PREVIEW_CHARS ? `${text.slice(0, SAVED_PREVIEW_CHARS)}\n[…]` : text;
+		return `Saved ${text.length} characters to ${path}. Preview:\n${preview}`;
+	};
 
 	let viewportOverride: { width: number; height: number; deviceScaleFactor: number } | null = null;
 
@@ -238,7 +363,58 @@ export function createWebsiteCloneTools(options: {
 		});
 	};
 
-	const withViewport = async <T>(
+	const emulate = (guest: WebsiteCloneGuest) => {
+		if (!viewportOverride) return;
+		const { width, height, deviceScaleFactor } = viewportOverride;
+		guest.enableDeviceEmulation({
+			screenPosition: "desktop",
+			screenSize: { width, height },
+			viewPosition: { x: 0, y: 0 },
+			deviceScaleFactor,
+			viewSize: { width, height },
+			scale: 1,
+		});
+	};
+
+	/**
+	 * Keep the requested viewport on the page, and measure it.
+	 *
+	 * The emulation stays on the page between calls, so a menu opened at 390px is
+	 * still open at 390px on the next call instead of being closed by a resize to
+	 * the panel's width and back. Any navigation drops it, including a reload, so
+	 * it is checked before every call and put back when it is gone — reapplying
+	 * the same size fires no resize, but it is only done when needed anyway.
+	 */
+	const settleViewport = async (guest: WebsiteCloneGuest): Promise<MeasuredViewport | undefined> => {
+		if (!viewportOverride) return undefined;
+		const { width, height } = viewportOverride;
+		const measure = async () =>
+			((await guest.executeJavaScript(MEASURE_VIEWPORT, true)) ?? {}) as MeasuredViewport;
+		let measured = await measure();
+		if (measured.width === width && measured.height === height) return measured;
+		emulate(guest);
+		const deadline = Date.now() + VIEWPORT_SETTLE_MS;
+		for (;;) {
+			measured = await measure();
+			if (measured.width === width && measured.height === height) return measured;
+			if (Date.now() >= deadline) return measured;
+			await new Promise((resolve) => setTimeout(resolve, VIEWPORT_POLL_MS));
+		}
+	};
+
+	const onPage = <T>(
+		guest: WebsiteCloneGuest,
+		limits: { signal?: AbortSignal; timeoutMs?: number },
+		operation: (viewport: MeasuredViewport | undefined) => Promise<T>,
+	): Promise<T> =>
+		guarded(limits, async () => operation(await settleViewport(guest)));
+
+	/**
+	 * Only captures use the debugger. Holding it for every call locked the user
+	 * out of DevTools and element picking while a clone ran, and failed every call
+	 * outright while DevTools was open on the page.
+	 */
+	const withDebugger = async <T>(
 		guest: WebsiteCloneGuest,
 		limits: { signal?: AbortSignal; timeoutMs?: number },
 		operation: () => Promise<T>,
@@ -246,15 +422,7 @@ export function createWebsiteCloneTools(options: {
 		const attached = guest.debugger.isAttached();
 		if (!attached) guest.debugger.attach("1.3");
 		try {
-			return await guarded(limits, async () => {
-				if (viewportOverride) {
-					await guest.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
-						...viewportOverride,
-						mobile: false,
-					});
-				}
-				return operation();
-			});
+			return await onPage(guest, limits, () => operation());
 		} finally {
 			// Runs even when `guarded` walked away from a call still pending, so a
 			// wedged page cannot leave the debugger pinned to the guest and lock the
@@ -266,7 +434,36 @@ export function createWebsiteCloneTools(options: {
 					/* The page took the debugger session with it. */
 				}
 			}
+			// A clipped capture resets the page's emulation when it finishes.
+			if (!guest.isDestroyed()) {
+				try {
+					emulate(guest);
+				} catch {
+					/* Checked again before the next call. */
+				}
+			}
 		}
+	};
+
+	/**
+	 * Every capture path waits for the guest's next compositor frame, and a guest
+	 * the panel has hidden (another dock tab in front, the dock collapsed, or a
+	 * different browser tab active) never produces one. Bring it on screen first,
+	 * and fail fast with the reason rather than sitting out the capture timeout.
+	 */
+	const ensurePainting = async (guest: WebsiteCloneGuest, signal?: AbortSignal): Promise<void> => {
+		const isVisible = async () =>
+			(await guarded({ signal }, () => guest.executeJavaScript("document.visibilityState"))) === "visible";
+		if (await isVisible()) return;
+		browser.revealAutomation();
+		const deadline = Date.now() + REVEAL_TIMEOUT_MS;
+		while (Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, REVEAL_POLL_MS));
+			if (await isVisible()) return;
+		}
+		throw new Error(
+			"The browser panel is not showing this page, so it cannot be painted for a screenshot. Open the NekoCode window with the browser panel visible, then retry.",
+		);
 	};
 
 	const navigate: ToolDefinition = {
@@ -306,19 +503,16 @@ export function createWebsiteCloneTools(options: {
 		name: "browser_viewport",
 		label: "browser_viewport",
 		description:
-			"Set the emulated CSS viewport of the page bound by browser_navigate. Use 1440x900 desktop, 768x900 tablet, 390x844 mobile.",
+			"Set the emulated CSS viewport of the page bound by browser_navigate. Use 1440x900 desktop, 768x900 tablet, 390x844 mobile. The size holds for every later call, across navigations, until changed. Touch input and (hover: none)/(pointer: coarse) media are not emulated; read those rules from the stylesheets instead.",
 		parameters: viewportSchema,
 		executionMode: "sequential",
 		async execute(_id, params, signal) {
 			const { width, height, deviceScaleFactor } = params as Static<typeof viewportSchema>;
 			const guest = browser.automationGuest();
 			viewportOverride = { width, height, deviceScaleFactor: deviceScaleFactor ?? 1 };
-			const measured = await withViewport(guest, { signal }, async () => {
-				return (await guest.executeJavaScript(
-					"({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })",
-					true,
-				)) as { width?: number; height?: number; dpr?: number };
-			});
+			// Applied up front even at an unchanged size: the scale factor may differ.
+			emulate(guest);
+			const measured = await onPage(guest, { signal }, async (viewport) => viewport);
 			if (measured?.width !== width || measured?.height !== height) {
 				throw new Error(
 					`Viewport emulation failed: requested ${width}x${height} but page reported ${measured?.width}x${measured?.height}`,
@@ -326,7 +520,10 @@ export function createWebsiteCloneTools(options: {
 			}
 			return {
 				content: [
-					{ type: "text", text: `Viewport verified at ${width}x${height} (dpr ${measured.dpr})` },
+					{
+						type: "text",
+						text: `Viewport verified at ${width}x${height} (dpr ${Number(measured.dpr?.toFixed(3))})`,
+					},
 				],
 				details: {
 					width,
@@ -344,19 +541,142 @@ export function createWebsiteCloneTools(options: {
 		name: "browser_evaluate",
 		label: "browser_evaluate",
 		description:
-			"Run a JavaScript expression in the inspected page and return its JSON-serialized result, capped at 100k characters. Use for DOM, computed-style, content, asset, and interaction extraction. The expression must not navigate the page: location.reload(), assigning location.href, and submitting a form all destroy the context the result would come back through. Use browser_navigate to load or reload a page, then evaluate against it.",
+			"Run a JavaScript expression in the inspected page and return its JSON-serialized result, capped at 100k characters (with saveTo, the full result goes to a file and a preview comes back). Use for questions browser_extract does not answer: asset inventories, stylesheet rules, scroll listeners, library detection. The expression must not navigate the page: location.reload(), assigning location.href, and submitting a form all destroy the context the result would come back through. Use browser_navigate to load or reload a page, then evaluate against it.",
 		parameters: evaluateSchema,
 		executionMode: "sequential",
 		async execute(_id, params, signal) {
-			const { expression } = params as Static<typeof evaluateSchema>;
+			const { expression, saveTo } = params as Static<typeof evaluateSchema>;
 			const guest = browser.automationGuest();
-			const result = await withViewport(guest, { signal }, () =>
-				guest.executeJavaScript(expression, true),
-			);
+			const result = await onPage(guest, { signal }, () => guest.executeJavaScript(expression, true));
+			if (saveTo) {
+				const full = typeof result === "string" ? result : (JSON.stringify(result, null, 2) ?? String(result));
+				return {
+					content: [{ type: "text", text: await saveResult(saveTo, full) }],
+					details: { saveTo, chars: full.length },
+				};
+			}
 			const { text, truncated } = serializeEvaluation(result);
 			return {
 				content: [{ type: "text", text }],
 				details: { truncated },
+			};
+		},
+	};
+
+	const extract: ToolDefinition = {
+		name: "browser_extract",
+		label: "browser_extract",
+		description:
+			"Extract named elements of the inspected page with NekoCode's fixed extractor: per node the document rect, own text, key attributes, non-default computed styles (colors normalized to sRGB), ::before/::after, and small inline SVG markup. Run it with the same target names on the source and the clone, or before and after an interaction, then diff the two files with website_clone_compare. Always pass saveTo for anything larger than a single small element.",
+		parameters: extractSchema,
+		executionMode: "sequential",
+		async execute(_id, params, signal) {
+			const { targets, maxDepth, maxNodes, saveTo } = params as Static<typeof extractSchema>;
+			const named: Record<string, string> = {};
+			for (const { name, selector } of targets) {
+				if (name in named) throw new Error(`Duplicate target name: ${name}`);
+				named[name] = selector;
+			}
+			const guest = browser.automationGuest();
+			const extraction = (await onPage(guest, { signal }, () =>
+				guest.executeJavaScript(
+					extractionExpression({
+						targets: named,
+						maxDepth: maxDepth ?? EXTRACT_DEFAULT_DEPTH,
+						maxNodes: maxNodes ?? EXTRACT_DEFAULT_NODES,
+					}),
+					true,
+				),
+			)) as Extraction;
+			const errors = Object.entries(extraction.targets)
+				.filter(([, target]) => "error" in target)
+				.map(([name, target]) => `${name}: ${(target as { error: string }).error}`);
+			const summary = [
+				`Extracted ${extraction.nodes} nodes from ${extraction.url} at ${extraction.viewport.width}x${extraction.viewport.height}, scrollY ${extraction.scroll.y}.`,
+				extraction.truncated
+					? "Some subtrees were cut by maxDepth/maxNodes (see `omitted`); extract those elements as their own targets."
+					: "",
+				errors.length ? `Target errors:\n${errors.join("\n")}` : "",
+			]
+				.filter(Boolean)
+				.join("\n");
+			if (saveTo) {
+				await saveResult(saveTo, JSON.stringify(extraction, null, 1));
+				return {
+					content: [{ type: "text", text: `${summary}\nSaved to ${saveTo}.` }],
+					details: { saveTo, nodes: extraction.nodes, truncated: extraction.truncated },
+				};
+			}
+			const { text, truncated } = serializeEvaluation(extraction);
+			return {
+				content: [{ type: "text", text: `${summary}\n${text}` }],
+				details: { nodes: extraction.nodes, truncated: truncated || extraction.truncated },
+			};
+		},
+	};
+
+	const compare: ToolDefinition = {
+		name: "website_clone_compare",
+		label: "website_clone_compare",
+		description:
+			"Diff two browser_extract files target by target: missing or extra text, typography/color/box style differences, rect differences beyond tolerancePx (default 2), and image/video/SVG count and size. match=text compares a source with its clone; match=path compares two states of one page to record exactly what an interaction changes. Take both extractions at the same viewport.",
+		parameters: compareSchema,
+		executionMode: "sequential",
+		async execute(_id, params) {
+			const { a, b, match, tolerancePx, saveTo } = params as Static<typeof compareSchema>;
+			const read = async (path: string) => {
+				const text = await readFile(resolveWorkspacePath(cwd, path), "utf8");
+				const parsed = JSON.parse(text) as Extraction;
+				if (!parsed || typeof parsed !== "object" || !parsed.targets || !parsed.viewport) {
+					throw new Error(`${path} is not a browser_extract result`);
+				}
+				return parsed;
+			};
+			const comparison = compareExtractions(await read(a), await read(b), {
+				mode: match ?? "text",
+				tolerancePx,
+				labels: [a, b],
+			});
+			const report = renderComparison(comparison);
+			if (saveTo) {
+				const full = saveTo.toLowerCase().endsWith(".json")
+					? JSON.stringify(comparison, null, 1)
+					: renderComparison(comparison, Number.POSITIVE_INFINITY);
+				await saveResult(saveTo, full);
+			}
+			return {
+				content: [{ type: "text", text: report + (saveTo ? `\n\nFull report saved to ${saveTo}.` : "") }],
+				details: { issues: comparison.issues.length, counts: comparison.counts },
+			};
+		},
+	};
+
+	const devServer: ToolDefinition = {
+		name: "website_clone_dev_server",
+		label: "website_clone_dev_server",
+		description:
+			"Start, check, or stop a project's dev server without blocking. start runs its dev script with the package manager its lockfile names and returns the local URL the server actually printed; status returns whether it runs plus its recent output, where compile errors appear; stop ends it and its child processes. Never start a dev server through bash or powershell — those wait for it to exit, which it never does.",
+		parameters: devServerSchema,
+		executionMode: "sequential",
+		async execute(_id, params, signal) {
+			const { action, directory, port } = params as Static<typeof devServerSchema>;
+			const root = resolveWorkspacePath(cwd, directory);
+			const shown = relative(resolveWorkspacePath(cwd, "."), root) || ".";
+			const status =
+				action === "start"
+					? await devServers.start(root, shown, { port, signal })
+					: action === "stop"
+						? devServers.stop(root, shown)
+						: devServers.status(root, shown);
+			const head =
+				action === "stop"
+					? `Stopped the dev server in ${shown}.`
+					: status.running
+						? `Dev server in ${shown} is running${status.url ? ` at ${status.url}` : ", no URL printed yet"}.`
+						: `No dev server is running in ${shown}${status.exitCode !== undefined ? ` (exited with ${status.exitCode})` : ""}.`;
+			return {
+				content: [{ type: "text", text: status.log ? `${head}\nRecent output:\n${status.log}` : head }],
+				details: { ...status, log: undefined },
 			};
 		},
 	};
@@ -373,7 +693,8 @@ export function createWebsiteCloneTools(options: {
 			if (!/\.png$/i.test(path)) throw new Error("Screenshot path must end in .png");
 			const target = resolveWorkspacePath(cwd, path);
 			const guest = browser.automationGuest();
-			const captured = await withViewport(
+			await ensurePainting(guest, signal);
+			const captured = await withDebugger(
 				guest,
 				{ signal, timeoutMs: SCREENSHOT_TIMEOUT_MS },
 				async (): Promise<{ bytes: Buffer; width: number; height: number; capped: boolean }> => {
@@ -393,12 +714,17 @@ export function createWebsiteCloneTools(options: {
 						return { bytes: Buffer.from(shot.data, "base64"), width, height, capped };
 					}
 					if (viewportOverride) {
+						// The clip is in document coordinates: start it where the page is
+						// scrolled to, or a section screenshot shows the top of the page.
+						const [x, y] = ((await guest.executeJavaScript("[scrollX, scrollY]", true)) as
+							| [number, number]
+							| null) ?? [0, 0];
 						const shot = (await guest.debugger.sendCommand("Page.captureScreenshot", {
 							format: "png",
 							captureBeyondViewport: true,
 							clip: {
-								x: 0,
-								y: 0,
+								x,
+								y,
 								width: viewportOverride.width,
 								height: viewportOverride.height,
 								scale: 1,
@@ -418,24 +744,29 @@ export function createWebsiteCloneTools(options: {
 			);
 			await mkdir(dirname(target), { recursive: true });
 			await writeFile(target, captured.bytes);
+			const saved = `Saved ${path} (${captured.width}x${captured.height}${captured.capped ? ", capped" : ""})`;
+			// Said outright, so the model knows which QA path it is on instead of
+			// describing an image the provider silently dropped.
+			const attached = options.acceptsImages?.() ?? true;
 			return {
-				content: [
-					{
-						type: "text",
-						text: `Saved ${path} (${captured.width}x${captured.height}${captured.capped ? ", capped" : ""})`,
-					},
-					{
-						type: "image",
-						data: captured.bytes.toString("base64"),
-						mimeType: "image/png",
-					},
-				],
+				content: attached
+					? [
+							{ type: "text", text: `${saved}. The image is attached.` },
+							{ type: "image", data: captured.bytes.toString("base64"), mimeType: "image/png" },
+						]
+					: [
+							{
+								type: "text",
+								text: `${saved}. The active model does not accept images, so it is not attached: the file is for the user. Rely on browser_extract and website_clone_compare for QA.`,
+							},
+						],
 				details: {
 					path,
 					width: captured.width,
 					height: captured.height,
 					fullPage: Boolean(fullPage),
 					capped: captured.capped,
+					attached,
 				},
 			};
 		},
@@ -529,7 +860,7 @@ export function createWebsiteCloneTools(options: {
 				};
 			};
 			try {
-				return await withViewport(
+				return await onPage(
 					guest,
 					{ signal, timeoutMs: GUEST_TIMEOUT_MS + WAIT_MAX_MS },
 					interact,
@@ -559,6 +890,12 @@ export function createWebsiteCloneTools(options: {
 			if (name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
 				throw new Error("Directory must be a direct child name, not a path: " + directory);
 			}
+			// It becomes the package name too, so it has to be one npm accepts.
+			if (!/^[a-z0-9][a-z0-9._-]*$/.test(name) || /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/.test(name)) {
+				throw new Error(
+					`Directory must be lowercase letters, digits, ".", "_" or "-", like example-com-clone: ${directory}`,
+				);
+			}
 			if (!templateDir || !(await stat(templateDir).catch(() => undefined))?.isDirectory()) {
 				throw new Error("The bundled website-clone template is not available in this install");
 			}
@@ -570,7 +907,30 @@ export function createWebsiteCloneTools(options: {
 			if (existing && existing.length > 0) {
 				throw new Error(`Destination already exists and is not empty: ${name}`);
 			}
-			await cp(templateDir, target, { recursive: true, force: false, errorOnExist: true });
+			await cp(templateDir, target, {
+				recursive: true,
+				force: false,
+				errorOnExist: true,
+				// Packaged, the template ships clean; from a checkout it may hold an
+				// install or a build someone ran while working on it.
+				filter: (source) => source === templateDir || !SCAFFOLD_SKIP.has(basename(source)),
+			});
+			// Named after its directory, in the lockfile too, so the first install
+			// does not rewrite a file the user has not touched yet.
+			const manifestPath = join(target, "package.json");
+			const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+			manifest.name = name;
+			await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+			const lockPath = join(target, "package-lock.json");
+			const lock = await readFile(lockPath, "utf8").then(
+				(text) => JSON.parse(text) as { name?: string; packages?: Record<string, { name?: string }> },
+				() => null,
+			);
+			if (lock) {
+				lock.name = name;
+				if (lock.packages?.[""]) lock.packages[""].name = name;
+				await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+			}
 			const entries = await readdir(target);
 			return {
 				content: [{ type: "text", text: `Scaffolded ${name} (${entries.length} top-level entries)` }],
@@ -579,5 +939,5 @@ export function createWebsiteCloneTools(options: {
 		},
 	};
 
-	return [navigate, viewport, evaluate, screenshot, action, scaffold];
+	return [navigate, viewport, evaluate, extract, screenshot, action, scaffold, devServer, compare];
 }

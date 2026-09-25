@@ -150,6 +150,17 @@ export const WEBUI_RPC_METHODS = [
 	"automationRemove",
 	"automationRunNow",
 	"automationAbort",
+	"agentMentions",
+	"agentGoal",
+	"instructionsRead",
+	"instructionsSave",
+	"memoryList",
+	"memorySave",
+	"memoryRemove",
+	"hooksList",
+	"hooksSave",
+	"hooksRemove",
+	"hooksClearRecent",
 ] as const;
 
 export type WebUiRpcMethod = (typeof WEBUI_RPC_METHODS)[number];
@@ -164,6 +175,7 @@ export const WEBUI_EVENT_CHANNELS = [
 	"browser:preview",
 	"browser:elementSelected",
 	"browser:inspectStopped",
+	"browser:revealAutomation",
 	"agent:sessionsChanged",
 	"agent:revealSession",
 	"mcp:changed",
@@ -175,6 +187,8 @@ export const WEBUI_EVENT_CHANNELS = [
 	"terminal:exit",
 	"oauth:event",
 	"automation:event",
+	"memory:changed",
+	"hooks:changed",
 ] as const;
 
 export type WebUiEventChannel = (typeof WEBUI_EVENT_CHANNELS)[number];

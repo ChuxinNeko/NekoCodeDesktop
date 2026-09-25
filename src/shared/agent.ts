@@ -1,3 +1,4 @@
+import type { GoalState } from "./goal";
 import type { AgentPhase, WorkMode, WorkflowSnapshot } from "./workflow";
 import type { CheckpointSummary } from "./checkpoints";
 import type { FastContextConfig } from "./fast-context";
@@ -237,6 +238,8 @@ export interface AgentSnapshot {
 	 * or when the active model declares no window.
 	 */
 	context?: ContextUsage;
+	/** The session's `/goal`; absent or null when it has none. */
+	goal?: GoalState | null;
 	error?: string;
 }
 

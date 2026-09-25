@@ -1,4 +1,7 @@
 import type { AgentCell, TurnUsage } from "../shared/agent";
+import { displayGoalPrompt, GOAL_MESSAGE } from "../shared/goal";
+import { displayInitPrompt } from "../shared/instructions";
+import { stripMentionBlock } from "../shared/mentions";
 
 // Structural shapes mirroring pi-ai/pi-agent-core messages and events so the
 // projection stays pure and testable without importing the agent runtime.
@@ -123,7 +126,12 @@ export function expandNekoSlashAlias(text: string): string {
 	return `/skill:${slash.command}${slash.args ? ` ${slash.args}` : ""}`;
 }
 
-function displayUserText(text: string): string {
+function displayUserText(raw: string): string {
+	// What `@` references pulled in is for the model; the transcript shows the
+	// prompt as it was typed.
+	const text = stripMentionBlock(raw);
+	const expanded = displayInitPrompt(text) ?? displayGoalPrompt(text);
+	if (expanded) return expanded;
 	const skill = text.match(
 		/^<skill name="([^"]+)" location="[^"]+">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/,
 	);
@@ -501,7 +509,11 @@ export function projectMessages(
 			}
 			case "custom": {
 				if (message.display === false) break;
-				const text = textOf(message.content);
+				// A goal continuation shows its one-line label; the instructions it
+				// carries are for the model.
+				const label = (message.details as { label?: unknown } | undefined)?.label;
+				const text =
+					message.customType === GOAL_MESSAGE && typeof label === "string" ? label : textOf(message.content);
 				if (!text.trim()) break;
 				cells.push({
 					id: `notice-${t}-${index}-${noticeSeq++}`,

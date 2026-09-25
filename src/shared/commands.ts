@@ -12,7 +12,9 @@ export type SlashCommandKind =
 	/** A SKILL.md the session loaded; invoked as `/skill:<name>`. */
 	| "skill"
 	/** A markdown prompt template from `prompts/`; invoked as `/<name>`. */
-	| "prompt";
+	| "prompt"
+	/** One of the app's own commands, like `/init`; handled in main before the core sees it. */
+	| "builtin";
 
 export interface SlashCommandSummary {
 	/** What follows the slash — `skill:design` or `review`. Unique per list. */

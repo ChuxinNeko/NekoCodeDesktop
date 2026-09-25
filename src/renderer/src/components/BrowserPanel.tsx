@@ -158,23 +158,6 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 		});
 	}, [createTab]);
 
-	const bindAutomation = useCallback((requestId: string, tabId: string) => {
-		const element = webviews.current.get(tabId);
-		try {
-			const guestId = element?.getWebContentsId();
-			if (guestId === undefined) {
-				pendingAutomation.current.set(requestId, tabId);
-				return;
-			}
-			pendingAutomation.current.delete(requestId);
-			void api.browserBindAutomation(requestId, guestId).catch((cause) => {
-				setError(String(cause));
-			});
-		} catch {
-			pendingAutomation.current.set(requestId, tabId);
-		}
-	}, []);
-
 	useEffect(() => {
 		if (!preview || lastPreview.current === preview.id) return;
 		lastPreview.current = preview.id;
@@ -183,12 +166,32 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 		if (existing) {
 			setActiveTabId(existing.id);
 			if (preview.kind === "html") webviews.current.get(existing.id)?.reload();
-			if (preview.kind === "automation") bindAutomation(preview.id, existing.id);
+			if (preview.kind === "automation") {
+				// Navigating to the page already open reloads it, so what gets inspected
+				// is the dev server's latest build rather than whatever the tab last
+				// loaded. The page binds on the reload's dom-ready.
+				pendingAutomation.current.set(preview.id, existing.id);
+				try {
+					webviews.current.get(existing.id)?.reload();
+				} catch {
+					/* Not attached yet: it binds on its first dom-ready instead. */
+				}
+			}
 		} else {
 			const tab = createTab(preview.url);
 			if (preview.kind === "automation") pendingAutomation.current.set(preview.id, tab.id);
 		}
-	}, [preview, tabs, createTab, bindAutomation]);
+	}, [preview, tabs, createTab]);
+
+	useEffect(() => api.onBrowserRevealAutomation(({ guestId }) => {
+		for (const [tabId, element] of webviews.current) {
+			try {
+				if (element.getWebContentsId() === guestId) setActiveTabId(tabId);
+			} catch {
+				/* Not attached yet, so not the automation page. */
+			}
+		}
+	}), []);
 
 	useEffect(() => api.onBrowserInspectStopped(({ guestId }) => {
 		if (inspectGuest.current !== guestId) return;

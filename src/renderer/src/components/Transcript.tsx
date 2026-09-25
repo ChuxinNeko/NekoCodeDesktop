@@ -796,7 +796,7 @@ function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 	}
 }
 
-export function Transcript({
+const TranscriptView = function Transcript({
 	cells,
 	streaming,
 	tasks,
@@ -865,26 +865,32 @@ export function Transcript({
 			break;
 		}
 	}
-	const rows = groupTranscriptRows(cells);
+	// Scrolling the parent can re-render the chat surface without changing the
+	// transcript. Keep this work tied to the structurally shared cell array so a
+	// scroll event does not regroup every turn in a long session.
+	const rows = useMemo(() => groupTranscriptRows(cells), [cells]);
 	// A turn's edit summary hangs off its last row: the checkpoint that fronts the
 	// turn already knows which files it changed, so the card only needs to know
 	// where the turn ends. A following prompt settles that; at the tail nothing
 	// does, so the card waits for the run to finish rather than appearing
 	// half-written above an answer that is still arriving.
-	const cardByRowId = new Map<string, CheckpointSummary>();
-	let turnCheckpoint: CheckpointSummary | undefined;
-	for (let i = 0; i < rows.length; i++) {
-		const row = rows[i];
-		if (row.kind === "user") {
-			turnCheckpoint = checkpointByCell.get(row.cell.id);
-			continue;
+	const cardByRowId = useMemo(() => {
+		const cards = new Map<string, CheckpointSummary>();
+		let turnCheckpoint: CheckpointSummary | undefined;
+		for (let i = 0; i < rows.length; i++) {
+			const row = rows[i];
+			if (row.kind === "user") {
+				turnCheckpoint = checkpointByCell.get(row.cell.id);
+				continue;
+			}
+			const next = rows[i + 1];
+			const turnEnded = next === undefined ? streaming !== true : next.kind === "user";
+			if (turnEnded && turnCheckpoint !== undefined && turnCheckpoint.fileCount > 0) {
+				cards.set(row.id, turnCheckpoint);
+			}
 		}
-		const next = rows[i + 1];
-		const turnEnded = next === undefined ? streaming !== true : next.kind === "user";
-		if (turnEnded && turnCheckpoint !== undefined && turnCheckpoint.fileCount > 0) {
-			cardByRowId.set(row.id, turnCheckpoint);
-		}
-	}
+		return cards;
+	}, [rows, checkpointByCell, streaming]);
 	const waiting = waitingOnModel(cells, streaming === true);
 	// An open run owns the wait: the line belongs to the work it is waiting on,
 	// and only stands alone when nothing has been done in this turn yet.
@@ -937,3 +943,10 @@ export function Transcript({
 		</TaskLookupContext.Provider>
 	);
 }
+
+/**
+ * The chat scroll container owns transient position state. Its updates should
+ * not make React walk a long, unchanged transcript, so keep the whole view
+ * out of that render path when the snapshot and handlers are unchanged.
+ */
+export const Transcript = memo(TranscriptView);

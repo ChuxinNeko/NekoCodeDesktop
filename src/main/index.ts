@@ -3,6 +3,15 @@ import { TaskNotifier } from "./task-notifier";
 import { AppPreferencesStore } from "./app-preferences";
 import { WorktreeService, type PreparedWorkspace } from "./worktree-service";
 import { McpService } from "./mcp/service";
+import { AcpService } from "./acp/service";
+import { AcpConfigStore } from "./acp/config-store";
+import type { AcpToolServers } from "./acp/session";
+import { McpToolServer } from "./mcp/tool-server";
+import { createWebsiteCloneTools, resolveWebsiteCloneTemplateDir } from "./website-clone-tools";
+import { devServers } from "./website-clone-dev-server";
+import { piAi } from "./pi";
+import { ComputerUseService } from "./computer/service";
+import { CursorOverlay } from "./computer/cursor-overlay";
 import { QqBotService } from "./qqbot/service";
 import { renderBlock } from "./qqbot/code-image";
 import { LanService } from "./lan-service";
@@ -17,10 +26,10 @@ import type { FastContextConfig } from "../shared/fast-context";
 import type { FusionConfig } from "../shared/fusion";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, session, shell, utilityProcess } from "electron";
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { extname, isAbsolute, join, resolve, sep } from "node:path";
 import { AgentService } from "./agent-service";
 import { migrateAgentHome } from "./agent-home";
 import { AutomationService } from "./automation/service";
@@ -71,6 +80,14 @@ import type {
 	WorktreeStatus,
 } from "../shared/worktree";
 import type { McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
+import type {
+	AcpCreateSessionRequest,
+	AcpOpenSessionRequest,
+	AcpPermissionResponse,
+	AcpPromptRequest,
+	AcpSaveAgentRequest,
+	AcpSetConfigRequest,
+} from "../shared/acp";
 import type { QqBotConfig, QqBotStatus } from "../shared/qqbot";
 import type { RestoreCheckpointRequest } from "../shared/checkpoints";
 import type {
@@ -88,7 +105,13 @@ import type {
 	CreatePullRequestRequest,
 	PullRequestFilter,
 } from "../shared/pullRequests";
-import { FS_READ_MAX_BYTES, type FsEntry, type FsReadResult } from "../shared/files";
+import {
+	FS_IMAGE_MAX_BYTES,
+	FS_IMAGE_MIME,
+	FS_READ_MAX_BYTES,
+	type FsEntry,
+	type FsReadResult,
+} from "../shared/files";
 import { resolveUnderRoot } from "./project-paths";
 import {
 	TITLE_BAR_HEIGHT,
@@ -105,6 +128,12 @@ import { randomUUID } from "node:crypto";
 import type { WebContents } from "electron";
 import { WebUiService } from "./webui-service";
 import { listHostDirectories } from "./host-directories";
+import { hookService, memoryStore } from "./context-services";
+import { readProjectInstructions, saveProjectInstructions } from "./project-instructions";
+import type { SaveInstructionsRequest } from "../shared/instructions";
+import type { SaveMemoryRequest } from "../shared/memory";
+import type { SaveHookRequest } from "../shared/hooks";
+import type { GoalAction } from "../shared/goal";
 import {
 	isWebUiEventChannel,
 	type SaveWebUiConfigRequest,
@@ -127,6 +156,52 @@ let preferences: AppPreferencesStore | null = null;
 let worktrees: WorktreeService | null = null;
 /** Servers are processes: one set for the app, not one per window or session. */
 let mcpService: McpService | null = null;
+/** External ACP agents are processes too, and outlive any one window. */
+let acpService: AcpService | null = null;
+/** NekoCode's tools served over MCP to ACP agents; bound on first use. */
+let toolServer: McpToolServer | null = null;
+
+/**
+ * The tools an ACP session gets: the ones NekoLocal has — the browser panel,
+ * Computer Use when it is switched on, the MCP servers configured in NekoCode —
+ * built by the same factories, so both workspaces run one implementation.
+ */
+async function acpToolServers(session: { sessionId: string; cwd: string }): Promise<AcpToolServers> {
+	toolServer ??= new McpToolServer({
+		version: app.getVersion(),
+		// The same argument checks NekoLocal's agent loop applies before a call.
+		validate: async (tool, args) =>
+			(await piAi()).validateToolArguments(tool as never, { type: "toolCall", id: "", name: tool.name, arguments: args } as never),
+	});
+	const inspector = browserInspector;
+	const browserTools = inspector
+		? createWebsiteCloneTools({
+				cwd: session.cwd,
+				browser: inspector.automationHost(session.sessionId),
+				templateDir: resolveWebsiteCloneTemplateDir({
+					appPath: app.getAppPath(),
+					resourcesPath: process.resourcesPath,
+					override: process.env.NEKOCODE_WEBSITE_CLONER_TEMPLATE,
+				}),
+				// Tagged with this session, so the window opens the preview only
+				// while that conversation is the one on screen — as for NekoLocal.
+				onNavigate: (request) => {
+					for (const win of BrowserWindow.getAllWindows()) {
+						win.webContents.send("browser:preview", { ...request, sessionId: session.sessionId, cwd: session.cwd });
+					}
+				},
+			})
+		: [];
+	const handle = await toolServer.register({
+		tools: () => [...browserTools, ...(computerUse?.tools() ?? []), ...(mcpService?.tools() ?? [])],
+	});
+	return {
+		servers: [{ type: "http", name: "nekocode", url: handle.url, headers: handle.headers }],
+		dispose: handle.dispose,
+	};
+}
+/** One desktop driver for the app: every session acts on the same screen. */
+let computerUse: ComputerUseService | null = null;
 /** One QQ login for the app — a second connection would answer every message twice. */
 let qqBotService: QqBotService | null = null;
 let lanService: LanService | null = null;
@@ -140,6 +215,7 @@ let githubAuth: GitHubAuthService | null = null;
 let pullRequests: PullRequestService | null = null;
 let tokenStats: TokenStatsService | null = null;
 let webUiService: WebUiService | null = null;
+let contextBroadcasts = false;
 let webUiBridge: WebContents | null = null;
 const webUiPending = new Map<
 	string,
@@ -462,7 +538,31 @@ function createWindow(): void {
 		() => taskManager?.active.getSnapshot()?.session.cwd ?? app.getPath("home"),
 		() => { if (!win.isDestroyed()) win.webContents.send("mcp:changed", mcpService?.snapshot()); },
 	);
-	taskManager = new TaskManager((emit, owner) => new AgentService(win, modelConfig!, inspector, antigravity, { emit, owner }, mcpService ?? undefined),
+	if (!contextBroadcasts) {
+		contextBroadcasts = true;
+		// Both change without the page asking: the agent saves memories, and every
+		// tool call can add a hook run to the log.
+		const broadcast = (channel: string, payload: unknown) => {
+			for (const window of BrowserWindow.getAllWindows())
+				if (!window.isDestroyed()) window.webContents.send(channel, payload);
+		};
+		memoryStore().onChange(() => broadcast("memory:changed", { entries: memoryStore().list() }));
+		hookService().onChange((snapshot) => broadcast("hooks:changed", snapshot));
+	}
+	computerUse ??= new ComputerUseService({
+		enabled: () => preferences?.get().computerUse ?? false,
+		fork: () => utilityProcess.fork(join(__dirname, "computer-worker.js"), [], {
+			serviceName: "NekoCode Computer Use",
+		}),
+		pointer: new CursorOverlay(),
+	});
+	// Sessions take their extra tools from one place: the MCP servers' and, when
+	// switched on, Computer Use's. Both are read when a session starts.
+	const extraTools = {
+		tools: () => [...(mcpService?.tools() ?? []), ...(computerUse?.tools() ?? [])],
+		toolNames: () => [...(mcpService?.toolNames() ?? []), ...(computerUse?.toolNames() ?? [])],
+	};
+	taskManager = new TaskManager((emit, owner) => new AgentService(win, modelConfig!, inspector, antigravity, { emit, owner }, extraTools),
 		(channel, payload) => { if (!win.isDestroyed()) win.webContents.send(channel, payload); },
 		(session, selected) => {
 			taskNotifier?.settled(session, selected);
@@ -534,6 +634,9 @@ function createWindow(): void {
 		// The bot runs tasks through the task manager, so it cannot outlive one:
 		// staying connected would only collect messages it has no way to answer.
 		qqBotService?.close();
+		// The agent cursor is a window too: left open, it would keep the app
+		// from quitting once this, the last real window, is gone.
+		computerUse?.dispose();
 		relayService = null;
 		taskManager = null; lanService = null; taskNotifier = null;
 		qqBotService = null; terminalService = null;
@@ -649,15 +752,27 @@ function registerIpc(): void {
 			const resolved = resolveUnderRoot(cwd, relPath);
 			const info = await stat(resolved.target);
 			if (!info.isFile()) throw new Error(`Not a file: ${relPath}`);
+			// The caller may have asked by absolute path; answer with the one the
+			// pane can navigate and display.
+			const rel = resolved.relPath;
+			const mime = FS_IMAGE_MIME[extname(rel).slice(1).toLowerCase()];
+			if (mime) {
+				if (info.size > FS_IMAGE_MAX_BYTES) return { kind: "binary", relPath: rel, size: info.size };
+				const image = await readFile(resolved.target);
+				return {
+					kind: "image",
+					relPath: rel,
+					dataUrl: `data:${mime};base64,${image.toString("base64")}`,
+					size: info.size,
+				};
+			}
 			const buffer = await readFile(resolved.target);
-			if (buffer.includes(0)) throw new Error(`Binary file: ${relPath}`);
-			const truncated = info.size > FS_READ_MAX_BYTES;
+			if (buffer.includes(0)) return { kind: "binary", relPath: rel, size: info.size };
 			return {
-				// The caller may have asked by absolute path; answer with the one the
-				// pane can navigate and display.
-				relPath: resolved.relPath,
+				kind: "text",
+				relPath: rel,
 				text: buffer.subarray(0, FS_READ_MAX_BYTES).toString("utf8"),
-				truncated,
+				truncated: info.size > FS_READ_MAX_BYTES,
 			};
 		},
 	);
@@ -806,6 +921,36 @@ function registerIpc(): void {
 		return mcpService.reconnect(id);
 	});
 
+	const acp = (): AcpService =>
+		(acpService ??= new AcpService({
+			clientVersion: app.getVersion(),
+			store: new AcpConfigStore(app.getPath("userData")),
+			appRoot: app.getAppPath(),
+			toolServers: acpToolServers,
+			proxyUrl: () => proxyService?.current().url,
+			emitHistoryChanged: (agentId) => {
+				for (const win of BrowserWindow.getAllWindows()) win.webContents.send("acp:historyChanged", agentId);
+			},
+			emitState: (state) => {
+				for (const win of BrowserWindow.getAllWindows()) win.webContents.send("acp:changed", state);
+			},
+			emitSnapshot: (snapshot) => {
+				for (const win of BrowserWindow.getAllWindows()) win.webContents.send("acp:snapshot", snapshot);
+			},
+		}));
+	ipcMain.handle("acp:state", () => acp().state());
+	ipcMain.handle("acp:snapshot", (_e, sessionId: string) => acp().view(sessionId));
+	ipcMain.handle("acp:create", (_e, req: AcpCreateSessionRequest) => acp().create(req));
+	ipcMain.handle("acp:open", (_e, req: AcpOpenSessionRequest) => acp().openHistory(req));
+	ipcMain.handle("acp:history", (_e, agentId: string) => acp().history(agentId));
+	ipcMain.handle("acp:saveAgent", (_e, req: AcpSaveAgentRequest) => acp().saveAgent(req));
+	ipcMain.handle("acp:removeAgent", (_e, id: string) => acp().removeAgent(id));
+	ipcMain.handle("acp:prompt", (_e, req: AcpPromptRequest) => acp().prompt(req));
+	ipcMain.handle("acp:cancel", (_e, sessionId: string) => acp().cancel(sessionId));
+	ipcMain.handle("acp:setConfig", (_e, req: AcpSetConfigRequest) => acp().setConfig(req));
+	ipcMain.handle("acp:permission", (_e, res: AcpPermissionResponse) => acp().respondPermission(res));
+	ipcMain.handle("acp:close", (_e, sessionId: string) => acp().close(sessionId));
+
 	ipcMain.handle("qqbot:status", (): QqBotStatus => {
 		qqBotService ??= createQqBotService();
 		return qqBotService.snapshot();
@@ -869,6 +1014,9 @@ function registerIpc(): void {
 		preferences ??= new AppPreferencesStore(app.getPath("userData"));
 		const next = preferences.update(patch);
 		taskNotifier?.setEnabled(next.notifyOnTaskFinish);
+		// Switching it off should also end an action already under way, not only
+		// keep the tools out of the next session.
+		if (!next.computerUse) computerUse?.stop();
 		return next;
 	});
 	ipcMain.handle("agent:abort", () => taskManager?.active.abort());
@@ -952,6 +1100,37 @@ function registerIpc(): void {
 	// Read straight off the open session's loaders, so the composer's menu can
 	// be fetched on every open rather than pushed and cached in the renderer.
 	ipcMain.handle("agent:commands", () => taskManager?.active.slashCommands() ?? []);
+
+	ipcMain.handle("agent:goal", (_e, action: GoalAction) => toWindow(taskManager?.active.goalAction(action)));
+	ipcMain.handle("agent:mentions", (_e, query: string, cwd?: string) =>
+		taskManager?.active.mentionSearch(query, typeof cwd === "string" ? cwd : undefined) ?? [],
+	);
+
+	ipcMain.handle("instructions:read", (_e, cwd: string) => {
+		if (typeof cwd !== "string" || !cwd) throw new Error("请先选择项目目录");
+		return readProjectInstructions(cwd);
+	});
+	ipcMain.handle("instructions:save", async (_e, request: SaveInstructionsRequest) => {
+		const result = await saveProjectInstructions(request);
+		// Every open session, not just this project's: the global file is in all of them.
+		await taskManager?.reloadContext();
+		return result;
+	});
+
+	ipcMain.handle("memory:list", () => ({ entries: memoryStore().list() }));
+	ipcMain.handle("memory:save", (_e, request: SaveMemoryRequest) => {
+		memoryStore().save(request, "user");
+		return { entries: memoryStore().list() };
+	});
+	ipcMain.handle("memory:remove", (_e, id: string) => {
+		memoryStore().remove(id);
+		return { entries: memoryStore().list() };
+	});
+
+	ipcMain.handle("hooks:list", () => hookService().snapshot());
+	ipcMain.handle("hooks:save", (_e, request: SaveHookRequest) => hookService().save(request));
+	ipcMain.handle("hooks:remove", (_e, id: string) => hookService().remove(id));
+	ipcMain.handle("hooks:clearRecent", () => hookService().clearRecent());
 
 	ipcMain.handle("skills:list", () => taskManager?.active.skillsSnapshot());
 	ipcMain.handle("skills:setEnabled", (_e, request: SetSkillEnabledRequest) =>
@@ -1127,8 +1306,13 @@ app.on("before-quit", () => {
 	void webUiService?.stop();
 	automationService?.stop();
 	terminalService?.killAll();
+	// Clone dev servers are child processes the agent started and may not have stopped.
+	devServers.stopAll();
 	// Stdio servers are child processes: not killing them leaks one per launch.
 	mcpService?.close();
+	acpService?.dispose();
+	toolServer?.close();
+	computerUse?.dispose();
 	qqBotService?.close();
 	relayService?.close();
 	relayService = null;

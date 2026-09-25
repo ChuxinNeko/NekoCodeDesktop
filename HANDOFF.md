@@ -111,6 +111,40 @@ socket 收发 + 真实 HTTP），但同样用 fake collection——Mongo 真实�
 LAN/公网成为两个独立可选 transport。两端 P-256 ECDH → AES-256-GCM，AAD 绑定
 connectionId/desktopId/peerId/direction，服务端只做形状校验并原样转发密文。
 
+### 2.6 Computer Use（仅 Windows，可用）
+
+`src/main/computer/`，底层是 `@trycua/cua-driver` 0.28.2 的进程内 SDK（Rust，N-API），
+**不走 MCP**。设置 → 常规 →「Computer Use」开关（`AppPreferences.computerUse`，默认关），
+对之后新开的任务生效；只读模式下工具不会出现（插件工具走同一条过滤）。
+
+- `worker.ts` 在 Electron `utilityProcess` 里加载驱动：原生库崩了只死 worker；停止 = 杀进程，
+  这是唯一确定能打断原生输入的方式。`host.ts` 管启动、超时（120s）、取消（1.5s 宽限后杀）。
+- `tools.ts` 只暴露 11 个 `computer_*` 工具（上游约 60 个、schema ~150KB）。snapshot_id 由这一层
+  按窗口记住，模型只传 `element_index`。截图作为 image content 回给模型。
+- **打包坑**：驱动按路径加载 DLL，asar 里读不到。`electron-builder.yml` 把 `@trycua/**`、
+  `@ubjs/**` 放进 asarUnpack，worker 手动把入口路径换成 `app.asar.unpacked` 再 import。
+- **构建坑**：worker 是 main 的第二个入口，必须写在 `build.lib.entry` 里。改用
+  `rollupOptions.input` 会让 electron-vite 退出 lib 模式，产物变成 ESM + 把依赖打进包。
+- 驱动默认上报匿名遥测，worker 里设了 `CUA_DRIVER_RS_TELEMETRY_ENABLED=0`。
+- **AI 光标**（`cursor-overlay.ts`）：驱动自带的 overlay 在进程内模式下不工作，所以自己画。
+  每个动作前光标滑到目标点，按压动效 + 标签（「点击 · Button 确定」），2.5s 无动作后隐藏。
+  是一个跟着走的**小窗口**，放在目标点右下 2px，不是全屏遮罩：驱动像素点击前会做 UIA 命中
+  测试、前台点击是真实 SendInput，全屏层会挡在目标点上。开了 content protection，模型的
+  截图里看不到它。坐标：Electron 进程里驱动返回的元素 frame / 窗口 bounds 都是**物理像素**
+  屏幕坐标（node.exe 里不是！DPI 感知不同），用 `screen.screenToDipPoint` 转。主窗口关闭时
+  要 dispose 它，否则隐藏窗口会挡住 `window-all-closed`。
+- **目标窗口置顶**（`window-raise.ts`，在 worker 里跑）：否则被操作的窗口压在 NekoCode 后面，
+  用户只看到光标。每次动作前 `SetWindowPos` TOPMOST→NOTOPMOST + `SWP_NOACTIVATE`：抬到普通
+  窗口最上层但**不激活**，键盘焦点留在原处（实测前台窗口不变）。最小化的先
+  `ShowWindow(SW_SHOWNOACTIVATE)`。不用驱动的 `bring_to_front`，它会 SetForegroundWindow 抢焦点。
+  Win32 通过 koffi 3.3.1 调用（预编译包 `@koromix/koffi-win32-*`，bun 会拦下它的 postinstall，
+  不影响使用）；worker 里以 `nekocode.raise_window` 这个保留名处理，不转给驱动。只在有光标
+  （即可视模式）时置顶；抬窗失败不影响动作本身。
+- Windows 后台能力有限：右键/双击/打字/快捷键对部分应用（Chromium、Electron 等）会返回
+  `background_unavailable`，工具描述里要求模型这时才用 `foreground: true` 重试。
+- 已验证：单测 23 个；真实 Electron + 打包后的 asar 路径下 worker（含 koffi）能加载；点计算器
+  1+2= 读回 3，计算器被抬到前台窗口之上、前台窗口（键盘焦点）全程不变，光标落点正确。**未验证**：让真实模型跑完整任务的效果；arm64；macOS/Linux（代码里直接不启用）。
+
 ---
 
 ## 3. 已经做过的决定 —— 不要推翻

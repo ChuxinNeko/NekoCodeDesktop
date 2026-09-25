@@ -33,13 +33,17 @@ export class StdioTransport implements McpTransport {
 		args: string[];
 		env: Record<string, string>;
 		cwd: string;
+		/** Defaults to a shell on Windows; an absolute executable needs none. */
+		shell?: boolean;
 	}) {
 		this.child = spawn(options.command, options.args, {
 			cwd: options.cwd,
 			env: { ...process.env, ...options.env },
 			stdio: ["pipe", "pipe", "pipe"],
 			// Servers are commonly `npx …`, which on Windows is a shell script.
-			shell: process.platform === "win32",
+			shell: options.shell ?? process.platform === "win32",
+			// A GUI app spawning a console program gets a console window otherwise.
+			windowsHide: true,
 		});
 
 		this.child.stdout.setEncoding("utf8");
@@ -101,8 +105,25 @@ export class StdioTransport implements McpTransport {
 		const child = this.child;
 		this.closed = true;
 		this.child = null;
-		child?.kill();
+		if (child) killProcessTree(child);
 	}
+}
+
+/**
+ * On Windows the child is `cmd.exe` running the real program (see `shell`
+ * above), and killing it leaves `npx` and the node process it started running
+ * as orphans. `taskkill /T` takes the whole tree down.
+ */
+function killProcessTree(child: ChildProcessWithoutNullStreams): void {
+	if (process.platform === "win32" && child.pid !== undefined) {
+		const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		killer.on("error", () => child.kill());
+		return;
+	}
+	child.kill();
 }
 
 /**

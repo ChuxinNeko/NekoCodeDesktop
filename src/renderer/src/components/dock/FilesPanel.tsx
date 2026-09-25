@@ -34,7 +34,7 @@ export function FilesPanel({
 	const { t } = useTranslation();
 	const [stack, setStack] = useState<string[]>([]);
 	const [entries, setEntries] = useState<FsEntry[] | null>(null);
-	const [preview, setPreview] = useState<{ path: string } & FsReadResult | null>(null);
+	const [preview, setPreview] = useState<FsReadResult | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +65,7 @@ export function FilesPanel({
 			.fsReadFile(cwd, rel)
 			.then((result) => {
 				if (cancelled) return;
-				setPreview({ path: result.relPath, ...result });
+				setPreview(result);
 				setError(null);
 				const segments = result.relPath.split("/").slice(0, -1).filter(Boolean);
 				setStack(segments.map((_, index) => segments.slice(0, index + 1).join("/")));
@@ -104,7 +104,7 @@ export function FilesPanel({
 		if (!cwd) return;
 		try {
 			const result = await api.fsReadFile(cwd, entry.relPath);
-			setPreview({ path: result.relPath, ...result });
+			setPreview(result);
 			setError(null);
 		} catch (cause) {
 			setError(errorMessage(cause));
@@ -120,14 +120,7 @@ export function FilesPanel({
 	}
 
 	if (preview) {
-		return (
-			<FilePreview
-				name={preview.path}
-				onBack={() => setPreview(null)}
-				text={preview.text}
-				truncated={preview.truncated}
-			/>
-		);
+		return <FilePreview file={preview} onBack={() => setPreview(null)} />;
 	}
 
 	return (
@@ -187,23 +180,71 @@ export function FilesPanel({
 	);
 }
 
+function formatBytes(size: number): string {
+	if (size < 1024) return `${size} B`;
+	if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+	return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Header with a back button over whichever body suits the file's kind. */
+function FilePreview({ file, onBack }: { file: FsReadResult; onBack: () => void }) {
+	const { t } = useTranslation();
+	const name = file.relPath;
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col">
+			<div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-[color:var(--app-surface-divider)] px-1.5">
+				<IconButton
+					label={t("common.back")}
+					onClick={onBack}
+					tooltip={t("common.back")}
+				>
+					<ArrowLeftIcon className="size-3.5" />
+				</IconButton>
+				<FileTypeIcon name={name} className="size-3.5 shrink-0" />
+				<span className="min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+					{name}
+				</span>
+				{file.kind !== "text" ? (
+					<span className="shrink-0 font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+						{formatBytes(file.size)}
+					</span>
+				) : null}
+			</div>
+			{file.kind === "text" ? (
+				<TextPreview name={name} text={file.text} truncated={file.truncated} />
+			) : file.kind === "image" ? (
+				<div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
+					<img
+						src={file.dataUrl}
+						alt={name}
+						className="max-h-full max-w-full object-contain [image-rendering:auto]"
+					/>
+				</div>
+			) : (
+				<p className="p-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+					{t("files.binary")}
+				</p>
+			)}
+		</div>
+	);
+}
+
 /**
- * Read-only file preview styled like a VS Code editor surface: Shiki emits the
+ * Read-only text preview styled like a VS Code editor surface: Shiki emits the
  * dual light-plus/dark-plus token colors (flipped by the `.dark` root class)
  * and `.editor-file-viewer*` CSS paints the line-number gutter for both the
  * highlighted and the plain-text fallback paths. Plain text stays on screen
  * until the highlighter resolves — it already looks like the editor.
  */
-function FilePreview({
+function TextPreview({
 	name,
 	text,
 	truncated,
-	onBack,
 }: {
 	name: string;
 	text: string;
 	truncated: boolean;
-	onBack: () => void;
 }) {
 	const { t } = useTranslation();
 	const [html, setHtml] = useState<string | null>(null);
@@ -224,20 +265,7 @@ function FilePreview({
 	}, [text, name]);
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-[color:var(--app-surface-divider)] px-1.5">
-				<IconButton
-					label={t("common.back")}
-					onClick={onBack}
-					tooltip={t("common.back")}
-				>
-					<ArrowLeftIcon className="size-3.5" />
-				</IconButton>
-				<FileTypeIcon name={name} className="size-3.5 shrink-0" />
-				<span className="min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-					{name}
-				</span>
-			</div>
+		<>
 			{truncated ? (
 				<p className="shrink-0 px-3 pt-2 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 					{t("files.truncated")}
@@ -263,6 +291,6 @@ function FilePreview({
 					</pre>
 				)}
 			</div>
-		</div>
+		</>
 	);
 }

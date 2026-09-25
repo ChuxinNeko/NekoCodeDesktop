@@ -6,17 +6,24 @@ import {
 } from "../../../../shared/agent";
 import type { ComposerInsertion } from "../../../../shared/browser";
 import type { SlashCommandSummary } from "../../../../shared/commands";
+import {
+	activeMention,
+	mentionToken,
+	SYMBOL_QUERY_PREFIX,
+	type MentionCandidate,
+} from "../../../../shared/mentions";
 import { BorderBeam } from "border-beam";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTheme } from "../../hooks/useTheme";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { AddPlusIcon, ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon } from "../../lib/icons";
+import { AddPlusIcon, ComposerSendArrowIcon, FileIcon, SkillCubeIcon, StopIcon, XIcon, ZapIcon } from "../../lib/icons";
 import { fileToPromptImage, imageMimeType } from "./composer-images";
 import { ContextGauge } from "./ContextGauge";
 import { Button } from "../ui/button";
 import { ComposerColumnFrame } from "./ComposerColumnFrame";
 import { ComposerCommandMenu, filterCommands } from "./ComposerCommandMenu";
+import { ComposerMentionMenu } from "./ComposerMentionMenu";
 import {
 	COMPOSER_EDITOR_CONTENT_RESET_CLASS_NAME,
 	COMPOSER_EDITOR_MIN_HEIGHT_CLASS_NAME,
@@ -35,6 +42,9 @@ import {
  * space is typed the name is settled and the menu gets out of the way.
  */
 const PENDING_COMMAND = /^\/(\S*)$/;
+
+/** How long typing pauses before the `@` list is asked for again. */
+const MENTION_DEBOUNCE_MS = 80;
 
 /** Breathing room between the pill and the text that continues after it. */
 const PILL_GAP_PX = 6;
@@ -65,6 +75,11 @@ interface ComposerShellProps {
 	 * there is nothing loaded to offer.
 	 */
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
+	/**
+	 * Candidates for an `@` reference. Absent where nothing would expand one —
+	 * an external agent's session gets the text as typed.
+	 */
+	loadMentions?: (query: string) => Promise<MentionCandidate[]>;
 	/** Opens the slash menu from outside, e.g. the toolbar's "Slash commands…". */
 	openCommandsSignal?: number;
 	/**
@@ -72,6 +87,8 @@ interface ComposerShellProps {
 	 * working-directory chip on the welcome screen.
 	 */
 	toolbar?: React.ReactNode;
+	/** Above the input, in the same column: the workspace picker. */
+	header?: React.ReactNode;
 }
 
 /**
@@ -109,6 +126,79 @@ export function ComposerShell(props: ComposerShellProps) {
 
 	const matches = query === null ? [] : filterCommands(commands, query);
 	const menuOpen = query !== null;
+
+	/** The `@query` being typed at the caret, and what it currently offers. */
+	const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+	const [mentionResults, setMentionResults] = useState<{ query: string; candidates: MentionCandidate[] } | null>(null);
+	const [mentionIndex, setMentionIndex] = useState(0);
+	const mentionOpen = mention !== null && !menuOpen;
+	const mentionCandidates =
+		mentionResults && mention && mentionResults.query === mention.query ? mentionResults.candidates : [];
+	const mentionSeq = useRef(0);
+	// Through a ref: callers pass a fresh closure every render, and a streaming
+	// session renders many times a second — as a dependency it would restart the
+	// debounce forever and the list would never load.
+	const loadMentions = useRef(props.loadMentions);
+	loadMentions.current = props.loadMentions;
+	useEffect(() => {
+		const load = loadMentions.current;
+		if (!mention || !load) return;
+		const seq = ++mentionSeq.current;
+		const wanted = mention.query;
+		const timer = setTimeout(() => {
+			load(wanted)
+				.then((candidates) => {
+					// Only the newest query's answer: a slow search for "a" must not
+					// land on top of the one for "ab".
+					if (seq !== mentionSeq.current) return;
+					setMentionResults({ query: wanted, candidates });
+					setMentionIndex(0);
+				})
+				.catch(() => {
+					if (seq === mentionSeq.current) setMentionResults({ query: wanted, candidates: [] });
+				});
+		}, MENTION_DEBOUNCE_MS);
+		return () => clearTimeout(timer);
+	}, [mention?.query, mention?.start]);
+
+	/** Re-read the `@` at the caret after the text or the caret moved. */
+	/**
+	 * The text as it is about to render. React fires onSelect in the same
+	 * dispatch as the keydown that picked a reference — before the new text has
+	 * reached the textarea — and reading the old value there would reopen the
+	 * menu the pick just closed.
+	 */
+	const pendingText = useRef(text);
+	pendingText.current = text;
+	const syncMention = (value: string, caret: number | null) => {
+		if (value !== pendingText.current) return;
+		if (!props.loadMentions || caret === null) {
+			setMention(null);
+			return;
+		}
+		const next = activeMention(value, caret);
+		setMention((current) =>
+			current && next && current.start === next.start && current.query === next.query ? current : next,
+		);
+	};
+
+	/** Swap the `@query` being typed for the picked reference, caret after it. */
+	const pickMention = (candidate: MentionCandidate) => {
+		if (!mention) return;
+		const token = `${mentionToken(candidate)} `;
+		const end = mention.start + 1 + mention.query.length;
+		const next = text.slice(0, mention.start) + token + text.slice(end).replace(/^ /, "");
+		const caret = mention.start + token.length;
+		pendingText.current = next;
+		setText(next);
+		setMention(null);
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(caret, caret);
+		});
+	};
 
 	/**
 	 * How far the first line is pushed right to clear the pill.
@@ -185,8 +275,10 @@ export function ComposerShell(props: ComposerShellProps) {
 		textareaRef.current?.focus();
 	}, [props.openCommandsSignal]);
 
-	const changeText = (next: string) => {
+	const changeText = (next: string, caret: number | null = null) => {
+		pendingText.current = next;
 		setText(next);
+		syncMention(next, caret);
 		// A command already accepted owns the leading slash, so what is typed now
 		// is its arguments — a slash in there is just a character.
 		if (command) return;
@@ -317,11 +409,40 @@ export function ComposerShell(props: ComposerShellProps) {
 		setImages([]);
 		setImageError(null);
 		closeMenu();
+		setMention(null);
 		props.onSend(request);
 	};
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (mentionOpen) {
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				if (mentionCandidates.length === 0) return;
+				const step = event.key === "ArrowDown" ? 1 : -1;
+				setMentionIndex((index) => (index + step + mentionCandidates.length) % mentionCandidates.length);
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				setMention(null);
+				return;
+			}
+			if ((event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) || event.key === "Tab") {
+				const picked = mentionCandidates[mentionIndex];
+				if (picked) {
+					event.preventDefault();
+					pickMention(picked);
+					return;
+				}
+				// Nothing to pick yet: Tab stays put, Enter sends what is there.
+				if (event.key === "Tab") {
+					event.preventDefault();
+					return;
+				}
+			}
+		}
 		if (menuOpen) {
+
 			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 				event.preventDefault();
 				if (matches.length === 0) return;
@@ -368,12 +489,23 @@ export function ComposerShell(props: ComposerShellProps) {
 		}
 	};
 
-	const CommandIcon = command?.kind === "skill" ? SkillCubeIcon : FileIcon;
+	const CommandIcon = command?.kind === "skill" ? SkillCubeIcon : command?.kind === "builtin" ? ZapIcon : FileIcon;
 
 	return (
 		<div className="px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-1 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]">
 			<ComposerColumnFrame>
+				{props.header}
 				<div className={COMPOSER_INPUT_SHELL_CLASS_NAME}>
+					{mentionOpen ? (
+						<ComposerMentionMenu
+							candidates={mentionCandidates}
+							loading={mentionResults?.query !== mention.query}
+							symbols={mention.query.startsWith(SYMBOL_QUERY_PREFIX)}
+							activeIndex={mentionIndex}
+							onHighlight={setMentionIndex}
+							onPick={pickMention}
+						/>
+					) : null}
 					{menuOpen ? (
 						<ComposerCommandMenu
 							commands={matches}
@@ -459,8 +591,14 @@ export function ComposerShell(props: ComposerShellProps) {
 										autoFocus={props.autoFocus}
 										ref={textareaRef}
 										value={text}
-										onChange={(event) => changeText(event.target.value)}
-										onBlur={closeMenu}
+										onChange={(event) => changeText(event.target.value, event.target.selectionStart)}
+										onSelect={(event) =>
+											syncMention(event.currentTarget.value, event.currentTarget.selectionStart)
+										}
+										onBlur={() => {
+											closeMenu();
+											setMention(null);
+										}}
 										onKeyDown={onKeyDown}
 										placeholder={
 											command

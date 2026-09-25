@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { SlashCommandSummary } from "../../../../shared/commands";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { FileIcon, SkillCubeIcon } from "../../lib/icons";
+import { FileIcon, SkillCubeIcon, ZapIcon } from "../../lib/icons";
 import {
 	COMPOSER_COMMAND_MENU_FLOATING_WRAPPER_CLASS_NAME,
 	COMPOSER_COMMAND_MENU_ITEM_ACTIVE_CLASS_NAME,
@@ -91,7 +91,7 @@ export function ComposerCommandMenu(props: ComposerCommandMenuProps) {
 						role="listbox"
 					>
 						{props.commands.map((command, index) => {
-							const Icon = command.kind === "skill" ? SkillCubeIcon : FileIcon;
+							const Icon = command.kind === "skill" ? SkillCubeIcon : command.kind === "builtin" ? ZapIcon : FileIcon;
 							return (
 								<div
 									key={`${command.kind}:${command.name}`}

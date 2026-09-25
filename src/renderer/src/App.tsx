@@ -16,6 +16,10 @@ import { projectLabel } from "../../shared/paths";
 import { mergeActiveSession, workspaceKey } from "../../shared/sessions";
 import { api, errorMessage } from "./api";
 import { AutomationsPage } from "./components/automations/AutomationsPage";
+import { AcpChatView } from "./components/agents/AcpChatView";
+import { WorkspacePicker, workspaceName } from "./components/agents/WorkspacePicker";
+import { NEKO_LOCAL_WORKSPACE } from "../../shared/acp";
+import { useAcpWorkspace } from "./hooks/useAcpWorkspace";
 import { ChatView } from "./components/ChatView";
 import { CheckpointRestoreDialog } from "./components/chat/CheckpointRestoreDialog";
 import {
@@ -26,7 +30,8 @@ import {
 } from "./components/dock/RightDock";
 import { PullRequestsPage } from "./components/pullRequests/PullRequestsPage";
 import { ReviewPanel } from "./components/ReviewPanel";
-import { SettingsPage } from "./components/settings/SettingsPage";
+import { SettingsPage, type SettingsSectionId } from "./components/settings/SettingsPage";
+import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AutomaticUpdateDialog } from "./components/updates/UpdateDialog";
 import { useHostDirectoryPicker } from "./components/HostDirectoryPicker";
 import { Sidebar } from "./components/Sidebar";
@@ -48,6 +53,8 @@ const CHAT_WIDTH_STORAGE_KEY = "nekocode:chat-width";
 const DOCK_WIDTH_STORAGE_KEY = "nekocode:dock-width";
 const DOCK_OPEN_STORAGE_KEY = "nekocode:dock-open";
 const SIDEBAR_OPEN_STORAGE_KEY = "nekocode:sidebar-open";
+/** NekoLocal or the id of an external agent; see the workspace picker. */
+const AGENT_WORKSPACE_STORAGE_KEY = "nekocode:agent-workspace";
 const DEFAULT_DOCK_WIDTH = 460;
 const MIN_DOCK_WIDTH = 320;
 const MIN_CHAT_WIDTH = 480;
@@ -101,7 +108,33 @@ export default function App() {
 	});
 
 	const [view, setView] = useState<WorkspaceView>("chat");
+	/** The settings section to land on — set when a shortcut elsewhere opens settings. */
+	const [settingsSection, setSettingsSection] = useState<SettingsSectionId | undefined>(undefined);
+	const selectView = (next: WorkspaceView) => {
+		if (next === "settings") setSettingsSection(undefined);
+		setView(next);
+	};
 	const sessions = useSessions();
+	// Which agent the conversation is with. Remembered across restarts; the
+	// WebUI has no bridge to external agents, so it is always NekoLocal there.
+	const [workspace, setWorkspaceState] = useState<string>(() =>
+		api.runtime === "web" ? NEKO_LOCAL_WORKSPACE : (readStored(AGENT_WORKSPACE_STORAGE_KEY) ?? NEKO_LOCAL_WORKSPACE),
+	);
+	const setWorkspace = (next: string) => {
+		setWorkspaceState(next);
+		writeStored(AGENT_WORKSPACE_STORAGE_KEY, next);
+		setView("chat");
+	};
+	const acp = useAcpWorkspace(workspace, cwd);
+	const acpActive = workspace !== NEKO_LOCAL_WORKSPACE && acp.agent !== null;
+	// An agent removed or switched off in settings takes its workspace with it.
+	useEffect(() => {
+		if (workspace === NEKO_LOCAL_WORKSPACE || acp.agents.length === 0) return;
+		if (!acp.agents.some((agent) => agent.id === workspace && agent.enabled)) {
+			setWorkspaceState(NEKO_LOCAL_WORKSPACE);
+			writeStored(AGENT_WORKSPACE_STORAGE_KEY, NEKO_LOCAL_WORKSPACE);
+		}
+	}, [workspace, acp.agents]);
 	const [workspaces, setWorkspaces] = useState<string[]>(() => {
 		try {
 			const value: unknown = JSON.parse(readStored(WORKSPACES_STORAGE_KEY) ?? "[]");
@@ -128,8 +161,13 @@ export default function App() {
 		setSnapshot((previous) => (next ? shareStructure(previous, next) : null));
 	const [browserPreview, setBrowserPreview] = useState<BrowserPreviewRequest | null>(null);
 	const [composerInsertion, setComposerInsertion] = useState<ComposerInsertion | null>(null);
-	const currentPreviewScope = useRef({ cwd, sessionId: snapshot?.session.id });
-	currentPreviewScope.current = { cwd, sessionId: snapshot?.session.id };
+	// The conversation on screen owns the browser panel: a preview from a
+	// session that is not showing — NekoLocal or ACP — is not opened over it.
+	const previewScope = acpActive
+		? { cwd: acp.snapshot?.cwd ?? cwd, sessionId: acp.snapshot?.id }
+		: { cwd, sessionId: snapshot?.session.id };
+	const currentPreviewScope = useRef(previewScope);
+	currentPreviewScope.current = previewScope;
 	const [defaults, setDefaults] = useState<AgentDefaults | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -304,6 +342,16 @@ export default function App() {
 		writeStored(DOCK_OPEN_STORAGE_KEY, "1");
 		});
 	}, []);
+	// A screenshot needs the automation page painted, whichever session is on
+	// screen; BrowserPanel picks the page's own tab.
+	useEffect(() => {
+		if (!browserAvailable) return;
+		return api.onBrowserRevealAutomation(() => {
+			setDockTabs((tabs) => tabs.includes("browser") ? tabs : [...tabs, "browser"]);
+			setDockActive("browser");
+			setDockOpen(true);
+		});
+	}, []);
 	useEffect(() => {
 		if (!browserAvailable) return;
 		return api.onBrowserElementSelected((selection) => {
@@ -348,13 +396,46 @@ export default function App() {
 		};
 	}, []);
 
+	/** Point the app at a project; in an agent workspace that also means a new conversation there. */
+	const switchProject = (path: string) => {
+		setCwd(path);
+		writeStored(PROJECT_STORAGE_KEY, path);
+		acp.startNew();
+		setView("chat");
+	};
+
 	const pickProject = async () => {
 		if (sessionTransition.current) return;
 		try {
 			const picked = await pickDirectory(cwd ?? api.homeDir);
-			if (picked) await createSession(picked);
+			if (!picked) return;
+			if (acpActive) switchProject(picked);
+			else await createSession(picked);
 		} catch (cause) { setError(errorMessage(cause)); }
 	};
+
+	const openAcpSession = (row: SessionSummary) => {
+		if (row.cwd) {
+			setCwd(row.cwd);
+			writeStored(PROJECT_STORAGE_KEY, row.cwd);
+		}
+		setView("chat");
+		void acp.open(row);
+	};
+
+	const workspacePicker =
+		api.runtime === "web" ? null : (
+			<WorkspacePicker
+				agents={acp.agents}
+				disabled={busy}
+				onChange={setWorkspace}
+				onManage={() => {
+					setSettingsSection("agents");
+					setView("settings");
+				}}
+				value={acpActive ? workspace : NEKO_LOCAL_WORKSPACE}
+			/>
+		);
 
 	/**
 	 * Opening a session neither locks the sidebar nor swallows the next click: a
@@ -590,22 +671,32 @@ export default function App() {
 					<Sidebar
 						cwd={cwd}
 						workspaces={workspaces}
-						sessions={sessionRows}
-						sessionsLoading={sessions.loading}
-						activeSessionId={snapshot?.session.id ?? null}
-						streaming={snapshot?.streaming ?? false}
+						sessions={acpActive ? acp.rows : sessionRows}
+						sessionsLoading={acpActive ? acp.loading : sessions.loading}
+						workspaceName={workspaceName(acpActive ? workspace : NEKO_LOCAL_WORKSPACE, acp.agents)}
+						sessionsReadOnly={acpActive}
+						activeSessionId={acpActive ? acp.activeRowId : (snapshot?.session.id ?? null)}
+						streaming={acpActive ? (acp.snapshot?.streaming ?? false) : (snapshot?.streaming ?? false)}
 						view={view}
 						busy={busy}
 						theme={theme}
 						resolvedTheme={resolvedTheme}
 						browserOpen={dockOpen && dockActive === "browser"}
 						onPickProject={pickProject}
-						onNewSession={() => void createSession()}
-						onNewWorkspaceSession={(path) => void createSession(path)}
-						onOpenSession={openSession}
-						onRenameSession={(session, title) => void sessions.rename(session, title)}
-						onDeleteSession={(session) => void sessions.remove(session)}
-						onSelectView={setView}
+						onNewSession={() => {
+							if (!acpActive) return void createSession();
+							acp.startNew();
+							setView("chat");
+						}}
+						onNewWorkspaceSession={(path) => (acpActive ? switchProject(path) : void createSession(path))}
+						onOpenSession={acpActive ? openAcpSession : openSession}
+						onRenameSession={(session, title) => {
+							if (!acpActive) void sessions.rename(session, title);
+						}}
+						onDeleteSession={(session) => {
+							if (!acpActive) void sessions.remove(session);
+						}}
+						onSelectView={selectView}
 						onToggleBrowser={() => toggleDockTool("browser")}
 						onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
 					/>
@@ -617,16 +708,49 @@ export default function App() {
 						dockOpen && "rounded-tr-lg",
 					)}
 				>
+					<ViewErrorBoundary resetKey={`${view}:${snapshot?.session.id ?? ""}`}>
 					{view === "settings" ? (
-						<SettingsPage onClose={() => setView("chat")} />
+						<SettingsPage
+							initialSection={settingsSection}
+							key={settingsSection ?? "default"}
+							onClose={() => setView("chat")}
+							cwd={snapshot?.session.cwd ?? cwd}
+							projects={workspaces}
+						/>
 					) : view === "review" ? (
 						<ReviewPanel cwd={cwd} onClose={() => setView("chat")} />
 					) : view === "pull-requests" ? (
 						<PullRequestsPage cwd={cwd} onClose={() => setView("chat")} />
 					) : view === "automations" ? (
 						<AutomationsPage cwd={cwd} onClose={() => setView("chat")} />
+					) : acpActive && acp.agent ? (
+						<AcpChatView
+							insertion={composerInsertion}
+							onInsertionConsumed={(id) => setComposerInsertion((current) => (current?.id === id ? null : current))}
+							agent={acp.agent}
+							composerHeader={workspacePicker}
+							cwd={acp.snapshot?.cwd ?? cwd}
+							error={acp.error}
+							historyError={acp.historyError}
+							onAbort={acp.cancel}
+							onDismissError={acp.dismissError}
+							onPickProject={pickProject}
+							onRespondPermission={acp.respondPermission}
+							onSend={(request) => {
+								const target = acp.snapshot?.cwd ?? cwd;
+								if (target) void acp.send(target, request.text, request.images);
+							}}
+							onSetConfig={acp.setConfig}
+							snapshot={acp.snapshot}
+						/>
 					) : (
 						<ChatView
+							composerHeader={workspacePicker}
+							onGoalAction={async (action) => {
+								const next = await api.agentGoal(action);
+								if (next) showSnapshot(next);
+							}}
+							loadMentions={(query) => api.agentMentions(query, snapshot?.session.cwd ?? cwd ?? undefined)}
 							insertion={composerInsertion}
 							onInsertionConsumed={(id) => setComposerInsertion((current) => current?.id === id ? null : current)}
 							cwd={cwd}
@@ -664,6 +788,7 @@ export default function App() {
 							onOpenCheckpoints={() => openDockTab("checkpoints")}
 						/>
 					)}
+					</ViewErrorBoundary>
 					{terminalOpen ? (
 						<TerminalPanel cwd={cwd} onClose={() => setTerminalOpen(false)} />
 					) : null}

@@ -19,10 +19,29 @@ files:
   # Keep their compiled distributions; source-only workspaces are not runnable.
   - '!node_modules/**/{test,tests,__tests__,benchmark,benchmarks}/**/*'
   - '!node_modules/**/*.map'
+  # The ACP adapters' own dependencies ship the agents: the Codex CLI (~440 MB)
+  # and Claude Code (~230 MB, not redistributable). The adapters drive the
+  # user's installed CLI instead, so none of that goes into the package.
+  - '!node_modules/@openai/codex/**/*'
+  - '!node_modules/@openai/codex-*/**/*'
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-*/**/*'
 asarUnpack:
   - node_modules/node-pty/**/*
   - node_modules/@esbuild/**/*
   - node_modules/@silvia-odwyer/photon-node/**/*
+  # The Computer Use driver loads its DLL by path, which cannot resolve inside
+  # app.asar; the worker imports this unpacked copy (src/main/computer/worker.ts).
+  - node_modules/@trycua/**/*
+  - node_modules/@ubjs/**/*
+  # koffi's native binary, used by the worker to raise the window being operated.
+  - node_modules/koffi/**/*
+  - node_modules/@koromix/**/*
+  # The ACP adapters run as a separate process on Electron-as-Node, loaded from
+  # disk rather than from inside app.asar (src/main/acp/launch.ts). This is each
+  # adapter plus everything the Claude adapter imports at runtime.
+  - node_modules/@agentclientprotocol/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk/**/*
+  - node_modules/zod/**/*
 extraResources:
   - from: resources/skills
     to: skills

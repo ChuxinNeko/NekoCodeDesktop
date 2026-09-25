@@ -35,6 +35,10 @@ export interface SessionListProps {
 	onOpen: (session: SessionSummary) => void;
 	onRename: (session: SessionSummary, title: string) => void;
 	onDelete: (session: SessionSummary) => void;
+	/** Which workspace's history this is, shown beside the heading. */
+	caption?: string;
+	/** Rows that open but have no rename or delete. */
+	readOnly?: boolean;
 }
 
 /**
@@ -99,7 +103,10 @@ export function SessionList(props: SessionListProps) {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col gap-1 px-2 pt-2">
 			<div className="flex items-center justify-between px-2">
-				<span className={SIDEBAR_SECTION_LABEL_CLASS_NAME}>{t("sessions.workspaces")}</span>
+				<span className={cn(SIDEBAR_SECTION_LABEL_CLASS_NAME, "min-w-0 truncate")}>
+					{t("sessions.workspaces")}
+					{props.caption ? <span className="font-normal opacity-70"> · {props.caption}</span> : null}
+				</span>
 				<Button size="icon-xs" variant="ghost" disabled={props.busy} onClick={props.onAddWorkspace} aria-label={t("sessions.addWorkspace")} title={t("sessions.addWorkspace")}><PlusIcon className="size-3.5" /></Button>
 			</div>
 
@@ -174,6 +181,7 @@ export function SessionList(props: SessionListProps) {
 							{shown.map((session) => (
 								<SessionRow
 									compact
+									hideActions={props.readOnly}
 									disabled={props.busy}
 									active={session.id === activeId}
 									confirmingDelete={confirmingDelete === session.sessionFile}

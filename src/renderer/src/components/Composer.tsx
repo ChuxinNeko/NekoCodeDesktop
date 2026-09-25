@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { SlashCommandSummary } from "../../../shared/commands";
+import type { MentionCandidate } from "../../../shared/mentions";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { FastContextConfig } from "../../../shared/fast-context";
 import type { FusionConfig } from "../../../shared/fusion";
@@ -11,6 +12,7 @@ import { ComposerShell } from "./chat/ComposerShell";
 
 interface ComposerProps {
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
+	loadMentions?: (query: string) => Promise<MentionCandidate[]>;
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	disabled: boolean;
@@ -35,6 +37,7 @@ interface ComposerProps {
 	onSetThinking: (level: ThinkingLevel) => void;
 	onSetMode: (mode: ExecutionMode) => void;
 	onSetWorkMode: (mode: WorkMode) => void;
+	header?: React.ReactNode;
 }
 
 /** Composer for an open session: the shared input shell plus the model/thinking/mode pickers. */
@@ -45,6 +48,7 @@ export function Composer(props: ComposerProps) {
 	const supportsImages = props.models.find((model) => model.key === props.modelKey)?.imageInput === true;
 	return (
 		<ComposerShell
+			header={props.header}
 			insertion={props.insertion}
 			onInsertionConsumed={props.onInsertionConsumed}
 			disabled={props.disabled}
@@ -56,6 +60,7 @@ export function Composer(props: ComposerProps) {
 			context={props.context}
 			streaming={props.streaming}
 			loadCommands={props.loadCommands ?? (() => api.agentCommands())}
+			loadMentions={props.loadMentions}
 			openCommandsSignal={openCommands}
 			toolbar={
 				<ComposerPickers

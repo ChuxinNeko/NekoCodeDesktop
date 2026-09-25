@@ -5,6 +5,7 @@ import { createPromptResources } from "../workflow-runtime";
 import { createStatTool } from "../file-tools";
 import { NEKOCODE_TOOL_OPTIONS } from "../shell-environment";
 import { COMPACTION_INSTRUCTIONS, toolsForMode, type PromptContext } from "../prompt-library";
+import { hookService, memorySection } from "../context-services";
 
 const SUMMARY_LIMIT = 2_000;
 const RUN_TIMEOUT_MS = 30 * 60_000;
@@ -49,6 +50,9 @@ export class AutomationRunner {
 			mode: "agent",
 			permission: automation.mode,
 			headless: true,
+			// Read, not written: an unattended run follows what the user has asked
+			// to be remembered, but has no one to confirm anything new with.
+			memory: memorySection(automation.cwd),
 			modelId: currentSession?.model
 				? currentSession.model.provider + "/" + currentSession.model.id
 				: (automation.modelKey ?? undefined),
@@ -66,6 +70,9 @@ export class AutomationRunner {
 		});
 
 		currentSession = session;
+		// Nobody is watching an automation, which is exactly when a block rule
+		// matters most.
+		hookService().attach(session, automation.cwd);
 
 		// PI's session owns cancellation; a local AbortController would stop nothing.
 		// Both the caller's signal and the wall-clock ceiling funnel into session.abort().

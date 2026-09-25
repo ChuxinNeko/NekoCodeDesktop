@@ -338,7 +338,7 @@ export class QqBotService {
 			this.deps.onChange();
 			return;
 		}
-		const text = message.text.trim();
+		let text = message.text.trim();
 		// A bare image with no words is still a message: the file is the content.
 		if (!text && !message.attachments?.length) return;
 
@@ -362,7 +362,11 @@ export class QqBotService {
 		// Split rather than just matched: `/setdir` carries a path, and a Windows
 		// one has backslashes and spaces that must survive verbatim.
 		const command = /^[/／]\s*(\S+)\s*([\s\S]*)$/.exec(text);
-		if (command) {
+		// /goal is the agent's own command, not the bot's: it goes to the task
+		// like any message, spelled the way the agent expects.
+		const goal = command && /^(goal|目标)$/i.test(command[1]);
+		if (goal) text = `/goal ${command[2].trim()}`.trimEnd();
+		if (command && !goal) {
 			await this.command(command[1].toLowerCase(), command[2].trim(), binding, peer);
 			return;
 		}
@@ -545,6 +549,7 @@ export class QqBotService {
 				"/undo 撤销上一轮文件改动",
 				"/model 查看或切换模型 · /think 设置思考强度",
 				"/setdir 绝对路径 设置工作目录",
+				"/goal 目标 让 agent 持续工作直到完成（/goal pause|resume|stop）",
 			].join("\n"),
 			binding.replyToken,
 		);

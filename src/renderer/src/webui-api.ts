@@ -8,6 +8,7 @@ const SUBSCRIPTIONS = {
 	onBrowserPreview: "browser:preview",
 	onBrowserElementSelected: "browser:elementSelected",
 	onBrowserInspectStopped: "browser:inspectStopped",
+	onBrowserRevealAutomation: "browser:revealAutomation",
 	onSessionsChanged: "agent:sessionsChanged",
 	onRevealSession: "agent:revealSession",
 	onMcpChanged: "mcp:changed",
@@ -19,6 +20,8 @@ const SUBSCRIPTIONS = {
 	onTerminalExit: "terminal:exit",
 	onOAuthEvent: "oauth:event",
 	onAutomationEvent: "automation:event",
+	onMemoryChanged: "memory:changed",
+	onHooksChanged: "hooks:changed",
 } as const satisfies Record<string, WebUiEventChannel>;
 
 export function createWebUiApi(runtime: WebUiRuntime): AgentApi {

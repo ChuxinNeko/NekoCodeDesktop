@@ -15,9 +15,16 @@ export interface AppPreferences {
 	 * worktree to make, and those tasks share the directory as they always have.
 	 */
 	isolateBackgroundTasks: boolean;
+	/**
+	 * Give the agent Computer Use tools: reading and operating other apps'
+	 * windows on this desktop. Off by default — it acts outside the project,
+	 * on whatever the user has open. Takes effect for sessions started after.
+	 */
+	computerUse: boolean;
 }
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
 	notifyOnTaskFinish: true,
 	isolateBackgroundTasks: true,
+	computerUse: false,
 };

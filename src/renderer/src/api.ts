@@ -49,6 +49,11 @@ import type {
 	RestoreCheckpointResult,
 } from "../../shared/checkpoints";
 import type { FsEntry, FsReadResult, HostDirectoryListing } from "../../shared/files";
+import type { MentionCandidate } from "../../shared/mentions";
+import type { GoalAction } from "../../shared/goal";
+import type { ProjectInstructions, SaveInstructionsRequest } from "../../shared/instructions";
+import type { MemorySnapshot, SaveMemoryRequest } from "../../shared/memory";
+import type { HooksSnapshot, SaveHookRequest } from "../../shared/hooks";
 import type { GitActionRequest, GitDiffRequest, RepoStatus, ReviewScope } from "../../shared/git";
 import type {
 	FetchModelsRequest,
@@ -81,6 +86,18 @@ import type {
 	WorktreeStatus,
 } from "../../shared/worktree";
 import type { McpSnapshot, SaveMcpServerRequest } from "../../shared/mcp";
+import type {
+	AcpAgentInfo,
+	AcpCreateSessionRequest,
+	AcpHistory,
+	AcpOpenSessionRequest,
+	AcpPermissionResponse,
+	AcpPromptRequest,
+	AcpSaveAgentRequest,
+	AcpSessionSnapshot,
+	AcpSetConfigRequest,
+	AcpState,
+} from "../../shared/acp";
 import type { QqBotConfig, QqBotStatus } from "../../shared/qqbot";
 import type {
 	RelayLoginRequest,
@@ -131,6 +148,8 @@ export interface AgentApi {
 	onBrowserPreview(listener: (request: BrowserPreviewRequest) => void): () => void;
 	onBrowserElementSelected(listener: (selection: BrowserElementSelection) => void): () => void;
 	onBrowserInspectStopped(listener: (state: { guestId: number }) => void): () => void;
+	/** Main needs the automation page painted (a screenshot): bring its tab to the front. */
+	onBrowserRevealAutomation(listener: (state: { guestId: number }) => void): () => void;
 	browserSetInspect(guestId: number, enabled: boolean): Promise<void>;
 	browserBindAutomation(requestId: string, guestId: number): Promise<void>;
 
@@ -185,6 +204,22 @@ export interface AgentApi {
 	mcpReconnect(id: string): Promise<McpSnapshot>;
 	/** Connection states move on their own — a server can drop at any time. */
 	onMcpChanged(listener: (snapshot: McpSnapshot) => void): () => void;
+	/** External ACP agents. Desktop only: the WebUI has no bridge for these. */
+	acpState(): Promise<AcpState>;
+	acpSnapshot(sessionId: string): Promise<AcpSessionSnapshot | null>;
+	acpCreate(request: AcpCreateSessionRequest): Promise<AcpSessionSnapshot>;
+	acpOpen(request: AcpOpenSessionRequest): Promise<AcpSessionSnapshot>;
+	acpHistory(agentId: string): Promise<AcpHistory>;
+	acpSaveAgent(request: AcpSaveAgentRequest): Promise<AcpAgentInfo[]>;
+	acpRemoveAgent(id: string): Promise<AcpAgentInfo[]>;
+	onAcpHistoryChanged(listener: (agentId: string) => void): () => void;
+	acpPrompt(request: AcpPromptRequest): Promise<void>;
+	acpCancel(sessionId: string): Promise<void>;
+	acpSetConfig(request: AcpSetConfigRequest): Promise<void>;
+	acpRespondPermission(response: AcpPermissionResponse): Promise<void>;
+	acpClose(sessionId: string): Promise<void>;
+	onAcpChanged(listener: (state: AcpState) => void): () => void;
+	onAcpSnapshot(listener: (snapshot: AcpSessionSnapshot) => void): () => void;
 	qqBotStatus(): Promise<QqBotStatus>;
 	qqBotSave(config: QqBotConfig): Promise<QqBotStatus>;
 	qqBotReconnect(): Promise<QqBotStatus>;
@@ -199,6 +234,24 @@ export interface AgentApi {
 	agentAbort(): Promise<void>;
 	/** Skills and prompt templates the composer's slash menu offers. */
 	agentCommands(): Promise<SlashCommandSummary[]>;
+	/** Pause, resume or clear the open session's `/goal`. */
+	agentGoal(action: GoalAction): Promise<AgentSnapshot | null>;
+	/** `@` candidates: files and folders, or symbols for a `#` query. `cwd` defaults to the open session's. */
+	agentMentions(query: string, cwd?: string): Promise<MentionCandidate[]>;
+
+	/** The AGENTS.md family a session in `cwd` loads, and where edits go. */
+	instructionsRead(cwd: string): Promise<ProjectInstructions>;
+	/** Writes the global or project file and reloads every open session. */
+	instructionsSave(request: SaveInstructionsRequest): Promise<ProjectInstructions>;
+	memoryList(): Promise<MemorySnapshot>;
+	memorySave(request: SaveMemoryRequest): Promise<MemorySnapshot>;
+	memoryRemove(id: string): Promise<MemorySnapshot>;
+	onMemoryChanged(listener: (snapshot: MemorySnapshot) => void): () => void;
+	hooksList(): Promise<HooksSnapshot>;
+	hooksSave(request: SaveHookRequest): Promise<HooksSnapshot>;
+	hooksRemove(id: string): Promise<HooksSnapshot>;
+	hooksClearRecent(): Promise<HooksSnapshot>;
+	onHooksChanged(listener: (snapshot: HooksSnapshot) => void): () => void;
 	/** Picker state for the welcome screen — a session snapshot before one exists. */
 	agentDefaults(cwd: string): Promise<AgentDefaults>;
 	onAgentDefaults(listener: (defaults: AgentDefaults) => void): () => void;
@@ -328,7 +381,12 @@ export const api: AgentApi = new Proxy({} as AgentApi, {
 	},
 });
 
+/**
+ * An error as the user should read it. A failure in the main process reaches
+ * the window wrapped as "Error invoking remote method 'x': Error: …", which
+ * names the plumbing rather than the problem.
+ */
 export function errorMessage(error: unknown): string {
-	if (error instanceof Error) return error.message;
-	return String(error);
+	const message = error instanceof Error ? error.message : String(error);
+	return message.replace(/^Error invoking remote method '[^']*': (?:[A-Za-z]*Error: )?/, "");
 }

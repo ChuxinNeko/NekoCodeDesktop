@@ -1,4 +1,5 @@
 import type { ComposerInsertion } from "../../../shared/browser";
+import type { MentionCandidate } from "../../../shared/mentions";
 import type { FastContextConfig } from "../../../shared/fast-context";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode, WorkflowAnswer } from "../../../shared/workflow";
@@ -16,6 +17,8 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 import { WorkflowPanel } from "./chat/WorkflowPanel";
+import { GoalBanner } from "./chat/GoalBanner";
+import { readGoalState, type GoalAction } from "../../../shared/goal";
 import { WorktreeBar } from "./chat/WorktreeBar";
 import { Composer } from "./Composer";
 import { ProjectPicker } from "./chat/ProjectPicker";
@@ -64,6 +67,8 @@ function tailTarget(el: HTMLElement, realBottom: number): number {
 interface ChatViewProps {
 	/** Keeps the same chat surface while omitting desktop-only dock controls. */
 	mobile?: boolean;
+	/** Shown above the composer: the workspace picker, on the desktop. */
+	composerHeader?: React.ReactNode;
 	/**
 	 * The transcript starts mid-session and older turns can still be fetched.
 	 * Only remote surfaces set this — a local session always holds all of it.
@@ -80,6 +85,10 @@ interface ChatViewProps {
 	/** Fetch the rest of a tool result this surface only received the head of. */
 	onLoadToolOutput?: (toolCallId: string, offset: number) => Promise<{ text: string; total: number }>;
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
+	/** The goal banner's buttons; absent where there is no bridge to act through. */
+	onGoalAction?: (action: GoalAction) => Promise<unknown>;
+	/** `@` candidates; absent on the phone, which has no picker for the desktop's files. */
+	loadMentions?: (query: string) => Promise<MentionCandidate[]>;
 	onAnswerWorkflow?: (answer: WorkflowAnswer) => Promise<unknown>;
 	onCancelWorker?: (id: string) => Promise<unknown>;
 	insertion?: ComposerInsertion | null;
@@ -145,6 +154,7 @@ export function ChatView(props: ChatViewProps) {
 	const lastUserCellRef = useRef<string | null>(null);
 	const [jumpVisible, setJumpVisible] = useState(false);
 	const [spacerPx, setSpacerPx] = useState(0);
+	const scrollFrameRef = useRef<number | null>(null);
 	/** Where the viewport sat when a page of older turns was asked for. */
 	const prependRef = useRef<{ firstId: string; scrollHeight: number; scrollTop: number } | null>(null);
 
@@ -251,7 +261,7 @@ export function ChatView(props: ChatViewProps) {
 		requestEarlier(el);
 	}, [snapshot, spacerPx]);
 
-	const onTranscriptScroll = () => {
+	const updateTranscriptScroll = () => {
 		const el = scrollRef.current;
 		if (!el) return;
 		const expected = expectedScrollRef.current;
@@ -267,6 +277,21 @@ export function ChatView(props: ChatViewProps) {
 		setJumpVisible(distFromBottom > 80);
 		requestEarlier(el);
 	};
+
+	// Browsers can dispatch several scroll events during one frame. Layout reads
+	// in each event (the real content bottom and the prepend trigger) otherwise
+	// compete with painting while a long transcript is being dragged upward.
+	const onTranscriptScroll = () => {
+		if (scrollFrameRef.current !== null) return;
+		scrollFrameRef.current = requestAnimationFrame(() => {
+			scrollFrameRef.current = null;
+			updateTranscriptScroll();
+		});
+	};
+
+	useEffect(() => () => {
+		if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+	}, []);
 
 	const jumpToLatest = () => {
 		const el = scrollRef.current;
@@ -305,7 +330,9 @@ export function ChatView(props: ChatViewProps) {
 	if (!snapshot) {
 		return (
 			<WelcomeView
+				composerHeader={props.composerHeader}
 				loadCommands={props.loadCommands}
+				loadMentions={props.loadMentions}
 				insertion={props.insertion}
 				onInsertionConsumed={props.onInsertionConsumed}
 				busy={busy}
@@ -325,6 +352,12 @@ export function ChatView(props: ChatViewProps) {
 			/>
 		);
 	}
+
+	// Read through the same normalizer as a saved goal: a main process one
+	// version behind the window — a dev reload that only swapped the renderer,
+	// or an older desktop feeding the WebUI — sends a goal without the fields
+	// this banner reads, and one missing field must not take the window down.
+	const goal = readGoalState(snapshot.goal);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -450,9 +483,12 @@ export function ChatView(props: ChatViewProps) {
 				) : null}
 			</div>
 
+			{goal && props.onGoalAction ? <GoalBanner goal={goal} onAction={props.onGoalAction} /> : null}
 			<WorkflowPanel workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />
 			<Composer
+				header={props.composerHeader}
 				loadCommands={props.loadCommands}
+				loadMentions={props.loadMentions}
 				insertion={props.insertion}
 				onInsertionConsumed={props.onInsertionConsumed}
 				disabled={busy || !!snapshot.workflow.request}

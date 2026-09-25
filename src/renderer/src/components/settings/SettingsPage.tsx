@@ -10,9 +10,12 @@ import { GitHubSettings } from "./GitHubSettings";
 import { ProviderModelSettings } from "./ProviderModelSettings";
 import { PluginSettings } from "./PluginSettings";
 import { McpSettings } from "./McpSettings";
+import { AcpSettings } from "./AcpSettings";
 import { TokenUsageSettings } from "./TokenUsageSettings";
 import { SkillSettings } from "./SkillSettings";
 import { WebUiSettings } from "./WebUiSettings";
+import { ContextSettings } from "./ContextSettings";
+import { HooksSettings } from "./HooksSettings";
 import { api } from "../../api";
 import { ArrowLeftIcon } from "../../lib/icons";
 
@@ -21,7 +24,10 @@ const SECTIONS = [
 	{ id: "connect", labelKey: "settings.section.connect" },
 	{ id: "appearance", labelKey: "settings.section.appearance" },
 	{ id: "providers", labelKey: "settings.section.providers" },
+	{ id: "agents", labelKey: "settings.section.agents" },
 	{ id: "tokens", labelKey: "settings.section.tokens" },
+	{ id: "context", labelKey: "settings.section.context" },
+	{ id: "hooks", labelKey: "settings.section.hooks" },
 	{ id: "skills", labelKey: "settings.section.skills" },
 	{ id: "plugins", labelKey: "settings.section.plugins" },
 	{ id: "mcp", labelKey: "settings.section.mcp" },
@@ -30,7 +36,8 @@ const SECTIONS = [
 	{ id: "about", labelKey: "settings.section.about" },
 ] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey }>;
 
-type SectionId = (typeof SECTIONS)[number]["id"];
+export type SettingsSectionId = (typeof SECTIONS)[number]["id"];
+type SectionId = SettingsSectionId;
 
 /**
  * Settings pages are a single reading column, but the token dashboard is a grid
@@ -39,11 +46,24 @@ type SectionId = (typeof SECTIONS)[number]["id"];
  */
 const SECTION_WIDTH: Partial<Record<SectionId, string>> = { tokens: "max-w-[58rem]" };
 
-export function SettingsPage({ onClose }: { onClose: () => void }) {
+export function SettingsPage({
+	onClose,
+	initialSection,
+	cwd = null,
+	projects = [],
+}: {
+	onClose: () => void;
+	initialSection?: SettingsSectionId;
+	/** The project on screen, which the per-project sections open on. */
+	cwd?: string | null;
+	/** Every project the sidebar knows, for those sections' pickers. */
+	projects?: readonly string[];
+}) {
 	const { t } = useTranslation();
-	const [section, setSection] = useState<SectionId>("general");
+	const [section, setSection] = useState<SectionId>(initialSection ?? "general");
+	// External agents run local processes through the preload bridge.
 	const sections =
-		api.runtime === "web" ? SECTIONS.filter((entry) => entry.id !== "webui") : SECTIONS;
+		api.runtime === "web" ? SECTIONS.filter((entry) => entry.id !== "webui" && entry.id !== "agents") : SECTIONS;
 
 	return (
 		<div className="flex min-h-0 flex-1">
@@ -87,7 +107,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 					{section === "connect" ? <ConnectSettings /> : null}
 					{section === "appearance" ? <AppearanceSettings /> : null}
 					{section === "providers" ? <ProviderModelSettings /> : null}
+					{section === "agents" && api.runtime !== "web" ? <AcpSettings /> : null}
 					{section === "tokens" ? <TokenUsageSettings /> : null}
+					{section === "context" ? <ContextSettings cwd={cwd} projects={projects} /> : null}
+					{section === "hooks" ? <HooksSettings projects={projects} /> : null}
 					{section === "skills" ? <SkillSettings /> : null}
 					{section === "plugins" ? <PluginSettings /> : null}
 					{section === "mcp" ? <McpSettings /> : null}
