@@ -1630,11 +1630,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const row = clip.y + clip.height - 1;
 		if (row >= screen.length || isImageLine(screen[row] ?? "")) return screen;
 		const scrollbarColumn = box ? getScrollbarGeometry(box)?.column : undefined;
-		const availableWidth = Math.max(0, (scrollbarColumn ?? clip.x + clip.width) - clip.x);
-		const text = truncateToWidth(this.scrollToEndIndicator(), availableWidth, "");
+		const label = truncateToWidth(this.scrollToEndIndicator(), clip.width, "");
+		const labelWidth = visibleWidth(label);
+		const column = clip.x + Math.floor((clip.width - labelWidth) / 2);
+		const rightEdge = scrollbarColumn ?? clip.x + clip.width;
+		const availableWidth = Math.max(0, rightEdge - column);
+		const text = truncateToWidth(label, availableWidth, "");
 		const textWidth = visibleWidth(text);
 		if (textWidth === 0) return screen;
-		const column = clip.x + Math.floor((availableWidth - textWidth) / 2);
 		const result = [...screen];
 		result[row] = compositeTuiLine(result[row] ?? "", text, column, textWidth, width);
 		this.scrollToEndIndicatorRect = { row, column, width: textWidth };
@@ -1705,9 +1708,24 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		buffer += preparedKittyScreen.evictedImageDeletion;
 
+		// WezTerm erases intersecting Kitty image cells when a later EL clears a covered row.
+		// Only separate clearing from drawing for WezTerm frames that place images; preserve the
+		// existing interleaved output for text-only frames and every other terminal.
+		const clearRowsBeforeKittyImages =
+			redrawImages &&
+			this.imageProtocol === "kitty" &&
+			screen.some(isImageLine) &&
+			(Boolean(process.env.WEZTERM_PANE) || process.env.TERM_PROGRAM?.toLowerCase() === "wezterm");
+		if (clearRowsBeforeKittyImages) {
+			for (let row = 0; row < height; row++) {
+				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				buffer += `\x1b[${row + 1};1H\x1b[2K`;
+			}
+		}
+
 		for (let row = 0; row < height; row++) {
 			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
-			buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
+			buffer += `\x1b[${row + 1};1H${clearRowsBeforeKittyImages ? "" : "\x1b[2K"}${preparedKittyScreen.lines[row] ?? ""}`;
 		}
 
 		if (cursorPos) {

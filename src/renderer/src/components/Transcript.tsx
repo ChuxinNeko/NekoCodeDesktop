@@ -438,7 +438,8 @@ function toolPresentation(
 			return { label: t("tool.read"), subject: path ?? argsText, icon: FileIcon };
 		}
 		case "bash":
-		case "powershell": {
+		case "powershell":
+		case "cmd": {
 			const command = toolStringArg(cell, "command");
 			return {
 				label: t("tool.ranCommand"),

@@ -22,7 +22,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("Available tools:\n(none)");
+			expect(prompt).toContain("<tools>\n(none)\n");
 		});
 
 		test("shows file paths guideline even with no tools", () => {
@@ -34,6 +34,43 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("Show file paths clearly");
+		});
+	});
+
+	describe("prompt structure", () => {
+		test("keeps the default and custom prompt prefixes exact", () => {
+			const defaultPrompt = buildSystemPrompt({ cwd: "/tmp", selectedTools: [], contextFiles: [], skills: [] });
+			const customPrompt = buildSystemPrompt({
+				customPrompt: "You are Exact.",
+				cwd: "/tmp",
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+			});
+
+			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside pi")).toBe(true);
+			expect(customPrompt.startsWith("You are Exact.\n\n<cwd>")).toBe(true);
+		});
+
+		test("preserves an exact forced prompt without sections", () => {
+			expect(buildSystemPrompt({ forceSystemPrompt: "exact", cwd: "/tmp" })).toBe("exact");
+		});
+
+		test("maps appended instructions and project context to stable sections", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "You are Exact.",
+				appendSystemPrompt: "Additional instructions.",
+				contextFiles: [{ path: "/tmp/AGENTS.md", content: "Project instructions." }],
+				selectedTools: [],
+				skills: [],
+				cwd: "/tmp",
+			});
+
+			expect(prompt).toContain("<addendum>\nAdditional instructions.\n</addendum>");
+			expect(prompt).toContain(
+				'<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="/tmp/AGENTS.md">',
+			);
+			expect(prompt).toContain("<cwd>\n/tmp\n</cwd>");
 		});
 	});
 
@@ -128,6 +165,18 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).not.toContain("You are an expert coding assistant operating inside pi");
 		});
 
+		test("retains only the selected tools' own guidelines with a custom prompt", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "NekoCode custom prompt",
+				selectedTools: ["edit"],
+				toolGuidelines: { edit: ["Match original text."], write: ["Prefer edit for existing files."] },
+				cwd: process.cwd(),
+			});
+			expect(prompt).toContain("Tool usage guidelines:\n- Match original text.");
+			expect(prompt).not.toContain("Prefer edit for existing files.");
+			expect(prompt).not.toContain("Be concise in your responses");
+		});
+
 		test("does not add an empty tool section to isolated custom prompts", () => {
 			const prompt = buildSystemPrompt({ customPrompt: "Commit helper", selectedTools: [], cwd: process.cwd() });
 			expect(prompt).not.toContain("Tool usage guidelines:");
@@ -171,6 +220,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
+			expect(prompt).toContain("<skills>");
 			expect(prompt).toContain("<available_skills>");
 			expect(prompt).toContain("<name>test-skill</name>");
 			expect(prompt).toContain("Use bash to load a skill's file");

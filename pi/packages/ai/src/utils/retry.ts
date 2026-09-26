@@ -26,6 +26,7 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
+	"currently experiencing high demand",
 	"rate.?limit",
 	"too many requests",
 	"429",
@@ -33,6 +34,7 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"502",
 	"503",
 	"504",
+	"520",
 	"524",
 	"service.?unavailable",
 	"server.?error",

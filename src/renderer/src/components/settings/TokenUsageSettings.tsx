@@ -18,6 +18,8 @@ import {
 	tokenStreaks,
 	totalTokens,
 	type TokenBreakdownRow,
+	type TokenCounts,
+	type TokenPricingStatus,
 	type TokenRangeId,
 	type TokenUsageReport,
 } from "../../../../shared/tokenStats";
@@ -112,6 +114,30 @@ function Tile({
 	);
 }
 
+/**
+ * What the cost figure is made of. Most calls come from subscriptions and
+ * endpoints that report no price, so the figure is mostly an estimate at API
+ * prices — said outright, along with how many calls nothing could price.
+ */
+function useCostFootnote(): (totals: TokenCounts, pricing: TokenPricingStatus) => string {
+	const { t } = useTranslation();
+	return (totals, pricing) => {
+		const parts: string[] = [];
+		if (totals.estimatedCostUsd > 0) {
+			parts.push(
+				totals.estimatedCostUsd >= totals.costUsd - 1e-9
+					? t("tokens.costAllEstimated")
+					: t("tokens.costPartEstimated", { value: formatCost(totals.estimatedCostUsd) }),
+			);
+		} else if (totals.costUsd > 0) {
+			parts.push(t("tokens.costReported"));
+		}
+		if (totals.unpricedCalls > 0) parts.push(t("tokens.costUnpriced", { count: totals.unpricedCalls }));
+		if (!pricing.fetchedAt && totals.costUsd === 0) parts.push(t("tokens.pricingNone"));
+		return parts.join(" · ") || t("tokens.costHint");
+	};
+}
+
 /** One row of the breakdown table: name, share bar, tokens, calls. */
 function BreakdownRow({ row, detail }: { row: TokenBreakdownRow; detail: string }) {
 	return (
@@ -147,6 +173,7 @@ export function TokenUsageDashboard({
 	actions?: React.ReactNode;
 }) {
 	const { language, t } = useTranslation();
+	const costFootnote = useCostFootnote();
 	const locale = language === "zh-CN" ? "zh-CN" : "en-US";
 
 	const [range, setRange] = useState<TokenRangeId>("30d");
@@ -374,7 +401,7 @@ export function TokenUsageDashboard({
 				<Tile
 					label={t("tokens.cost")}
 					value={formatCost(totals.costUsd)}
-					footnote={t("tokens.costHint")}
+					footnote={costFootnote(totals, report.pricing)}
 				/>
 			</div>
 
@@ -611,6 +638,22 @@ export function TokenUsageDashboard({
 				{report.files.failed > 0 ? (
 					<span className="text-[var(--warning)]">
 						{t("tokens.scanFailed", { count: report.files.failed })}
+					</span>
+				) : null}
+				{/* Where the estimates come from, and how old those prices are. */}
+				<span>
+					{report.pricing.fetchedAt
+						? t("tokens.pricingSource", {
+								date: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(
+									report.pricing.fetchedAt,
+								),
+								models: report.pricing.models,
+							})
+						: t("tokens.pricingNone")}
+				</span>
+				{report.pricing.error ? (
+					<span className="text-[var(--warning)]">
+						{t("tokens.pricingError", { error: report.pricing.error })}
 					</span>
 				) : null}
 			</div>

@@ -23,8 +23,15 @@ export interface TokenCounts {
 	cacheWrite: number;
 	/** Thinking tokens, when the provider breaks them out. A subset of `output`. */
 	reasoning: number;
-	/** Only what the provider actually priced; 0 means "not reported", not "free". */
+	/**
+	 * What the calls cost: the provider's own figure where it reported one,
+	 * otherwise an estimate at the model's API price from LiteLLM's price list.
+	 */
 	costUsd: number;
+	/** The part of `costUsd` that is an estimate rather than a reported figure. */
+	estimatedCostUsd: number;
+	/** Calls nothing could price: no cost reported and no known price for the model. */
+	unpricedCalls: number;
 }
 
 export interface TokenBucket extends TokenCounts {
@@ -57,8 +64,19 @@ export interface TokenSessionRollup extends TokenCounts {
 	updatedAt: number;
 }
 
+/** Where the estimated costs' prices came from. */
+export interface TokenPricingStatus {
+	/** When the LiteLLM prices in use were fetched; null before the first pull. */
+	fetchedAt: number | null;
+	/** Models with a known price. */
+	models: number;
+	/** The last pull failed; prices in use, if any, are the older copy. */
+	error?: string;
+}
+
 export interface TokenUsageReport {
 	generatedAt: number;
+	pricing: TokenPricingStatus;
 	buckets: TokenBucket[];
 	hours: TokenHourBucket[];
 	/** Newest activity first. */
@@ -78,6 +96,8 @@ export const EMPTY_COUNTS: TokenCounts = {
 	cacheWrite: 0,
 	reasoning: 0,
 	costUsd: 0,
+	estimatedCostUsd: 0,
+	unpricedCalls: 0,
 };
 
 export function addCounts(target: TokenCounts, source: TokenCounts): void {
@@ -88,6 +108,8 @@ export function addCounts(target: TokenCounts, source: TokenCounts): void {
 	target.cacheWrite += source.cacheWrite;
 	target.reasoning += source.reasoning;
 	target.costUsd += source.costUsd;
+	target.estimatedCostUsd += source.estimatedCostUsd;
+	target.unpricedCalls += source.unpricedCalls;
 }
 
 export function sumCounts(items: Iterable<TokenCounts>): TokenCounts {

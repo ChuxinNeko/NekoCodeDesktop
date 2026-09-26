@@ -40,6 +40,7 @@ export function buildSteps(): BuildStep[] {
 		{ pkg: "tui", script: "build" },
 		{ pkg: "telemetry", script: "build" },
 		{ pkg: "ai", script: "build:offline" },
+		{ pkg: "durable", script: "build" },
 		{ pkg: "agent", script: "build" },
 		{ pkg: "session-backends/sqlite-node", script: "build" },
 		{ pkg: "protocol", script: "build" },

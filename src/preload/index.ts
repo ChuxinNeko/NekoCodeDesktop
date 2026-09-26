@@ -45,8 +45,17 @@ import type { GoalAction } from "../shared/goal";
 import type { ProjectInstructions, SaveInstructionsRequest } from "../shared/instructions";
 import type { MemorySnapshot, SaveMemoryRequest } from "../shared/memory";
 import type { HooksSnapshot, SaveHookRequest } from "../shared/hooks";
-import type { SetSkillEnabledRequest, SkillsSnapshot } from "../shared/skills";
-import type { AppPreferences } from "../shared/preferences";
+import type {
+	CreateSkillRequest,
+	ImportSkillsRequest,
+	ImportSkillsResult,
+	RemoveSkillRequest,
+	ScanSkillImportRequest,
+	SetSkillEnabledRequest,
+	SkillImportScan,
+	SkillsSnapshot,
+} from "../shared/skills";
+import type { AppPreferences, CommandShellOption } from "../shared/preferences";
 import type {
 	WorktreeMergeRequest,
 	WorktreeMergeResult,
@@ -106,8 +115,10 @@ import type {
 	ModelTestRequest,
 	ModelTestResult,
 	OAuthLoginEvent,
+	OAuthLoginOptions,
 	OAuthProviderId,
 	OAuthProviderSummary,
+	OAuthUsageSnapshot,
 	ProxyStatus,
 	SaveModelProfileRequest,
 } from "../shared/settings";
@@ -242,6 +253,8 @@ const api = {
 	preferencesGet: (): Promise<AppPreferences> => ipcRenderer.invoke("preferences:get"),
 	preferencesUpdate: (patch: Partial<AppPreferences>): Promise<AppPreferences> =>
 		ipcRenderer.invoke("preferences:update", patch),
+	/** The command shells this platform offers, and where each is installed. */
+	preferencesCommandShells: (): Promise<CommandShellOption[]> => ipcRenderer.invoke("preferences:commandShells"),
 
 	/** Null when this session works in the project directory like any other. */
 	worktreeStatus: (sessionId: string): Promise<WorktreeStatus | null> =>
@@ -361,6 +374,11 @@ const api = {
 	skillsList: (): Promise<SkillsSnapshot> => ipcRenderer.invoke("skills:list"),
 	skillsSetEnabled: (request: SetSkillEnabledRequest): Promise<SkillsSnapshot> =>
 		ipcRenderer.invoke("skills:setEnabled", request),
+	skillsCreate: (request: CreateSkillRequest): Promise<SkillsSnapshot> => ipcRenderer.invoke("skills:create", request),
+	skillsScanImport: (request: ScanSkillImportRequest): Promise<SkillImportScan> =>
+		ipcRenderer.invoke("skills:scanImport", request),
+	skillsImport: (request: ImportSkillsRequest): Promise<ImportSkillsResult> => ipcRenderer.invoke("skills:import", request),
+	skillsRemove: (request: RemoveSkillRequest): Promise<SkillsSnapshot> => ipcRenderer.invoke("skills:remove", request),
 
 	tokenUsage: (): Promise<TokenUsageReport> => ipcRenderer.invoke("stats:tokens"),
 	tokenUsageRescan: (): Promise<TokenUsageReport> => ipcRenderer.invoke("stats:rescanTokens"),
@@ -371,8 +389,10 @@ const api = {
 
 	oauthList: (): Promise<OAuthProviderSummary[]> => ipcRenderer.invoke("oauth:list"),
 	oauthRefresh: (id: OAuthProviderId): Promise<OAuthProviderSummary> => ipcRenderer.invoke("oauth:refresh", id),
-	oauthLogin: (id: OAuthProviderId): Promise<OAuthProviderSummary> =>
-		ipcRenderer.invoke("oauth:login", id),
+	oauthLogin: (id: OAuthProviderId, options?: OAuthLoginOptions): Promise<OAuthProviderSummary> =>
+		ipcRenderer.invoke("oauth:login", id, options),
+	oauthUsage: (id: OAuthProviderId, force?: boolean): Promise<OAuthUsageSnapshot> =>
+		ipcRenderer.invoke("oauth:usage", id, force),
 	oauthCancel: (id: OAuthProviderId): Promise<void> => ipcRenderer.invoke("oauth:cancel", id),
 	oauthSubmitCode: (id: OAuthProviderId, code: string): Promise<void> =>
 		ipcRenderer.invoke("oauth:submitCode", id, code),

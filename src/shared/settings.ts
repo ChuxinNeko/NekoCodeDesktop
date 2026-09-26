@@ -1,3 +1,5 @@
+import type { ThinkingLevel } from "./agent";
+
 export type ModelApiProtocol =
 	| "openai-completions"
 	| "openai-responses"
@@ -12,7 +14,20 @@ export type ModelApiProtocol =
 export type ProviderKind = "custom-api" | "oauth";
 
 /** An OAuth-backed provider this app knows how to sign into. */
-export type OAuthProviderId = "openai-codex" | "antigravity";
+export type OAuthProviderId =
+	| "openai-codex"
+	| "github-copilot"
+	| "openrouter"
+	| "kimi-coding"
+	| "xai"
+	| "radius"
+	| "antigravity";
+
+/** What a sign-in needs to know before it starts; only some providers ask. */
+export interface OAuthLoginOptions {
+	/** GitHub Enterprise domain for Copilot; blank signs into github.com. */
+	enterpriseDomain?: string;
+}
 
 /**
  * Non-secret account state for settings. Token values never cross IPC.
@@ -39,11 +54,65 @@ export interface OAuthProviderSummary {
 }
 
 /**
+ * One limit a subscription counts against — a rolling window, a monthly
+ * allowance, a per-model bucket. Shaped after CLIProxyAPI's normalized quota
+ * bucket, but carried as used-percent — what providers report; the settings
+ * page turns it around and shows what is left.
+ */
+export interface OAuthUsageWindow {
+	/** "5h", "Weekly", "Premium requests", a model name, … */
+	label: string;
+	/** 0–100. Absent when the provider reports only counts, or only a reset. */
+	usedPercent?: number;
+	/** Counts, when the provider gives them: `used` of `limit`. */
+	used?: number;
+	limit?: number;
+	/** No ceiling on this one; the bar has nothing to fill. */
+	unlimited?: boolean;
+	/** When it resets, epoch ms. */
+	resetsAt?: number;
+}
+
+/** A single account figure, after CLIProxyAPI's QuotaMetric: a balance, a spend, a credit count. */
+export interface OAuthUsageMetric {
+	label: string;
+	value: number;
+	format: "number" | "currency";
+	/** ISO 4217, for `currency`. */
+	currency?: string;
+}
+
+/** What one subscription reports about its own allowance, as of `fetchedAt`. */
+export interface OAuthUsageSnapshot {
+	provider: OAuthProviderId;
+	/**
+	 * `ok`: the provider answered. `unsupported`: it has no way to ask.
+	 * `signed-out`: nothing to ask with. `error`: it was asked and failed.
+	 */
+	status: "ok" | "unsupported" | "signed-out" | "error";
+	plan?: string;
+	windows: OAuthUsageWindow[];
+	metrics: OAuthUsageMetric[];
+	/** Why it is not `ok`, or a caveat about what is shown. */
+	message?: string;
+	fetchedAt: number;
+}
+
+/**
  * What a sign-in run reports back. The browser flow is out-of-process, so the
  * UI follows it through these rather than a single promise.
  */
 export type OAuthLoginEvent =
 	| { kind: "url"; provider: OAuthProviderId; url: string }
+	/** A device-code flow: the user enters `userCode` at `verificationUri`, on any device. */
+	| {
+			kind: "device-code";
+			provider: OAuthProviderId;
+			userCode: string;
+			verificationUri: string;
+			/** When the code stops working. */
+			expiresAt?: number;
+	  }
 	| { kind: "progress"; provider: OAuthProviderId; message: string }
 	/** The callback port is unusable; the code has to be pasted in by hand. */
 	| { kind: "manual-code"; provider: OAuthProviderId; message: string }
@@ -99,6 +168,11 @@ export interface ModelProfileSummary {
 	/** Explicit per-model ceilings only; a model without an entry inherits
 	 *  this profile's `contextWindow`/`maxTokens`. */
 	modelOverrides: Record<string, ModelTokenLimits>;
+	/**
+	 * Thinking levels a model supports, where the user set them; a model
+	 * without an entry follows the profile's `reasoning` switch.
+	 */
+	modelThinking: Record<string, ThinkingLevel[]>;
 	hasApiKey: boolean;
 	createdAt: number;
 	updatedAt: number;
@@ -146,6 +220,8 @@ export interface SaveModelProfileRequest {
 	maxTokens?: number;
 	/** Omitted keeps the stored overrides; keys outside `modelIds` are dropped. */
 	modelOverrides?: Record<string, ModelTokenLimits>;
+	/** Omitted keeps the stored levels; keys outside `modelIds` are dropped. */
+	modelThinking?: Record<string, ThinkingLevel[]>;
 }
 
 export interface FetchModelsRequest {
@@ -171,4 +247,31 @@ export interface ModelTestResult {
 	latencyMs: number;
 	message: string;
 	output?: string;
+}
+
+/** Every thinking level, weakest first — the order pi clamps through. */
+export const THINKING_LEVEL_ORDER: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * What a model offers without levels of its own: off only, or — on an endpoint
+ * marked as reasoning — off through high. xhigh and max are never assumed:
+ * a model that does not know them rejects the request outright.
+ */
+export function defaultThinkingLevels(reasoning: boolean): ThinkingLevel[] {
+	return reasoning ? ["off", "minimal", "low", "medium", "high"] : ["off"];
+}
+
+/** A set of levels in order, each once; null when it is not a usable set. */
+export function normalizeThinkingLevels(levels: unknown): ThinkingLevel[] | null {
+	if (!Array.isArray(levels) || levels.length === 0) return null;
+	if (!levels.every((level) => (THINKING_LEVEL_ORDER as readonly unknown[]).includes(level))) return null;
+	return THINKING_LEVEL_ORDER.filter((level) => levels.includes(level));
+}
+
+/** The levels a model offers: its own, else the endpoint's default. */
+export function effectiveThinkingLevels(
+	profile: Pick<ModelProfileSummary, "reasoning" | "modelThinking">,
+	modelId: string,
+): ThinkingLevel[] {
+	return profile.modelThinking?.[modelId] ?? defaultThinkingLevels(profile.reasoning);
 }

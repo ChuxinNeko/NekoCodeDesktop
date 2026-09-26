@@ -22,6 +22,7 @@ import debugTools from "../../pi/packages/prompt/debug/tools.json";
 import multitaskTools from "../../pi/packages/prompt/multitask/tools.json";
 import subagentTools from "../../pi/packages/prompt/subagent/tools.json";
 import type { ExecutionMode } from "../shared/agent";
+import { isShellTool } from "../shared/hooks";
 import { STAT_TOOL_NAME } from "./file-tools";
 import { MEMORY_TOOL_NAME } from "./memory-tool";
 import { GOAL_TOOL_NAME } from "./goal";
@@ -123,6 +124,13 @@ const readOnlyNames = new Set([
 ]);
 export interface PromptContext {
 	fusionRole?: "lead" | "sidekick";
+	/**
+	 * The shell tools of the command shell chosen in settings, standing in for
+	 * whichever shell tools a mode lists. Absent keeps the mode's own.
+	 */
+	shellTools?: readonly string[];
+	/** Names that shell and its syntax; shown wherever a shell tool is. */
+	shellNote?: string;
 	/** Shell is enabled only for a Fusion worker that owns the entire workspace. */
 	allowWorkerShell?: boolean;
 	mode: PromptRole;
@@ -173,6 +181,10 @@ export function toolsForMode(context: PromptContext): string[] {
 			!["answer", "plan"].includes(phase ?? DEFAULT_AGENT_PHASE)))) {
 		base = [...new Set([...base, "task", "task_status", "task_cancel"])];
 	}
+	// A mode says whether it may run commands; the chosen shell says through which tool.
+	if (context.shellTools && base.some(isShellTool)) {
+		base = [...base.filter((name) => !isShellTool(name)), ...context.shellTools];
+	}
 	// A plugin's tools are arbitrary code, so they ride with the write tools:
 	// available where the session may act, absent where it may only look. A
 	// read-only mode that could call an unknown tool is not read-only.
@@ -205,7 +217,7 @@ export function toolsForMode(context: PromptContext): string[] {
 			return false;
 		if (
 			context.child &&
-			((!context.allowWorkerShell && ["bash", "powershell"].includes(name)) || WORKFLOW_TOOL_NAMES.includes(name))
+			((!context.allowWorkerShell && isShellTool(name)) || WORKFLOW_TOOL_NAMES.includes(name))
 		)
 			return false;
 		if (
@@ -236,6 +248,7 @@ export function buildModePrompt(context: PromptContext): string {
 			? "硬性只读：不能执行 shell、修改文件或委派具有写权限的 worker。"
 			: "仅在用户任务范围内使用写入工具；这不是操作系统级沙箱，谨慎对待外部副作用。",
 		"本会话可用工具（其他工具均不可调用）：" + tools.join(", ") + "。",
+		context.shellNote && tools.some(isShellTool) ? context.shellNote : "",
 		// A response cut off by the output token limit has every tool call in it
 		// rejected, arguments and all. A whole-file `write` is the one call that
 		// routinely hits that ceiling, and picking `edit` avoids it outright.

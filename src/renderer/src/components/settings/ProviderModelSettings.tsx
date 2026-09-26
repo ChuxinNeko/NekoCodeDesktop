@@ -3,7 +3,7 @@ import type {
 	FetchedModel,
 	ModelProfileSummary,
 	ModelStoreStatus,
-	ModelTokenLimits,
+	OAuthLoginOptions,
 	OAuthProviderId,
 	OAuthProviderSummary,
 } from "../../../../shared/settings";
@@ -11,7 +11,7 @@ import { api, errorMessage } from "../../api";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Spinner } from "../ui/spinner";
-import { ModelsTab } from "./ModelsTab";
+import { ModelsTab , type ModelSettingsChange } from "./ModelsTab";
 import {
 	draftContextWindow,
 	draftMaxTokens,
@@ -37,6 +37,8 @@ export interface OAuthLoginState {
 	message?: string;
 	/** The callback could not be received; the code has to be pasted in. */
 	manual: boolean;
+	/** A device-code flow: the code to enter, and where. */
+	deviceCode?: { userCode: string; verificationUri: string; expiresAt?: number };
 }
 
 /**
@@ -99,6 +101,16 @@ export function ProviderModelSettings() {
 					setLogin((previous) =>
 						previous ? { ...previous, message: event.message } : { provider: event.provider, manual: false },
 					);
+					return;
+				}
+				if (event.kind === "device-code") {
+					const { userCode, verificationUri, expiresAt } = event;
+					setLogin((previous) => ({
+						provider: event.provider,
+						manual: false,
+						...previous,
+						deviceCode: { userCode, verificationUri, ...(expiresAt ? { expiresAt } : {}) },
+					}));
 					return;
 				}
 				if (event.kind === "manual-code") {
@@ -170,13 +182,13 @@ export function ProviderModelSettings() {
 	 * arrives as an event, so the only thing awaited here is the point at which
 	 * the provider's models are registered.
 	 */
-	const startLogin = (provider: OAuthProviderId) => {
+	const startLogin = (provider: OAuthProviderId, options?: OAuthLoginOptions) => {
 		setError(null);
 		setMessage(null);
 		setDraft(null);
 		setLogin({ provider, manual: false });
 		api
-			.oauthLogin(provider)
+			.oauthLogin(provider, options)
 			.then(async () => {
 				await reload();
 				setMessage(t("oauth.signedIn"));
@@ -222,15 +234,18 @@ export function ProviderModelSettings() {
 		return models;
 	};
 
-	const saveModelLimits = (
+	const saveModelSettings = (
 		profile: ModelProfileSummary,
 		modelId: string,
-		limits: ModelTokenLimits | null,
+		change: ModelSettingsChange,
 	) =>
 		void run(async () => {
 			const modelOverrides = { ...(profile.modelOverrides ?? {}) };
-			if (limits === null) delete modelOverrides[modelId];
-			else modelOverrides[modelId] = { ...limits };
+			if (change.limits === null) delete modelOverrides[modelId];
+			else if (change.limits) modelOverrides[modelId] = { ...change.limits };
+			const modelThinking = { ...(profile.modelThinking ?? {}) };
+			if (change.thinking === null) delete modelThinking[modelId];
+			else if (change.thinking) modelThinking[modelId] = [...change.thinking];
 			await api.modelSave({
 				id: profile.id,
 				kind: profile.kind,
@@ -242,6 +257,7 @@ export function ProviderModelSettings() {
 				reasoning: profile.reasoning,
 				imageInput: profile.imageInput,
 				modelOverrides,
+				modelThinking,
 			});
 			await reload();
 		});
@@ -324,7 +340,7 @@ export function ProviderModelSettings() {
 					onAutoFetchHandled={() => setAutoFetchId(null)}
 					onFetch={fetchModels}
 					onSaveModels={saveModels}
-					onSaveModelLimits={saveModelLimits}
+					onSaveModelSettings={saveModelSettings}
 					onTest={testModel}
 					onAddProvider={() => {
 						setDraft(emptyProviderDraft());

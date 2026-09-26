@@ -70,7 +70,12 @@ export const MAX_HOOK_TIMEOUT_MS = 10 * 60_000;
 export const MAX_HOOK_OUTPUT = 8000;
 
 export const FILE_TOOLS = ["read", "write", "edit"] as const;
-export const SHELL_TOOLS = ["bash", "powershell"] as const;
+/** Every tool that runs shell commands — `cmd` exists when the user picks cmd as the command shell. */
+export const SHELL_TOOLS = ["bash", "powershell", "cmd"] as const;
+
+export function isShellTool(name: string): boolean {
+	return (SHELL_TOOLS as readonly string[]).includes(name);
+}
 
 /**
  * What a hook's pattern is tested against for one call.

@@ -27,11 +27,15 @@ export async function completeHelper(
 	signal: AbortSignal | undefined,
 	onRecovery?: (message: string) => void,
 ): Promise<string> {
-	const previousStop = session.agent.shouldStopAfterTurn;
-	// PI rejects truncated tool arguments. Stop after those failures so even a
+	const previousFinish = session.agent.finishTurn;
+	// PI rejects truncated tool arguments. End the run after those failures so even a
 	// provider repeatedly returning length+tool_calls cannot create an endless loop.
-	session.agent.shouldStopAfterTurn = async (context, abortSignal) =>
-		context.message.stopReason === "length" || (await previousStop?.(context, abortSignal)) === true;
+	// The previous hook always runs: the session dispatches turn_end through it.
+	session.agent.finishTurn = async (turn, abortSignal) => {
+		const decision = await previousFinish?.(turn, abortSignal);
+		if (turn.message.stopReason === "length") return { action: "end" };
+		return decision || undefined;
+	};
 	try {
 		for (let continuations = 0; ; continuations++) {
 			if (signal?.aborted) throw new Error("子代理已取消");
@@ -49,6 +53,6 @@ export async function completeHelper(
 			return text.slice(0, 12000);
 		}
 	} finally {
-		session.agent.shouldStopAfterTurn = previousStop;
+		session.agent.finishTurn = previousFinish;
 	}
 }

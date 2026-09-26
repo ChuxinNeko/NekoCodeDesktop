@@ -3,8 +3,12 @@ import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import { fuzzyFilter } from "./fuzzy.ts";
+import { autocompleteBoundaryRegex, autocompleteSeparatorRegex } from "./utils.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
+const tokenStartRegex = new RegExp(`${autocompleteBoundaryRegex.source}$`, "u");
+// Opening wrappers that may precede a path in prose, mapped to their closing counterpart.
+const PATH_WRAPPERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">", "`": "`" };
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -43,12 +47,29 @@ function buildFdPathQuery(query: string): string {
 }
 
 function findLastDelimiter(text: string): number {
-	for (let i = text.length - 1; i >= 0; i -= 1) {
-		if (PATH_DELIMITERS.has(text[i] ?? "")) {
-			return i;
+	let lastDelimiter = -1;
+	let index = 0;
+	for (const character of text) {
+		index += character.length;
+		if (PATH_DELIMITERS.has(character) || autocompleteSeparatorRegex.test(character)) {
+			lastDelimiter = index - 1;
 		}
 	}
-	return -1;
+	return lastDelimiter;
+}
+
+// Strip opening wrappers before a path, e.g. "(~/Dev" -> "~/Dev" or "`src/ma" -> "src/ma".
+// Keep a wrapper if the token also contains its closer, e.g. "app/[slug]/pa" or "(group)/pa".
+function stripLeadingWrappers(token: string): string {
+	let result = token;
+	while (result.length > 0) {
+		const closer = PATH_WRAPPERS[result[0]!];
+		if (!closer || result.includes(closer, 1)) {
+			break;
+		}
+		result = result.slice(1);
+	}
+	return result;
 }
 
 function findUnclosedQuoteStart(text: string): number | null {
@@ -68,7 +89,11 @@ function findUnclosedQuoteStart(text: string): number | null {
 }
 
 function isTokenStart(text: string, index: number): boolean {
-	return index === 0 || PATH_DELIMITERS.has(text[index - 1] ?? "");
+	let start = index;
+	while (start > 0 && PATH_WRAPPERS[text[start - 1]!]) {
+		start -= 1;
+	}
+	return PATH_DELIMITERS.has(text[start - 1] ?? "") || tokenStartRegex.test(text.slice(0, start));
 }
 
 function extractQuotedPrefix(text: string): string | null {
@@ -108,7 +133,7 @@ function buildCompletionValue(
 	path: string,
 	options: { isDirectory: boolean; isAtPrefix: boolean; isQuotedPrefix: boolean },
 ): string {
-	const needsQuotes = options.isQuotedPrefix || path.includes(" ");
+	const needsQuotes = options.isQuotedPrefix || autocompleteSeparatorRegex.test(path);
 	const prefix = options.isAtPrefix ? "@" : "";
 
 	if (!needsQuotes) {
@@ -327,7 +352,16 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					};
 				});
 
-				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
+				const bareNameMatches = fuzzyFilter(commandItems, prefix, (item) =>
+					item.name.startsWith("skill:") ? item.name.slice("skill:".length) : item.name,
+				);
+				const bareNameMatchSet = new Set(bareNameMatches);
+				const fullNameOnlyMatches = fuzzyFilter(
+					commandItems.filter((item) => item.name.startsWith("skill:") && !bareNameMatchSet.has(item)),
+					prefix,
+					(item) => item.name,
+				);
+				const filtered = [...bareNameMatches, ...fullNameOnlyMatches].map((item) => ({
 					value: item.name,
 					label: item.label,
 					...(item.description && { description: item.description }),
@@ -472,10 +506,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const lastDelimiterIndex = findLastDelimiter(text);
-		const tokenStart = lastDelimiterIndex === -1 ? 0 : lastDelimiterIndex + 1;
+		const token = stripLeadingWrappers(lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1));
 
-		if (text[tokenStart] === "@") {
-			return text.slice(tokenStart);
+		if (token.startsWith("@")) {
+			return token;
 		}
 
 		return null;
@@ -489,7 +523,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const lastDelimiterIndex = findLastDelimiter(text);
-		const pathPrefix = lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1);
+		const pathPrefix = stripLeadingWrappers(lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1));
 
 		// For forced extraction (Tab key), always return something
 		if (forceExtract) {
@@ -502,9 +536,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			return pathPrefix;
 		}
 
-		// Return empty string only after a space (not for completely empty text)
+		// Return an empty prefix after whitespace or CJK punctuation, but not for empty text.
 		// Empty text should not trigger file suggestions - that's for forced Tab completion
-		if (pathPrefix === "" && text.endsWith(" ")) {
+		if (pathPrefix === "" && text !== "" && tokenStartRegex.test(text)) {
 			return pathPrefix;
 		}
 
@@ -683,8 +717,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			// Sort directories first, then alphabetically
 			suggestions.sort((a, b) => {
-				const aIsDir = a.value.endsWith("/");
-				const bIsDir = b.value.endsWith("/");
+				const aIsDir = a.label.endsWith("/");
+				const bIsDir = b.label.endsWith("/");
 				if (aIsDir && !bIsDir) return -1;
 				if (!aIsDir && bIsDir) return 1;
 				return a.label.localeCompare(b.label);

@@ -8,6 +8,8 @@ it("derives model API, ID, and provider literals from grouped model data", () =>
 	expectTypeOf(XAI_MODELS["grok-4.5"].provider).toEqualTypeOf<"xai">();
 	expectTypeOf(XAI_MODELS["grok-4.6"].api).toEqualTypeOf<"openai-responses">();
 	expectTypeOf(XAI_MODELS["grok-4.6"].id).toEqualTypeOf<"grok-4.6">();
+	expectTypeOf(XAI_MODELS["grok-4.7"].api).toEqualTypeOf<"openai-responses">();
+	expectTypeOf(XAI_MODELS["grok-4.7"].id).toEqualTypeOf<"grok-4.7">();
 	expectTypeOf(XAI_MODELS["grok-4.3"].api).toEqualTypeOf<"openai-responses">();
 });
 
@@ -22,4 +24,14 @@ it("routes all GitHub Copilot GPT models through the Responses API", () => {
 	expect(gptModels.length).toBeGreaterThan(0);
 	expect(gptModels.every((model) => model.api === "openai-responses")).toBe(true);
 	expectTypeOf(GITHUB_COPILOT_MODELS["gpt-6-astra"].api).toEqualTypeOf<"openai-responses">();
+	for (const modelId of ["gpt-6-sol", "gpt-6-luna"] as const) {
+		const model = GITHUB_COPILOT_MODELS[modelId];
+		expectTypeOf(model.api).toEqualTypeOf<"openai-responses">();
+		expect(model).toMatchObject({
+			api: "openai-responses",
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			thinkingLevelMap: { off: "none", max: "max" },
+		});
+	}
 });

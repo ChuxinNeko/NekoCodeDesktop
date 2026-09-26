@@ -30,7 +30,6 @@ export type {
 	OAuthSelectOption,
 	OAuthSelectPrompt,
 } from "./compat/extension-oauth-types.ts";
-export * from "./images-models.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export * from "./providers/faux.ts";
@@ -42,7 +41,8 @@ export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
 export * from "./utils/retry.ts";
-export { contentText } from "./utils/text.ts";
+export { contentText, getSystemMessageText, renderSystemMessageUpdate } from "./utils/text.ts";
+export * from "./utils/transcript.ts";
 export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";

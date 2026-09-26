@@ -4,6 +4,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { BrowserPreviewRequest } from "../shared/browser";
+import { isShellTool } from "../shared/hooks";
 import { toolOutputText, type ProjectionEvent } from "./agent-projection";
 
 const MIME: Record<string, string> = {
@@ -65,7 +66,7 @@ export class BrowserPreview {
 		const key = `${source}:${event.toolCallId}`;
 		if (event.type === "tool_execution_start") {
 			this.calls.set(key, { name: event.toolName, args: (event.args ?? {}) as Record<string, unknown>, output: "", seen: new Set() });
-			if (["bash", "powershell"].includes(event.toolName) && isServerCommand(String((event.args as { command?: unknown })?.command ?? "")))
+			if (isShellTool(event.toolName) && isServerCommand(String((event.args as { command?: unknown })?.command ?? "")))
 				this.startupPendingUntil = Date.now() + 120_000;
 			return;
 		}
@@ -73,7 +74,7 @@ export class BrowserPreview {
 		if (!call) return;
 		if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
 			const result = event.type === "tool_execution_end" ? event.result : event.partialResult;
-			if (["bash", "powershell"].includes(call.name) &&
+			if (isShellTool(call.name) &&
 				(isServerCommand(String(call.args.command ?? "")) ||
 					(this.startupPendingUntil > Date.now() && /\b(?:Get-Content|cat|tail)\b[^\r\n]*\.log\b/i.test(String(call.args.command ?? ""))))) {
 				call.output = (call.output + "\n" + toolOutputText(result)).slice(-64000);

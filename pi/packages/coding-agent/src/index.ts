@@ -26,6 +26,7 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
+export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
 // Compaction
 export {
 	type BranchPreparation,
@@ -54,6 +55,9 @@ export { createEventBus, type EventBus, type EventBusController } from "./core/e
 // Extension system
 export type {
 	AfterProviderResponseEvent,
+	AgentActivityOutcome,
+	AgentBeforeSettleEvent,
+	AgentBeforeSettleEventResult,
 	AgentEndEvent,
 	AgentSettledEvent,
 	AgentStartEvent,
@@ -67,11 +71,21 @@ export type {
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
+	BoundaryContextPreview,
+	BoundaryResult,
+	BoundaryState,
 	BuildSystemPromptOptions,
+	CacheWarmingDecisionEvent,
+	CacheWarmingDecisionEventResult,
+	CompactionEntryDraft,
 	CompactOptions,
+	ContextEditEntryDraft,
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	ContextWithSystemEvent,
+	CustomEntryDraft,
+	CustomMessageEntryDraft,
 	CustomToolCallEvent,
 	EditToolCallEvent,
 	EntryRenderer,
@@ -114,6 +128,7 @@ export type {
 	MessageUpdateEvent,
 	ModelSelectEvent,
 	ModelSelectSource,
+	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
 	ProjectTrustContext,
 	ProjectTrustEvent,
@@ -122,6 +137,7 @@ export type {
 	ProjectTrustHandler,
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderStreamEvent,
 	ReadToolCallEvent,
 	RegisteredCommand,
 	RegisteredTool,
@@ -136,6 +152,7 @@ export type {
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeEvent,
 	SessionBeforeTreeResult,
+	SessionBoundaryDraft,
 	SessionCompactEvent,
 	SessionCompactFailedEvent,
 	SessionInfoChangedEvent,
@@ -159,6 +176,7 @@ export type {
 	ToolResultEvent,
 	ToolResultEventResult,
 	TurnEndEvent,
+	TurnEndEventResult,
 	TurnStartEvent,
 	UIPromptEndEvent,
 	UIPromptKind,
@@ -249,7 +267,10 @@ export {
 	type BranchSummaryEntry,
 	buildContextEntries,
 	buildSessionContext,
+	buildSessionProjection,
 	type CompactionEntry,
+	type ContextEditableContent,
+	type ContextEditEntry,
 	CURRENT_SESSION_VERSION,
 	type CustomEntry,
 	type CustomMessageEntry,
@@ -258,6 +279,7 @@ export {
 	type ModelChangeEntry,
 	migrateSessionEntries,
 	type NewSessionOptions,
+	type ProjectedSessionEntry,
 	parseSessionEntries,
 	type SessionContext,
 	type SessionEntry,
@@ -267,11 +289,13 @@ export {
 	type SessionInfoEntry,
 	SessionManager,
 	type SessionMessageEntry,
+	type SessionProjection,
 	type SessionTreeNode,
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
 export {
+	type CacheWarmingMode,
 	type CompactionModelOverride,
 	type CompactionSettings,
 	type DefaultProjectTrust,
@@ -429,7 +453,11 @@ export {
 	highlightCode,
 	initTheme,
 	Theme,
+	type ThemeAppearance,
+	type ThemeBg,
 	type ThemeColor,
+	type ThemeStyle,
+	type ThemeToken,
 } from "./modes/interactive/theme/theme.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

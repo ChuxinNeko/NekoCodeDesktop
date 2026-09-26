@@ -6,10 +6,18 @@ import {
 	type WorkflowAnswer,
 	type WorkflowRequest,
 	type WorkflowSnapshot,
+	type WorkflowTodo,
 } from "../../../../shared/workflow";
 import { api, errorMessage } from "../../api";
 import { useTranslation, type TranslationKey } from "../../i18n";
-import { ChevronDownIcon, ChevronRightIcon } from "../../lib/icons";
+import {
+	ChevronDownIcon,
+	ChevronRightIcon,
+	CircleCheckIcon,
+	CircleDotIcon,
+	CircleIcon,
+	CircleXIcon,
+} from "../../lib/icons";
 import { Button } from "../ui/button";
 import { TaskCard, WorkerSlots } from "./AgentTask";
 import {
@@ -204,51 +212,111 @@ function QuestionCard({ request, onAnswer }: { request: WorkflowRequest; onAnswe
 		</form>
 	);
 }
-const TODO_STATUS_KEYS: Record<string, TranslationKey> = {
+const TODO_STATUS_KEYS: Record<WorkflowTodo["status"], TranslationKey> = {
 	pending: "workflow.pending",
 	in_progress: "workflow.running",
-	running: "workflow.running",
 	completed: "workflow.completed",
-	failed: "workflow.failed",
 	cancelled: "workflow.cancelled",
 };
+
+function TodoStatusIcon({ status }: { status: WorkflowTodo["status"] }) {
+	const className = "mt-px size-3.5 shrink-0";
+	switch (status) {
+		case "completed":
+			return <CircleCheckIcon className={cn(className, "text-muted-foreground")} />;
+		case "in_progress":
+			return <CircleDotIcon className={cn(className, "text-foreground")} />;
+		case "cancelled":
+			return <CircleXIcon className={cn(className, "text-muted-foreground/70")} />;
+		default:
+			return <CircleIcon className={cn(className, "text-muted-foreground/70")} />;
+	}
+}
+
+/**
+ * Which step the run is on: the one in progress, or — between steps — how far
+ * it has got. Positional rather than a count of finished items, because "3/7"
+ * should point at the third row of the list the user is looking at.
+ */
+export function currentStep(todos: WorkflowTodo[]): { current: number; active?: WorkflowTodo } {
+	const index = todos.findIndex((todo) => todo.status === "in_progress");
+	if (index >= 0) return { current: index + 1, active: todos[index] };
+	return { current: todos.filter((todo) => todo.status === "completed").length };
+}
 
 /**
  * The todo list and the worker pool, above the composer.
  *
- * The header carries the pool even when the body is folded away: how many
- * workers are running is the one thing worth knowing at a glance, and a user
- * who collapsed the panel to read the transcript should not lose it.
+ * The header sits outside the scrolling body, so folding the panel is always
+ * one click away no matter how far down the list has been read. It carries the
+ * step count and the pool even when the body is folded: those are the things
+ * worth knowing at a glance, and a user who collapsed the panel to read the
+ * transcript should not lose them.
  */
 function ProgressSection({
 	workflow,
+	compact,
 	onCancel,
 	onOpenTask,
 }: {
 	workflow: WorkflowSnapshot;
+	/** A question is waiting: give it the height and keep this to a sliver. */
+	compact: boolean;
 	onCancel: (id: string) => void;
 	onOpenTask?: (taskId: string) => void;
 }) {
 	const { t } = useTranslation();
 	const running = workflow.tasks.filter((task) => task.status === "running").length;
+	const total = workflow.todos.length;
+	const { current, active } = currentStep(workflow.todos);
 	// Opens itself when there is work to watch; the user's toggle wins after that.
 	const [open, setOpen] = useState(() => workflow.tasks.length > 0);
+	const body = useRef<HTMLDivElement | null>(null);
+	const activeRow = useRef<HTMLLIElement | null>(null);
+
+	// Keep the step being worked on in view as the run advances. Done by hand
+	// rather than with scrollIntoView, which would also drag the transcript.
+	useEffect(() => {
+		const container = body.current;
+		const row = activeRow.current;
+		if (!open || !container || !row) return;
+		const top = row.offsetTop;
+		if (top < container.scrollTop || top + row.offsetHeight > container.scrollTop + container.clientHeight) {
+			container.scrollTo({ top: Math.max(0, top - container.clientHeight / 3) });
+		}
+	}, [open, active?.id]);
 
 	return (
-		<div className="rounded-lg border border-border px-3 py-2">
+		<div
+			className={cn(
+				"flex min-h-0 flex-col overflow-hidden rounded-lg border border-border",
+				compact ? "max-h-32 shrink-0" : "flex-1",
+			)}
+		>
 			<button
 				type="button"
 				aria-expanded={open}
 				onClick={() => setOpen((value) => !value)}
-				className="flex w-full items-center gap-1.5 text-left"
+				className="flex w-full shrink-0 items-center gap-1.5 px-3 py-2 text-left hover:bg-muted/40"
 			>
 				{open ? (
 					<ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
 				) : (
 					<ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
 				)}
+				<span className="shrink-0 font-medium">{t("workflow.title")}</span>
+				{total ? (
+					<span
+						aria-label={t("workflow.stepOfTotal", { current, total })}
+						className="shrink-0 tabular-nums text-muted-foreground"
+					>
+						{current}/{total}
+					</span>
+				) : null}
+				{/* Folded, the header stands in for the list: name the step in
+				    progress so the panel still says what is happening. */}
 				<span className="min-w-0 flex-1 truncate text-muted-foreground">
-					{t("workflow.progress", { todos: workflow.todos.length, running })}
+					{!open && active ? active.text : null}
 				</span>
 				{workflow.tasks.length ? (
 					<span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
@@ -258,23 +326,37 @@ function ProgressSection({
 				) : null}
 			</button>
 			{open ? (
-				<div className="mt-2 space-y-2">
-					{workflow.todos.length ? (
-						<ul className="space-y-1">
+				<div
+					ref={body}
+					className="relative min-h-0 flex-1 space-y-2 overflow-y-auto border-t border-border px-3 py-2"
+				>
+					{total ? (
+						<ol className="space-y-1">
 							{workflow.todos.map((todo) => (
-								<li key={todo.id} className="flex gap-2">
-									<span className="shrink-0 text-muted-foreground">
-										{t(TODO_STATUS_KEYS[todo.status])}
-									</span>
-									<span className={todo.status === "completed" ? "line-through opacity-60" : ""}>
+								<li
+									key={todo.id}
+									ref={todo.id === active?.id ? activeRow : undefined}
+									className="flex items-start gap-2"
+								>
+									<TodoStatusIcon status={todo.status} />
+									<span className="sr-only">{t(TODO_STATUS_KEYS[todo.status])}</span>
+									<span
+										className={cn(
+											"min-w-0",
+											todo.status === "in_progress" && "font-medium text-foreground",
+											todo.status === "pending" && "text-foreground/80",
+											(todo.status === "completed" || todo.status === "cancelled") &&
+												"text-muted-foreground line-through",
+										)}
+									>
 										{todo.text}
 									</span>
 								</li>
 							))}
-						</ul>
+						</ol>
 					) : null}
 					{workflow.tasks.length ? (
-						<div className="space-y-2 border-t border-border pt-2">
+						<div className={cn("space-y-2", total && "border-t border-border pt-2")}>
 							{workflow.tasks.map((task) => (
 								<TaskCard
 									key={task.id}
@@ -322,20 +404,14 @@ export function WorkflowPanel({
 					// Progress steps back while a question is waiting: the answer is
 					// what unblocks the run, so it gets the height and this gets a
 					// fixed sliver it can scroll inside.
-					<div
-						className={cn(
-							"min-h-0 overflow-y-auto",
-							workflow.request ? "max-h-24 shrink-0" : "flex-1",
-						)}
-					>
-						<ProgressSection
-							workflow={workflow}
-							onOpenTask={onOpenTask}
-							onCancel={(id) => {
-								void (onCancelWorker ?? api.agentCancelTask)(id).catch((cause) => setError(errorMessage(cause)));
-							}}
-						/>
-					</div>
+					<ProgressSection
+						workflow={workflow}
+						compact={Boolean(workflow.request)}
+						onOpenTask={onOpenTask}
+						onCancel={(id) => {
+							void (onCancelWorker ?? api.agentCancelTask)(id).catch((cause) => setError(errorMessage(cause)));
+						}}
+					/>
 				) : null}
 				{error ? (
 					<p role="alert" className="shrink-0 text-destructive">

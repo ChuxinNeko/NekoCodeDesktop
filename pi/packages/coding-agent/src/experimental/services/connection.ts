@@ -361,13 +361,7 @@ export function createSessionServiceSource(client: Client, options: ServiceSourc
 }
 
 function publishReplacement<T extends object>(state: MutableReplicatedState<T>, value: T, context: Context): void {
-	const target = state.state as Record<string, unknown>;
-	const replacement = value as Record<string, unknown>;
-	for (const key of Object.keys(target)) {
-		if (!Object.hasOwn(replacement, key)) delete target[key];
-	}
-	Object.assign(target, replacement);
-	state.publish(context);
+	state.replace(context, value);
 }
 
 function toServerConnectionState(client: Client, attempt: number, error?: Error): ServerConnectionState {

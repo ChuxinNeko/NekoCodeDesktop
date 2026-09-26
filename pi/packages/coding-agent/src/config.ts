@@ -366,7 +366,7 @@ export function getUpdateInstruction(packageName: string): string {
 /**
  * Get the base directory for resolving package assets (themes, package.json, README.md, CHANGELOG.md).
  * - For Bun binary: returns the directory containing the executable
- * - For Node.js and tsx: returns the package root containing package.json
+ * - For Node.js: returns the package root containing package.json
  * - Ignores Bun binary metadata copied into dist/ when the package root is available
  */
 export function findNodePackageDir(startDir: string): string {
@@ -404,7 +404,7 @@ export function getPackageDir(): string {
  * Get path to built-in themes directory (shipped with package)
  * - For Bun binary: theme/ next to executable
  * - For Node.js (dist/): dist/modes/interactive/theme/
- * - For tsx (src/): src/modes/interactive/theme/
+ * - For source (src/): src/modes/interactive/theme/
  */
 export function getThemesDir(): string {
 	if (isBunBinary) {
@@ -420,7 +420,7 @@ export function getThemesDir(): string {
  * Get path to HTML export template directory (shipped with package)
  * - For Bun binary: export-html/ next to executable
  * - For Node.js (dist/): dist/core/export-html/
- * - For tsx (src/): src/core/export-html/
+ * - For source (src/): src/core/export-html/
  */
 export function getExportTemplateDir(): string {
 	if (isBunBinary) {
@@ -460,7 +460,7 @@ export function getChangelogPath(): string {
  * Get path to built-in interactive assets directory.
  * - For Bun binary: assets/ next to executable
  * - For Node.js (dist/): dist/modes/interactive/assets/
- * - For tsx (src/): src/modes/interactive/assets/
+ * - For source (src/): src/modes/interactive/assets/
  */
 export function getInteractiveAssetsDir(): string {
 	if (isBunBinary) {

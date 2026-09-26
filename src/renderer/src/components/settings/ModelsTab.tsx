@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
+import type { ThinkingLevel } from "../../../../shared/agent";
 import {
+	defaultThinkingLevels,
+	effectiveThinkingLevels,
 	MAX_CONTEXT_WINDOW,
 	MAX_OUTPUT_TOKENS,
 	MIN_TOKEN_LIMIT,
+	THINKING_LEVEL_ORDER,
 	type FetchedModel,
 	type ModelProfileSummary,
 	type ModelTokenLimits,
@@ -64,6 +68,58 @@ function FetchedRow({
 	);
 }
 
+export interface ModelSettingsChange {
+	limits?: ModelTokenLimits | null;
+	thinking?: ThinkingLevel[] | null;
+}
+
+/**
+ * One toggle per thinking level, in order. The last checked level cannot be
+ * unchecked: a model offers at least one, even if that one is "off".
+ */
+function ThinkingLevelPicker({
+	value,
+	onChange,
+}: {
+	value: readonly ThinkingLevel[];
+	onChange: (levels: ThinkingLevel[]) => void;
+}) {
+	return (
+		<div className="flex flex-wrap gap-1" role="group">
+			{THINKING_LEVEL_ORDER.map((level) => {
+				const on = value.includes(level);
+				return (
+					<button
+						key={level}
+						type="button"
+						aria-pressed={on}
+						disabled={on && value.length === 1}
+						onClick={() =>
+							onChange(
+								on
+									? value.filter((entry) => entry !== level)
+									: THINKING_LEVEL_ORDER.filter((entry) => entry === level || value.includes(entry)),
+							)
+						}
+						className={cn(
+							"rounded-md border px-2 py-0.5 font-mono text-[length:var(--app-font-size-ui-2xs,9px)] transition-colors disabled:cursor-not-allowed",
+							on
+								? "border-[color:var(--color-border-focus)] bg-[var(--color-background-elevated-secondary)] text-foreground"
+								: "border-border text-muted-foreground hover:text-foreground",
+						)}
+					>
+						{level}
+					</button>
+				);
+			})}
+		</div>
+	);
+}
+
+function sameLevels(a: readonly ThinkingLevel[], b: readonly ThinkingLevel[]): boolean {
+	return a.length === b.length && a.every((level, index) => level === b[index]);
+}
+
 export function ModelsTab({
 	profiles,
 	accounts,
@@ -74,7 +130,7 @@ export function ModelsTab({
 	onAutoFetchHandled,
 	onFetch,
 	onSaveModels,
-	onSaveModelLimits,
+	onSaveModelSettings,
 	onTest,
 	onAddProvider,
 }: {
@@ -89,8 +145,11 @@ export function ModelsTab({
 	onAutoFetchHandled: () => void;
 	onFetch: (profile: ModelProfileSummary) => Promise<FetchedModel[] | null>;
 	onSaveModels: (profile: ModelProfileSummary, modelIds: string[]) => void;
-	/** `null` clears the override; the model falls back to the provider defaults. */
-	onSaveModelLimits: (profile: ModelProfileSummary, modelId: string, limits: ModelTokenLimits | null) => void;
+	/**
+	 * A model's own settings. For each half, `undefined` leaves it as stored and
+	 * `null` clears it, so the model follows the provider again.
+	 */
+	onSaveModelSettings: (profile: ModelProfileSummary, modelId: string, settings: ModelSettingsChange) => void;
 	onTest: (profileId: string, modelId: string) => void;
 	onAddProvider: () => void;
 }) {
@@ -101,11 +160,12 @@ export function ModelsTab({
 	const [manual, setManual] = useState("");
 	/** Ids ticked in the fetched list, waiting to be added in one go. */
 	const [picked, setPicked] = useState<Set<string>>(new Set());
-	/** The one expanded per-model limits editor; drafts stay strings until saved. */
+	/** The one expanded per-model settings editor; limit drafts stay strings until saved. */
 	const [limitsEditor, setLimitsEditor] = useState<{
 		modelId: string;
 		contextWindow: string;
 		maxTokens: string;
+		thinking: ThinkingLevel[];
 	} | null>(null);
 
 	const load = async (target: ModelProfileSummary) => {
@@ -371,6 +431,10 @@ export function ModelsTab({
 														contextWindow: limits.contextWindow,
 														maxTokens: limits.maxTokens,
 													})}
+													{" · "}
+													{t(profile.modelThinking?.[modelId] ? "models.thinkingSummary" : "models.thinkingSummaryDefault", {
+														levels: effectiveThinkingLevels(profile, modelId).join(" / "),
+													})}
 												</span>
 											</div>
 											<Button
@@ -382,6 +446,7 @@ export function ModelsTab({
 																	modelId,
 																	contextWindow: String(limits.contextWindow),
 																	maxTokens: String(limits.maxTokens),
+																	thinking: effectiveThinkingLevels(profile, modelId),
 																},
 													)
 												}
@@ -447,6 +512,22 @@ export function ModelsTab({
 												<p className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
 													{t("models.modelLimitsHint")}
 												</p>
+												<div className="flex flex-col gap-1 border-t border-[color:var(--app-surface-divider)] pt-1.5">
+													<span className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+														{t("models.thinkingLevels")}
+													</span>
+													<ThinkingLevelPicker
+														value={limitsEditor.thinking}
+														onChange={(thinking) =>
+															setLimitsEditor((current) => (current ? { ...current, thinking } : current))
+														}
+													/>
+													<p className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
+														{t("models.thinkingLevelsHint", {
+															levels: defaultThinkingLevels(profile.reasoning).join(" / "),
+														})}
+													</p>
+												</div>
 												<div className="flex items-center gap-2">
 													<Button
 														onClick={() => setLimitsEditor(null)}
@@ -455,10 +536,10 @@ export function ModelsTab({
 													>
 														{t("common.cancel")}
 													</Button>
-													{profile.modelOverrides?.[modelId] ? (
+													{profile.modelOverrides?.[modelId] || profile.modelThinking?.[modelId] ? (
 														<Button
 															onClick={() => {
-																onSaveModelLimits(profile, modelId, null);
+																onSaveModelSettings(profile, modelId, { limits: null, thinking: null });
 																setLimitsEditor(null);
 															}}
 															size="xs"
@@ -472,10 +553,25 @@ export function ModelsTab({
 													<Button
 														onClick={() => {
 															if (draftContext === null || draftOutput === null) return;
-															onSaveModelLimits(profile, modelId, {
-																contextWindow: draftContext,
-																maxTokens: draftOutput,
-															});
+															const limitsChanged =
+																draftContext !== limits.contextWindow || draftOutput !== limits.maxTokens;
+															const thinking = limitsEditor.thinking;
+															const thinkingChanged = !sameLevels(thinking, effectiveThinkingLevels(profile, modelId));
+															if (limitsChanged || thinkingChanged) {
+																onSaveModelSettings(profile, modelId, {
+																	...(limitsChanged
+																		? { limits: { contextWindow: draftContext, maxTokens: draftOutput } }
+																		: {}),
+																	// Back to exactly the default is the same as following it.
+																	...(thinkingChanged
+																		? {
+																				thinking: sameLevels(thinking, defaultThinkingLevels(profile.reasoning))
+																					? null
+																					: thinking,
+																			}
+																		: {}),
+																});
+															}
 															setLimitsEditor(null);
 														}}
 														size="xs"

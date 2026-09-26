@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { join, sep } from "node:path";
 import { BUILTIN_ACP_AGENTS, acpAgentInfo, type AcpAgentDefinition } from "./agents";
-import { findOnPath, resolveClaudeExecutable, resolveCodexExecutable, type ExecutableProbe } from "./binaries";
+import {
+	findOnPath,
+	resolveAgentBinary,
+	resolveClaudeExecutable,
+	resolveCodexExecutable,
+	resolveCursorAgentExecutable,
+	type ExecutableProbe,
+} from "./binaries";
 import { AcpSetupError, adapterEntryPath, agentLaunch, bootstrapScript, type LaunchContext } from "./launch";
 
 const HOME = join("C:", "Users", "neko");
@@ -31,6 +38,7 @@ function probe(files: string[], overrides: Partial<ExecutableProbe> = {}): Execu
 
 const codex = BUILTIN_ACP_AGENTS.find((agent) => agent.id === "codex")!;
 const claude = BUILTIN_ACP_AGENTS.find((agent) => agent.id === "claude")!;
+const builtin = (id: string) => BUILTIN_ACP_AGENTS.find((agent) => agent.id === id)!;
 
 describe("finding the user's CLI", () => {
 	test("prefers the native codex.exe behind an npm shim over the shim itself", () => {
@@ -50,6 +58,28 @@ describe("finding the user's CLI", () => {
 		const native = join(HOME, ".local", "bin", "claude.exe");
 		expect(resolveClaudeExecutable(probe([native, join(NPM, "claude.cmd")]))).toBe(native);
 		expect(resolveClaudeExecutable(probe([join(NPM, "claude.cmd")]))).toBeUndefined();
+	});
+
+	test("trusts Cursor's bare `agent` only inside Cursor's own install directory", () => {
+		const bare = join(NPM, "agent.exe");
+		expect(resolveCursorAgentExecutable(probe([bare]))).toBeUndefined();
+		const installed = join(LOCAL, "cursor-agent", "agent.exe");
+		expect(resolveCursorAgentExecutable(probe([bare, installed]))).toBe(installed);
+		const named = join(NPM, "cursor-agent.cmd");
+		expect(resolveCursorAgentExecutable(probe([named, installed]))).toBe(named);
+	});
+
+	test("finds Grok, Droid and Devin on PATH or where their installers put them", () => {
+		expect(resolveAgentBinary("grok", probe([join(NPM, "grok.cmd")]))).toBe(join(NPM, "grok.cmd"));
+		expect(resolveAgentBinary("droid", probe([join(HOME, ".local", "bin", "droid.exe")]))).toBe(join(HOME, ".local", "bin", "droid.exe"));
+		const devin = join(LOCAL, "devin", "cli", "bin", "devin.exe");
+		expect(resolveAgentBinary("devin", probe([devin]))).toBe(devin);
+		expect(resolveAgentBinary("devin", probe([]))).toBeUndefined();
+	});
+
+	test("on macOS and Linux looks past a GUI launch's short PATH", () => {
+		const unix = probe([join(HOME, ".local", "bin", "cursor-agent")], { platform: "darwin", env: { PATH: "/usr/bin" } });
+		expect(resolveAgentBinary("cursor", unix)).toBe(join(HOME, ".local", "bin", "cursor-agent"));
 	});
 
 	test("reads PATH whatever its case, in order", () => {
@@ -105,6 +135,42 @@ describe("agentLaunch", () => {
 		});
 	});
 
+	test("an agent with its own CLI runs it directly in ACP mode", () => {
+		const cli = join("C:", "Tools", "grok.exe");
+		expect(agentLaunch(builtin("grok"), context({ findCli: (binary) => (binary === "grok" ? cli : undefined) }))).toEqual({
+			command: cli,
+			args: ["--permission-mode", "default", "agent", "--no-leader", "stdio"],
+			env: {},
+			shell: false,
+		});
+		// Cursor is kept from opening a browser; the user's own entries still win.
+		const cursor = agentLaunch({ ...builtin("cursor"), env: { BROWSER: "mine" } }, context({ findCli: () => "C:/cursor-agent.exe" }));
+		expect(cursor.args).toEqual(["acp"]);
+		expect(cursor.env).toEqual({ NO_BROWSER: "true", BROWSER: "mine" });
+	});
+
+	test("an npm shim goes through a shell, quoted; a PowerShell script through PowerShell", () => {
+		const shim = join("C:", "Users", "Neko Cat", "npm", "droid.cmd");
+		expect(agentLaunch(builtin("droid"), context({ findCli: () => shim }))).toMatchObject({
+			command: `"${shim}"`,
+			args: ["exec", "--output-format", "acp"],
+			shell: true,
+		});
+		const script = join(LOCAL, "cursor-agent", "cursor-agent.ps1");
+		expect(agentLaunch(builtin("cursor"), context({ findCli: () => script }))).toMatchObject({
+			command: "powershell.exe",
+			args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "acp"],
+			shell: false,
+		});
+	});
+
+	test("a missing CLI of an agent's own says how to install it, or where to point", () => {
+		const launch = () => agentLaunch(builtin("devin"), context({ findCli: () => undefined }));
+		expect(launch).toThrow(AcpSetupError);
+		expect(launch).toThrow("devin auth login");
+		expect(launch).toThrow("<可执行文件路径> acp");
+	});
+
 	test("the adapter is loaded from the unpacked copy next to app.asar", () => {
 		const entry = adapterEntryPath(join("C:", "App", "resources", "app.asar"), codex.bundled!);
 		expect(entry).toBe(join("C:", "App", "resources", "app.asar.unpacked", "node_modules", "@agentclientprotocol", "codex-acp", "dist", "index.js"));
@@ -125,5 +191,19 @@ describe("acpAgentInfo", () => {
 		// A built-in agent given a command of its own no longer uses the adapter.
 		expect(acpAgentInfo({ ...codex, command: "npx", args: ["x"] }).bundled).toBeUndefined();
 		expect(acpAgentInfo({ ...codex, command: "npx", args: ["x"] }).commandLine).toBe("npx x");
+	});
+
+	test("reports an agent's own CLI, and nothing that cannot cross IPC", () => {
+		const info = acpAgentInfo(builtin("droid"), () => "C:/droid.exe");
+		expect(info.native).toEqual({
+			invocation: "exec --output-format acp",
+			cliName: "Droid CLI",
+			cliPath: "C:/droid.exe",
+			installHint: builtin("droid").native!.installHint,
+		});
+		expect(info.bundled).toBeUndefined();
+		// The auth plan holds functions, which structured clone refuses.
+		expect(() => structuredClone(info)).not.toThrow();
+		expect(acpAgentInfo({ ...builtin("droid"), command: "droid", args: ["exec"] }).native).toBeUndefined();
 	});
 });

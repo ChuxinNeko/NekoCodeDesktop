@@ -63,8 +63,10 @@ import type {
 	ModelTestRequest,
 	ModelTestResult,
 	OAuthLoginEvent,
+	OAuthLoginOptions,
 	OAuthProviderId,
 	OAuthProviderSummary,
+	OAuthUsageSnapshot,
 	ProxyStatus,
 	SaveModelProfileRequest,
 } from "../../shared/settings";
@@ -77,8 +79,17 @@ import type {
 	TerminalSession,
 } from "../../shared/terminal";
 import type { SlashCommandSummary } from "../../shared/commands";
-import type { SetSkillEnabledRequest, SkillsSnapshot } from "../../shared/skills";
-import type { AppPreferences } from "../../shared/preferences";
+import type {
+	CreateSkillRequest,
+	ImportSkillsRequest,
+	ImportSkillsResult,
+	RemoveSkillRequest,
+	ScanSkillImportRequest,
+	SetSkillEnabledRequest,
+	SkillImportScan,
+	SkillsSnapshot,
+} from "../../shared/skills";
+import type { AppPreferences, CommandShellOption } from "../../shared/preferences";
 import type {
 	WorktreeMergeRequest,
 	WorktreeMergeResult,
@@ -193,6 +204,8 @@ export interface AgentApi {
 	onRevealSession(listener: (session: SessionSummary) => void): () => void;
 	preferencesGet(): Promise<AppPreferences>;
 	preferencesUpdate(patch: Partial<AppPreferences>): Promise<AppPreferences>;
+	/** The command shells this platform offers, and where each is installed. */
+	preferencesCommandShells(): Promise<CommandShellOption[]>;
 	/** Null when this session works in the project directory like any other. */
 	worktreeStatus(sessionId: string): Promise<WorktreeStatus | null>;
 	worktreeList(): Promise<WorktreeRecord[]>;
@@ -300,6 +313,14 @@ export interface AgentApi {
 	skillsList(): Promise<SkillsSnapshot | null>;
 	/** Switches a built-in skill; rebuilds the open session's system prompt. */
 	skillsSetEnabled(request: SetSkillEnabledRequest): Promise<SkillsSnapshot | null>;
+	/** Writes a hand-entered skill into the user's or the project's skills directory. */
+	skillsCreate(request: CreateSkillRequest): Promise<SkillsSnapshot | null>;
+	/** The skills a folder holds, and which of them could be copied in. */
+	skillsScanImport(request: ScanSkillImportRequest): Promise<SkillImportScan | null>;
+	/** Copies chosen skill folders from that folder into a skills directory. */
+	skillsImport(request: ImportSkillsRequest): Promise<ImportSkillsResult | null>;
+	/** Moves an installed skill's folder to the recycle bin. */
+	skillsRemove(request: RemoveSkillRequest): Promise<SkillsSnapshot | null>;
 
 	/** Everything ever spent, rolled up from the transcripts on disk. */
 	tokenUsage(): Promise<TokenUsageReport>;
@@ -313,7 +334,9 @@ export interface AgentApi {
 
 	oauthList(): Promise<OAuthProviderSummary[]>;
 	oauthRefresh(id: OAuthProviderId): Promise<OAuthProviderSummary>;
-	oauthLogin(id: OAuthProviderId): Promise<OAuthProviderSummary>;
+	oauthLogin(id: OAuthProviderId, options?: OAuthLoginOptions): Promise<OAuthProviderSummary>;
+	/** How much of a signed-in subscription is left; `force` skips the short cache. */
+	oauthUsage(id: OAuthProviderId, force?: boolean): Promise<OAuthUsageSnapshot>;
 	oauthCancel(id: OAuthProviderId): Promise<void>;
 	oauthSubmitCode(id: OAuthProviderId, code: string): Promise<void>;
 	oauthLogout(id: OAuthProviderId): Promise<OAuthProviderSummary>;

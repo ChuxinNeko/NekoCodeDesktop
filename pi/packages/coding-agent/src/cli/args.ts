@@ -92,11 +92,21 @@ export function parseArgs(args: string[]): Args {
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
-		} else if (arg === "--mode" && i + 1 < args.length) {
-			const mode = args[++i];
-			if (mode === "text" || mode === "json" || mode === "rpc") {
-				result.mode = mode;
+		} else if (arg === "--mode") {
+			const mode = args[i + 1];
+			if (mode === undefined || mode.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--mode requires text, json, or rpc" });
+				continue;
 			}
+			i++;
+			if (mode !== "text" && mode !== "json" && mode !== "rpc") {
+				result.diagnostics.push({
+					type: "error",
+					message: `Invalid mode "${mode}". Valid values: text, json, rpc`,
+				});
+				continue;
+			}
+			result.mode = mode;
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
@@ -413,6 +423,7 @@ ${chalk.bold("Environment Variables:")}
   MOONSHOT_API_KEY                 - Moonshot AI API key
   OPENCODE_API_KEY                 - OpenCode Zen/OpenCode Go API key
   KIMI_API_KEY                     - Kimi For Coding API key
+  META_API_KEY                     - Meta Model API key
   CLOUDFLARE_API_KEY               - Cloudflare API token (Workers AI and AI Gateway)
   CLOUDFLARE_ACCOUNT_ID            - Cloudflare account id (required for both)
   CLOUDFLARE_GATEWAY_ID            - Cloudflare AI Gateway slug (required for AI Gateway)

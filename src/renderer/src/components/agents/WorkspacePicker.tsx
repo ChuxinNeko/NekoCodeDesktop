@@ -6,6 +6,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuGroupLabel, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { ComposerPickerMenuPopup } from "../chat/ComposerPickerMenuPopup";
 import { COMPOSER_PICKER_MENU_OPTION_CLASS_NAME } from "../chat/composerPickerStyles";
+import { AgentIcon } from "./AgentIcon";
 
 /** The display name of a workspace id. */
 export function workspaceName(workspace: string, agents: readonly AcpAgentInfo[]): string {
@@ -49,7 +50,7 @@ export function WorkspacePicker({
 							title={t("workspace.pickerHint")}
 							variant="ghost"
 						>
-							<BotIcon className="size-3.5" />
+							<AgentIcon agent={agents.find((agent) => agent.id === value)} className="size-3.5 shrink-0" />
 							<span className="max-w-40 truncate font-medium">{workspaceName(value, agents)}</span>
 							<ChevronDownIcon className="size-3 opacity-60" />
 						</Button>
@@ -59,10 +60,12 @@ export function WorkspacePicker({
 					<MenuRadioGroup onValueChange={(next) => onChange(next as string)} value={value}>
 						<MenuGroupLabel>{t("workspace.label")}</MenuGroupLabel>
 						<MenuRadioItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} value={NEKO_LOCAL_WORKSPACE}>
+							<BotIcon aria-hidden className="size-3.5 shrink-0" />
 							<span className="truncate">NekoLocal</span>
 						</MenuRadioItem>
 						{enabled.map((agent) => (
 							<MenuRadioItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} key={agent.id} value={agent.id}>
+								<AgentIcon agent={agent} className="size-3.5 shrink-0" />
 								<span className="truncate">{agent.name}</span>
 							</MenuRadioItem>
 						))}

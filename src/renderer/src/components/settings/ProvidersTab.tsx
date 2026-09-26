@@ -8,6 +8,7 @@ import {
 	MIN_TOKEN_LIMIT,
 	type ModelApiProtocol,
 	type ModelProfileSummary,
+	type OAuthLoginOptions,
 	type OAuthProviderId,
 	type OAuthProviderSummary,
 	type ProviderKind,
@@ -25,8 +26,9 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
-import { ExternalLinkIcon, PencilIcon, PlusIcon, TrashCanIcon } from "../../lib/icons";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, PencilIcon, PlusIcon, TrashCanIcon } from "../../lib/icons";
 import { RAISED_SURFACE_BORDER_CLASS_NAME } from "../chat/composerPickerStyles";
+import { OAuthUsage } from "./OAuthUsage";
 import type { OAuthLoginState } from "./ProviderModelSettings";
 
 export { PROTOCOL_DEFAULT_ROUTE };
@@ -36,6 +38,23 @@ export const PROTOCOL_LABELS: Record<ModelApiProtocol, string> = {
 	"openai-responses": "OpenAI Responses",
 	"anthropic-messages": "Anthropic Messages",
 };
+
+/** What signing into each subscription involves, shown under the provider picker. */
+const OAUTH_HINT_KEYS: Record<OAuthProviderId, TranslationKey> = {
+	"openai-codex": "oauth.formHint",
+	"github-copilot": "oauth.hint.githubCopilot",
+	openrouter: "oauth.hint.openrouter",
+	"kimi-coding": "oauth.hint.kimiCoding",
+	xai: "oauth.hint.xai",
+	radius: "oauth.hint.radius",
+	antigravity: "oauth.antigravityHint",
+};
+
+/** Options a sign-in needs from the form; only Copilot asks for any. */
+function loginOptionsOf(draft: ProviderDraft): OAuthLoginOptions | undefined {
+	const domain = draft.enterpriseDomain.trim();
+	return draft.oauthProvider === "github-copilot" && domain ? { enterpriseDomain: domain } : undefined;
+}
 
 export const PROVIDER_KIND_LABEL_KEYS: Record<ProviderKind, TranslationKey> = {
 	"custom-api": "providers.kind.customApi",
@@ -55,6 +74,8 @@ export interface ProviderDraft {
 	kind: ProviderKind;
 	/** Which provider to sign into, when the kind is `oauth`. */
 	oauthProvider: OAuthProviderId;
+	/** GitHub Enterprise domain for Copilot; blank is github.com. */
+	enterpriseDomain: string;
 	name: string;
 	baseUrl: string;
 	route: string;
@@ -123,6 +144,7 @@ export function emptyProviderDraft(): ProviderDraft {
 	return {
 		kind: "custom-api",
 		oauthProvider: "openai-codex",
+		enterpriseDomain: "",
 		name: "",
 		baseUrl: "",
 		route: PROTOCOL_DEFAULT_ROUTE["openai-completions"],
@@ -143,6 +165,7 @@ export function providerDraftFrom(profile: ModelProfileSummary): ProviderDraft {
 		id: profile.id,
 		kind: profile.kind,
 		oauthProvider: "openai-codex",
+		enterpriseDomain: "",
 		name: profile.name,
 		baseUrl: profile.baseUrl,
 		route: profile.route,
@@ -202,7 +225,7 @@ export function ProvidersTab({
 	onDraftChange: (draft: ProviderDraft | null) => void;
 	onSave: () => void;
 	onDelete: (id: string) => void;
-	onLogin: (provider: OAuthProviderId) => void;
+	onLogin: (provider: OAuthProviderId, options?: OAuthLoginOptions) => void;
 	onCancelLogin: () => void;
 	onSubmitCode: (code: string) => void;
 	onLogout: (provider: OAuthProviderId) => void;
@@ -239,7 +262,11 @@ export function ProvidersTab({
 					<div className="flex items-center gap-2">
 						<Spinner className="size-3.5 text-muted-foreground" />
 						<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
-							{t("oauth.waiting")}
+							{login.deviceCode
+								? t("oauth.waitingDevice", {
+										name: accounts.find((account) => account.id === login.provider)?.name ?? login.provider,
+									})
+								: t("oauth.waiting")}
 						</span>
 						<div className="flex-1" />
 						<Button onClick={onCancelLogin} size="xs" variant="ghost">
@@ -247,8 +274,9 @@ export function ProvidersTab({
 						</Button>
 					</div>
 					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						{login.message ?? t("oauth.browserHint")}
+						{login.message ?? t(login.deviceCode ? "oauth.deviceCodeHint" : "oauth.browserHint")}
 					</p>
+					{login.deviceCode ? <DeviceCode code={login.deviceCode} /> : null}
 					{login.url ? (
 						<a
 							href={login.url}
@@ -315,7 +343,15 @@ export function ProvidersTab({
 									</Button>
 								) : null}
 								<Button
-									onClick={() => onLogin(account.id)}
+									// Copilot signs back into the same GitHub it was signed into.
+									onClick={() =>
+										onLogin(
+											account.id,
+											account.id === "github-copilot" && account.accountId
+												? { enterpriseDomain: account.accountId }
+												: undefined,
+										)
+									}
 									size="xs"
 									variant="chrome-outline"
 									disabled={login !== null || busy}
@@ -337,6 +373,7 @@ export function ProvidersTab({
 							<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 								{t("providers.modelCount", { count: account.modelIds.length })} · {t("oauth.modelsManaged")}
 							</span>
+							<OAuthUsage provider={account.id} />
 						</div>
 					))}
 				</div>
@@ -468,7 +505,7 @@ function ProviderForm({
 	loginInFlight: boolean;
 	onDraftChange: (draft: ProviderDraft | null) => void;
 	onSave: () => void;
-	onLogin: (provider: OAuthProviderId) => void;
+	onLogin: (provider: OAuthProviderId, options?: OAuthLoginOptions) => void;
 }) {
 	const { t } = useTranslation();
 
@@ -546,9 +583,22 @@ function ProviderForm({
 										</SelectPopup>
 									</Select>
 									<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-										{t(draft.oauthProvider === "antigravity" ? "oauth.antigravityHint" : "oauth.formHint")}
+										{t(OAUTH_HINT_KEYS[draft.oauthProvider])}
 									</span>
 								</div>
+								{draft.oauthProvider === "github-copilot" ? (
+									<div className="flex flex-col gap-1">
+										<Label>{t("oauth.enterpriseDomain")}</Label>
+										<Input
+											placeholder="company.ghe.com"
+											value={draft.enterpriseDomain}
+											onChange={(event) => onDraftChange({ ...draft, enterpriseDomain: event.target.value })}
+										/>
+										<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+											{t("oauth.enterpriseDomainHint")}
+										</span>
+									</div>
+								) : null}
 							</>
 						) : (
 							<>
@@ -755,7 +805,7 @@ function ProviderForm({
 						</Button>
 						{draft.kind === "oauth" ? (
 							<Button
-								onClick={() => onLogin(draft.oauthProvider)}
+								onClick={() => onLogin(draft.oauthProvider, loginOptionsOf(draft))}
 								size="sm"
 								variant="subtle"
 								disabled={busy || loginInFlight}
@@ -776,5 +826,45 @@ function ProviderForm({
 				</Dialog.Popup>
 			</Dialog.Portal>
 		</Dialog.Root>
+	);
+}
+
+/**
+ * The code a device-code sign-in waits on. Shown before anything opens, since
+ * the page it is typed into asks for it straight away: the link copies the code
+ * as it opens that page, so the user arrives with it on the clipboard.
+ */
+function DeviceCode({ code }: { code: { userCode: string; verificationUri: string } }) {
+	const { t } = useTranslation();
+	const [copied, setCopied] = useState(false);
+	const copy = () =>
+		navigator.clipboard.writeText(code.userCode).then(
+			() => setCopied(true),
+			() => setCopied(false),
+		);
+	return (
+		<div className="flex flex-col gap-2 rounded-lg bg-[var(--color-background-elevated-secondary)] px-3 py-2">
+			<div className="flex items-center gap-2">
+				<span
+					className="min-w-0 flex-1 select-all font-mono text-[length:var(--app-font-size-ui-lg,13px)] font-semibold tracking-[0.2em]"
+					aria-label={t("oauth.deviceCode")}
+				>
+					{code.userCode}
+				</span>
+				<Button onClick={() => void copy()} size="icon-xs" variant="chrome-outline" title={t("oauth.copyCode")}>
+					{copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+				</Button>
+			</div>
+			<a
+				href={code.verificationUri}
+				target="_blank"
+				rel="noreferrer"
+				onClick={() => void copy()}
+				className="flex items-center gap-1 self-start text-[length:var(--app-font-size-ui-sm,11px)] font-medium text-foreground underline-offset-2 hover:underline"
+			>
+				<ExternalLinkIcon className="size-3 shrink-0" />
+				{t("oauth.copyAndOpen", { url: code.verificationUri.replace(/^https?:\/\//, "") })}
+			</a>
+		</div>
 	);
 }

@@ -43,6 +43,8 @@ const HEADER = [
 	"total_tokens",
 	"cache_hit_rate",
 	"cost_usd",
+	"estimated_cost_usd",
+	"unpriced_calls",
 ];
 
 export function tokenUsageCsv(report: TokenUsageReport): string {
@@ -65,6 +67,8 @@ export function tokenUsageCsv(report: TokenUsageReport): string {
 				totalTokens(bucket),
 				hitRate === null ? "" : hitRate.toFixed(4),
 				bucket.costUsd.toFixed(6),
+				bucket.estimatedCostUsd.toFixed(6),
+				bucket.unpricedCalls,
 			]),
 		);
 	}

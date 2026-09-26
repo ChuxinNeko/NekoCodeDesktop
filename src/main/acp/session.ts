@@ -15,6 +15,7 @@ import type {
 	AcpSessionSummary,
 } from "../../shared/acp";
 import type { AcpAgentDefinition } from "./agents";
+import { authenticateAgent } from "./auth";
 import { AcpConnection, AcpRpcError, AUTH_REQUIRED, METHOD_NOT_FOUND, type AcpTransport } from "./connection";
 import { AcpProjection, MODE_CONFIG_ID, MODEL_CONFIG_ID, turnUsageFromAcp } from "./projection";
 
@@ -53,6 +54,8 @@ export interface AcpSessionOptions {
 	processCwd?: string;
 	/** NekoCode's own tools, attached to the session as MCP servers. */
 	toolServers?: () => Promise<AcpToolServers>;
+	/** The environment the agent runs with, for choosing how it signs in. */
+	env?: Record<string, string | undefined>;
 	now?: () => number;
 }
 
@@ -210,22 +213,49 @@ export class AcpSession {
 			}
 
 			const capabilities = isObject(init) && isObject(init.agentCapabilities) ? init.agentCapabilities : {};
+			const auth = this.agent.native?.auth;
+			let authenticated = false;
+			const authenticate = async () => {
+				authenticated = true;
+				await withTimeout(
+					authenticateAgent(
+						(method, params) => connection.request(method, params),
+						auth!,
+						init,
+						this.options.env ?? { ...process.env, ...this.agent.native?.env, ...this.agent.env },
+						this.agent.name,
+					),
+					STARTUP_TIMEOUT_MS,
+					`${this.agent.name} 登录超时`,
+				);
+			};
+			if (auth?.when === "always") await authenticate();
+			if (this.disposed) return;
 			await this.attachTools(capabilities);
 			if (this.disposed) return;
-			let setup: unknown;
-			try {
-				setup = this.options.resume
-					? await this.reopen(connection, this.options.resume.sessionId, capabilities)
-					: await withTimeout(
+			const setUp = () =>
+				this.options.resume
+					? this.reopen(connection, this.options.resume.sessionId, capabilities)
+					: withTimeout(
 							connection.request("session/new", { cwd: this.cwd, mcpServers: this.mcpServers }),
 							STARTUP_TIMEOUT_MS,
 							`${this.agent.name} 创建会话超时`,
 						);
+			let setup: unknown;
+			try {
+				setup = await setUp();
 			} catch (error) {
-				if (error instanceof AcpRpcError && error.code === AUTH_REQUIRED) {
-					throw new Error(this.authHint());
+				if (!(error instanceof AcpRpcError && error.code === AUTH_REQUIRED)) throw error;
+				// Signing in when asked to, once; an agent that still refuses gets the hint.
+				if (!auth || authenticated) throw new Error(this.authHint());
+				await authenticate();
+				if (this.disposed) return;
+				try {
+					setup = await setUp();
+				} catch (retryError) {
+					if (retryError instanceof AcpRpcError && retryError.code === AUTH_REQUIRED) throw new Error(this.authHint());
+					throw retryError;
 				}
-				throw error;
 			}
 			const sessionId = this.options.resume?.sessionId ?? (isObject(setup) ? str(setup.sessionId) : undefined);
 			if (!sessionId) throw new Error(`${this.agent.name} 没有返回会话 ID`);

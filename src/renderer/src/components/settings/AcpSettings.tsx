@@ -4,8 +4,9 @@ import type { AcpAgentInfo, AcpSaveAgentRequest } from "../../../../shared/acp";
 import { formatKeyValueLines, parseKeyValueLines, splitCommand } from "../../../../shared/mcp";
 import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
-import { BotIcon, PlusIcon } from "../../lib/icons";
+import { PlusIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
+import { AgentIcon } from "../agents/AgentIcon";
 import { RAISED_SURFACE_BORDER_CLASS_NAME } from "../chat/composerPickerStyles";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -16,6 +17,11 @@ import { Textarea } from "../ui/textarea";
 interface Draft {
 	id?: string;
 	builtin: boolean;
+	/**
+	 * What an empty command runs for a built-in agent: the adapter NekoCode
+	 * ships, or the agent's own CLI — e.g. "cursor-agent acp".
+	 */
+	defaultLaunch?: { kind: "bundled" } | { kind: "native"; invocation: string };
 	name: string;
 	/** The whole command line, split on save — one field is what people paste. */
 	commandLine: string;
@@ -28,6 +34,11 @@ function draftOf(agent: AcpAgentInfo): Draft {
 	return {
 		id: agent.id,
 		builtin: agent.builtin,
+		...(agent.native
+			? { defaultLaunch: { kind: "native" as const, invocation: agent.native.invocation } }
+			: agent.builtin
+				? { defaultLaunch: { kind: "bundled" as const } }
+				: {}),
 		name: agent.name,
 		commandLine: agent.commandLine,
 		env: formatKeyValueLines(agent.env),
@@ -67,8 +78,9 @@ function AgentDialog({
 }) {
 	const { t } = useTranslation();
 	const [draft, setDraft] = useState(initial);
-	// A built-in agent may leave the command empty: that runs its bundled adapter.
+	// A built-in agent may leave the command empty: that runs its bundled adapter or its own CLI.
 	const complete = !!draft.name.trim() && (draft.builtin || !!draft.commandLine.trim());
+	const launch = draft.defaultLaunch;
 	return (
 		<Dialog.Root
 			open
@@ -111,12 +123,24 @@ function AgentDialog({
 							<Label>{t("acpSettings.command")}</Label>
 							<Input
 								className="font-mono"
-								placeholder={draft.builtin ? t("acpSettings.commandBundledPlaceholder") : "opencode acp"}
+								placeholder={
+									launch?.kind === "native"
+										? t("acpSettings.commandNativePlaceholder", { invocation: launch.invocation })
+										: draft.builtin
+											? t("acpSettings.commandBundledPlaceholder")
+											: "opencode acp"
+								}
 								value={draft.commandLine}
 								onChange={(event) => setDraft({ ...draft, commandLine: event.target.value })}
 							/>
 							<p className="text-[length:var(--app-font-size-ui-xs,10px)] leading-relaxed text-muted-foreground">
-								{t(draft.builtin ? "acpSettings.commandBundledHint" : "acpSettings.commandHint")}
+								{t(
+									launch?.kind === "native"
+										? "acpSettings.commandNativeHint"
+										: draft.builtin
+											? "acpSettings.commandBundledHint"
+											: "acpSettings.commandHint",
+								)}
 							</p>
 						</div>
 						<div className="flex flex-col gap-1">
@@ -205,7 +229,7 @@ export function AcpSettings() {
 						className="flex items-center gap-3 rounded-lg border border-[color:var(--app-surface-divider)] px-3 py-2"
 						key={agent.id}
 					>
-						<BotIcon className="size-4 shrink-0" />
+						<AgentIcon agent={agent} className="size-4 shrink-0" />
 						<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 							<span className="flex items-center gap-1.5 text-[length:var(--app-font-size-ui,12px)] font-medium">
 								{agent.name}
@@ -229,6 +253,19 @@ export function AcpSettings() {
 								) : (
 									<span className="text-[length:var(--app-font-size-ui-xs,10px)] leading-relaxed text-[var(--warning)]">
 										{t("acpSettings.bundledMissing", { cli: agent.bundled.cliName, hint: agent.bundled.installHint })}
+									</span>
+								)
+							) : agent.native ? (
+								agent.native.cliPath ? (
+									<span
+										className="truncate text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/80"
+										title={agent.native.cliPath}
+									>
+										{t("acpSettings.nativeFound", { cli: agent.native.cliName, path: agent.native.cliPath })}
+									</span>
+								) : (
+									<span className="text-[length:var(--app-font-size-ui-xs,10px)] leading-relaxed text-[var(--warning)]">
+										{t("acpSettings.bundledMissing", { cli: agent.native.cliName, hint: agent.native.installHint })}
 									</span>
 								)
 							) : (

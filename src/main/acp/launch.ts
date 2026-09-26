@@ -11,7 +11,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { usesBundledAdapter, type AcpAgentDefinition, type BundledAdapter } from "./agents";
+import { usesBundledAdapter, usesNativeCli, type AcpAgentDefinition, type BundledAdapter, type NativeAgentCli } from "./agents";
 import type { AgentBinary } from "./binaries";
 
 export interface AgentLaunch {
@@ -65,7 +65,36 @@ export function bootstrapScript(entry: string): string {
 	].join("");
 }
 
+/**
+ * The agent's own CLI, found where its installer puts it. On Windows that may
+ * be a `.cmd` shim, which only a shell can run — quoted, since cmd.exe splits
+ * an unquoted path at its first space — or a PowerShell script.
+ */
+export function nativeLaunch(agent: AcpAgentDefinition & { native: NativeAgentCli }, context: LaunchContext): AgentLaunch {
+	const native = agent.native;
+	const cli = context.findCli(native.binary);
+	if (!cli) {
+		throw new AcpSetupError(
+			`没有在本机找到 ${native.cliName}。请先${native.installHint}；如果已经安装在别处，可以在「设置 → 外部代理」里把 ${agent.name} 的启动命令填成 <可执行文件路径> ${native.args.join(" ")}。`,
+		);
+	}
+	const env = { ...native.env, ...agent.env };
+	if (context.platform === "win32" && /\.ps1$/i.test(cli)) {
+		return {
+			command: "powershell.exe",
+			args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", cli, ...native.args],
+			env,
+			shell: false,
+		};
+	}
+	if (context.platform === "win32" && /\.(cmd|bat)$/i.test(cli)) {
+		return { command: /\s/.test(cli) ? `"${cli}"` : cli, args: [...native.args], env, shell: true };
+	}
+	return { command: cli, args: [...native.args], env, shell: false };
+}
+
 export function agentLaunch(agent: AcpAgentDefinition, context: LaunchContext): AgentLaunch {
+	if (usesNativeCli(agent)) return nativeLaunch(agent, context);
 	if (!usesBundledAdapter(agent)) {
 		return { command: agent.command, args: [...agent.args], env: { ...agent.env }, shell: context.platform === "win32" };
 	}

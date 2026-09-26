@@ -21,10 +21,36 @@ export interface AppPreferences {
 	 * on whatever the user has open. Takes effect for sessions started after.
 	 */
 	computerUse: boolean;
+	/**
+	 * The shell the agent's commands run in. `auto` keeps both command tools —
+	 * bash (Git Bash on Windows) and PowerShell — and lets the model choose; any
+	 * other value gives it that one shell alone. Takes effect for sessions
+	 * started after.
+	 */
+	commandShell: CommandShellId;
+}
+
+/**
+ * The shells a user can pick. Windows: PowerShell 5.1, PowerShell 7, cmd and
+ * Git Bash. macOS and Linux: bash, zsh and sh.
+ */
+export const COMMAND_SHELL_IDS = ["auto", "powershell", "pwsh", "cmd", "git-bash", "bash", "zsh", "sh"] as const;
+export type CommandShellId = (typeof COMMAND_SHELL_IDS)[number];
+
+export function isCommandShellId(value: unknown): value is CommandShellId {
+	return typeof value === "string" && (COMMAND_SHELL_IDS as readonly string[]).includes(value);
+}
+
+/** One shell as the settings page offers it. */
+export interface CommandShellOption {
+	id: CommandShellId;
+	/** Where it was found; null when it is not installed on this machine. */
+	path: string | null;
 }
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
 	notifyOnTaskFinish: true,
 	isolateBackgroundTasks: true,
 	computerUse: false,
+	commandShell: "auto",
 };

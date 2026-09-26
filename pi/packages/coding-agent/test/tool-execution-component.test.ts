@@ -1,7 +1,12 @@
 import { join, resolve } from "node:path";
-import { Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilities, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+const imageConvertMocks = vi.hoisted(() => ({ convertToPng: vi.fn() }));
+
+vi.mock("../src/utils/image-convert.ts", () => imageConvertMocks);
+
 import { getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
@@ -34,6 +39,47 @@ function createFakeTui(): TUI {
 describe("ToolExecutionComponent parity", () => {
 	beforeAll(() => {
 		initTheme("dark");
+	});
+	afterEach(() => {
+		resetCapabilitiesCache();
+		imageConvertMocks.convertToPng.mockReset();
+		vi.useRealTimers();
+	});
+
+	// Issue #8577: ignore conversions that finish after the image was replaced.
+	test("keeps the final tool image when a partial image conversion finishes late", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		let finishConversion!: (result: { data: string; mimeType: string }) => void;
+		const conversion = new Promise<{ data: string; mimeType: string }>((resolve) => {
+			finishConversion = resolve;
+		});
+		imageConvertMocks.convertToPng.mockReturnValue(conversion);
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-image-race",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		component.updateResult(
+			{ content: [{ type: "image", data: "partial-jpeg", mimeType: "image/jpeg" }], isError: false },
+			true,
+		);
+		component.updateResult({
+			content: [{ type: "image", data: "final-png", mimeType: "image/png" }],
+			isError: false,
+		});
+		expect(component.render(120).join("\n")).toContain("final-png");
+
+		finishConversion({ data: "converted-partial", mimeType: "image/png" });
+		await conversion;
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain("final-png");
+		expect(rendered).not.toContain("converted-partial");
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -192,6 +238,47 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});
 
+	// Issue #9628: keep short durations precise and make long shell durations readable.
+	test.each([
+		{ ms: 0, formatted: "0.0s" },
+		{ ms: 4_200, formatted: "4.2s" },
+		{ ms: 59_900, formatted: "59.9s" },
+		{ ms: 59_999, formatted: "60.0s" },
+		{ ms: 60_000, formatted: "1m 0s" },
+		{ ms: 90_900, formatted: "1m 30s" },
+		{ ms: 1_592_200, formatted: "26m 32s" },
+		{ ms: 3_599_999, formatted: "59m 59s" },
+		{ ms: 3_600_000, formatted: "1h 0m 0s" },
+		{ ms: 7_384_900, formatted: "2h 3m 4s" },
+	])("bash renderer formats $ms ms as $formatted while running and after completion", ({ ms, formatted }) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-bash-duration",
+			{ command: "long-running-command" },
+			{},
+			createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.markExecutionStarted();
+		component.updateResult({ content: [], isError: false }, true);
+
+		vi.advanceTimersByTime(ms);
+		component.invalidate();
+		const running = stripAnsi(component.render(120).join("\n"));
+
+		component.updateResult({ content: [], isError: false }, false);
+		const completed = stripAnsi(component.render(120).join("\n"));
+
+		vi.advanceTimersByTime(1_000);
+		component.invalidate();
+		expect(stripAnsi(component.render(120).join("\n"))).toBe(completed);
+		expect(running).toContain(`Elapsed ${formatted}`);
+		expect(completed).toContain(`Took ${formatted}`);
+	});
+
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {
 		const component = new ToolExecutionComponent(
 			"read",
@@ -205,6 +292,22 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ content: [{ type: "text", text: "hello" }], details: undefined, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered.match(/\bread\b/g)?.length ?? 0).toBe(1);
+	});
+
+	// Issue #9996: strict tool schemas make models send null for omitted optional fields.
+	test("renders read calls with null offset and limit as full-file reads", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-read-null-range",
+			{ path: "src/example.ts", offset: null, limit: null },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("read src/example.ts");
+		expect(rendered).not.toContain("src/example.ts:");
 	});
 
 	test("inherits missing built-in result renderer slot from the built-in tool", () => {

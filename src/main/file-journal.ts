@@ -1,6 +1,7 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { CheckpointEditedFile } from "../shared/checkpoints";
+import { SHELL_TOOLS } from "../shared/hooks";
 
 /**
  * What a checkpoint remembers, and where it lives.
@@ -31,7 +32,7 @@ export const FILE_MUTATION_ENTRY = "nekocode.file-mutation";
 export const RECORDED_TOOLS: readonly string[] = ["write", "edit"];
 
 /** Tools that change files in ways no argument describes. */
-export const OPAQUE_TOOLS: readonly string[] = ["bash", "powershell"];
+export const OPAQUE_TOOLS: readonly string[] = SHELL_TOOLS;
 
 /**
  * Pre-images past this are not kept.

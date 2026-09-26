@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { OAuthLoginEvent, OAuthProviderSummary } from "../shared/settings";
 import {
 	ANTIGRAVITY_CALLBACK_PORT, ANTIGRAVITY_REDIRECT_URI, buildAuthUrl,
-	exchangeCode, fetchUserEmail, refreshTokens, resolveProject, fetchAntigravityIdentity, type AntigravityIdentity, type FetchLike,
+	exchangeCode, failure, fetchUserEmail, refreshTokens, resolveProject, fetchAntigravityIdentity, type AntigravityIdentity, type FetchLike,
 } from "./antigravity";
 import { startCallbackServer, type CallbackServer } from "./oauth-callback-server";
 import type { OAuthCredentialStore, StoredOAuthCredential } from "./oauth-credential-store";
@@ -185,6 +185,24 @@ export class AntigravityOAuthService {
 			method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.accessToken}`, "User-Agent": auth.identity.userAgent },
 			body: JSON.stringify(payload), signal: auth.signal,
 		});
+	}
+
+	/**
+	 * A Cloud Code call as this account, for reading its tier and quota. Model
+	 * listing goes where model requests go and names the project it bills to;
+	 * `loadCodeAssist` is a control-plane call, sent where onboarding sends it.
+	 */
+	async cloudCode(method: "loadCodeAssist" | "fetchAvailableModels", body: object, signal?: AbortSignal): Promise<unknown> {
+		const auth = await this.requestContext(signal);
+		const host = method === "fetchAvailableModels" ? "https://daily-cloudcode-pa.googleapis.com" : "https://cloudcode-pa.googleapis.com";
+		const payload = method === "fetchAvailableModels" ? { project: auth.projectId, ...body } : body;
+		const response = await this.options.fetch(`${host}/v1internal:${method}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Accept: "*/*", Authorization: `Bearer ${auth.accessToken}`, "User-Agent": auth.identity.userAgent },
+			body: JSON.stringify(payload), signal: auth.signal,
+		});
+		if (!response.ok) throw await failure(response, `Antigravity ${method}`, [auth.accessToken]);
+		return response.json();
 	}
 
 	logout(): OAuthProviderSummary {

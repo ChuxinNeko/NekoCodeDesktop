@@ -2,8 +2,9 @@ import type { ResponseStreamEvent } from "openai/resources/responses/responses.j
 import { describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, AssistantMessageEvent, Context, Model } from "../src/types.ts";
+import type { Api, AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 vi.mock("openai", () => {
 	async function* createMockResponsesStream(): AsyncIterable<ResponseStreamEvent> {
@@ -214,13 +215,42 @@ describe("OpenAI Responses terminal event handling", () => {
 		);
 	});
 
-	it("emits an error final result when the wrapper stream ends before a terminal response event", async () => {
+	it("forwards parsed provider stream events in order", async () => {
 		const model = createModel();
-		const context: Context = {
+		const context = normalizeContext({
 			systemPrompt: "",
 			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
 			tools: [],
-		};
+		});
+		const providerEvents: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const stream = streamOpenAIResponses(model, context, {
+			apiKey: "test",
+			onProviderStreamEvent: async (event, eventModel) => {
+				await Promise.resolve();
+				providerEvents.push(event);
+				eventModels.push(eventModel);
+			},
+		});
+
+		await stream.result();
+
+		expect(providerEvents).toHaveLength(3);
+		expect(providerEvents.map((event) => (event as ResponseStreamEvent).type)).toEqual([
+			"response.created",
+			"response.output_item.added",
+			"response.reasoning_text.delta",
+		]);
+		expect(eventModels).toEqual([model, model, model]);
+	});
+
+	it("emits an error final result when the wrapper stream ends before a terminal response event", async () => {
+		const model = createModel();
+		const context = normalizeContext({
+			systemPrompt: "",
+			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
+			tools: [],
+		});
 		const stream = streamOpenAIResponses(model, context, { apiKey: "test" });
 		const events: AssistantMessageEvent[] = [];
 		let initialStopReason: AssistantMessage["stopReason"] | undefined;

@@ -393,6 +393,30 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("cacheWarming", () => {
+		it("defaults to streaming and ignores project settings", () => {
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
+
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
+		});
+
+		it("persists the mode globally", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setCacheWarmingMode("off");
+			await manager.flush();
+
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
+			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"))).toEqual({ cacheWarming: "off" });
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;

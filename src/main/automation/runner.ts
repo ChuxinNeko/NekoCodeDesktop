@@ -3,7 +3,7 @@ import type { Automation } from "../../shared/automation";
 import { pi } from "../pi";
 import { createPromptResources } from "../workflow-runtime";
 import { createStatTool } from "../file-tools";
-import { NEKOCODE_TOOL_OPTIONS } from "../shell-environment";
+import { currentCommandShell } from "../command-shell";
 import { COMPACTION_INSTRUCTIONS, toolsForMode, type PromptContext } from "../prompt-library";
 import { hookService, memorySection } from "../context-services";
 
@@ -42,14 +42,16 @@ export class AutomationRunner {
 	}
 
 	async run(automation: Automation, externalSignal: AbortSignal): Promise<AutomationRunOutcome> {
-		const { createAgentSession, SessionManager } = await pi();
+		const { createAgentSession, createBashToolDefinition, SessionManager } = await pi();
 		const modelRuntime = await this.options.getModelRuntime();
+		const shell = currentCommandShell();
 		const sessionManager = SessionManager.create(automation.cwd, this.options.sessionsDir);
 		let currentSession: AgentSession | undefined;
 		const context = (): PromptContext => ({
 			mode: "agent",
 			permission: automation.mode,
 			headless: true,
+			...(shell.id === "auto" ? {} : { shellTools: shell.shellTools, shellNote: shell.promptNote }),
 			// Read, not written: an unattended run follows what the user has asked
 			// to be remembered, but has no one to confirm anything new with.
 			memory: memorySection(automation.cwd),
@@ -61,8 +63,8 @@ export class AutomationRunner {
 		const { session } = await createAgentSession({
 			resourceLoader,
 			tools: toolsForMode(context()),
-			customTools: [createStatTool(automation.cwd)],
-			toolOptions: NEKOCODE_TOOL_OPTIONS,
+			customTools: [createStatTool(automation.cwd), ...shell.customTools(automation.cwd, createBashToolDefinition)],
+			toolOptions: shell.toolOptions,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
 			cwd: automation.cwd,
 			sessionManager,

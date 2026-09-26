@@ -42,6 +42,7 @@ interface ProviderInstance {
 interface ProviderSubscriber {
 	readonly listener: (update: ServiceProviderUpdate, context: Context) => void;
 	readonly buffer: { readonly update: ServiceProviderUpdate; readonly context: Context }[];
+	readonly snapshotSequences: Map<string, number>;
 	active: boolean;
 	terminated: boolean;
 	closed: boolean;
@@ -248,13 +249,14 @@ export class RemoteServiceProvider {
 		const subscriber: ProviderSubscriber = {
 			listener,
 			buffer: [],
+			snapshotSequences: new Map(),
 			active: false,
 			terminated: false,
 			closed: false,
 		};
-		this.#publishPending(registration);
 		registration.subscribers.add(subscriber);
 		const snapshot = this.#snapshot(registration);
+		recordSnapshotSequences(subscriber.snapshotSequences, snapshot.instances);
 		return {
 			snapshot,
 			activate: () => {
@@ -417,21 +419,6 @@ export class RemoteServiceProvider {
 		return instance;
 	}
 
-	#publishPending(registration: ServiceRegistration): void {
-		const context = serviceDeliveryContext();
-		const instances =
-			registration.mode === "singleton"
-				? registration.singleton === undefined
-					? []
-					: [registration.singleton]
-				: registration.instances.values();
-		for (const instance of instances) {
-			for (const member of instance.members.values()) {
-				if (member.kind === "state") member.state.publish(context);
-			}
-		}
-	}
-
 	#snapshot(registration: ServiceRegistration): ServiceSubscriptionSnapshot {
 		const instances =
 			registration.mode === "singleton"
@@ -450,11 +437,12 @@ export class RemoteServiceProvider {
 			if (member.kind === "method") {
 				members.push({ name, kind: "method" });
 			} else {
+				const snapshot = member.state.snapshot();
 				members.push({
 					name,
 					kind: "state",
-					sequence: member.state.sequence,
-					ops: [["r", member.state.value as JsonValue]],
+					sequence: snapshot.sequence,
+					ops: [["r", snapshot.value as JsonValue]],
 				});
 			}
 		}
@@ -469,7 +457,7 @@ export class RemoteServiceProvider {
 		const deliveryContext = context ?? serviceDeliveryContext();
 		const errors: unknown[] = [];
 		for (const subscriber of registration.subscribers) {
-			if (subscriber.closed) continue;
+			if (subscriber.closed || updateCoveredBySnapshot(subscriber.snapshotSequences, update)) continue;
 			const entry = { update, context: deliveryContext };
 			if (!subscriber.active) {
 				subscriber.buffer.push(entry);
@@ -497,6 +485,48 @@ export class RemoteServiceProvider {
 	#assertActive(): void {
 		if (this.#disposed) throw new Error("Remote service provider is disposed");
 	}
+}
+
+function recordSnapshotSequences(sequences: Map<string, number>, instances: readonly ServiceInstanceSnapshot[]): void {
+	for (const instance of instances) {
+		for (const member of instance.members) {
+			if (member.kind === "state") sequences.set(stateMemberKey(instance.instance, member.name), member.sequence);
+		}
+	}
+}
+
+function updateCoveredBySnapshot(sequences: Map<string, number>, update: ServiceProviderUpdate): boolean {
+	switch (update.type) {
+		case "state": {
+			const key = stateMemberKey(update.instance, update.member);
+			const sequence = sequences.get(key);
+			if (sequence === undefined) return false;
+			if (update.sequence <= sequence) return true;
+			sequences.delete(key);
+			return false;
+		}
+		case "replaced":
+			sequences.clear();
+			recordSnapshotSequences(sequences, [update.snapshot]);
+			return false;
+		case "spawned":
+			recordSnapshotSequences(sequences, [update.instance]);
+			return false;
+		case "unavailable":
+			sequences.clear();
+			return false;
+		case "closed": {
+			const prefix = `${JSON.stringify([update.instance.key, update.instance.generation]).slice(0, -1)},`;
+			for (const key of sequences.keys()) {
+				if (key.startsWith(prefix)) sequences.delete(key);
+			}
+			return false;
+		}
+	}
+}
+
+function stateMemberKey(instance: ServiceInstanceAddress | undefined, member: string): string {
+	return JSON.stringify(instance === undefined ? [member] : [instance.key, instance.generation, member]);
 }
 
 export function createRemoteServiceEndpoint(provider: RemoteServiceProvider): RemoteServiceEndpoint {

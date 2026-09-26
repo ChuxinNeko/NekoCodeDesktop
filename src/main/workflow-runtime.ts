@@ -50,7 +50,8 @@ import {
 	type PromptContext,
 } from "./prompt-library";
 import { createStatTool, STAT_TOOL_NAME } from "./file-tools";
-import { NEKOCODE_TOOL_OPTIONS } from "./shell-environment";
+import { isShellTool } from "../shared/hooks";
+import { currentCommandShell, type CommandShellSetup } from "./command-shell";
 import { containsPath, resolveWorkspacePath } from "./workflow-paths";
 import { readSavedWorkflow, WorkflowState } from "./workflow-state";
 import { createWorkflowTools } from "./workflow-tools";
@@ -276,6 +277,11 @@ export class WorkflowRuntime {
 	private notices: WorkflowTask[] = [];
 	private delivering = false;
 	private persistenceError: string | undefined;
+	/**
+	 * The command shell, fixed when the session is made: its tools are built
+	 * then, so the prompt must keep naming the same ones for the session's life.
+	 */
+	readonly shell: CommandShellSetup = currentCommandShell();
 	constructor(private readonly options: WorkflowRuntimeOptions) {
 		this.fusionConfig = options.initialFusion === undefined
 			? savedFusion(options.sessionManager) : options.initialFusion;
@@ -314,6 +320,7 @@ export class WorkflowRuntime {
 			phase: this.phase,
 			permission: this.options.getPermission(),
 			pluginTools: this.options.getPluginTools?.() ?? [],
+			...this.shellContext(),
 			modelId: this.session?.model
 				? this.session.model.provider + "/" + this.session.model.id
 				: undefined,
@@ -330,6 +337,10 @@ export class WorkflowRuntime {
 				})),
 			}),
 		};
+	}
+	/** What the prompt context needs to know about the chosen shell; nothing in automatic mode. */
+	shellContext(): Pick<PromptContext, "shellTools" | "shellNote"> {
+		return this.shell.id === "auto" ? {} : { shellTools: this.shell.shellTools, shellNote: this.shell.promptNote };
 	}
 	tools() {
 		return createWorkflowTools(this);
@@ -350,7 +361,7 @@ export class WorkflowRuntime {
 					reason: "Tool is not allowed in the current work mode and execution permission",
 				};
 			const name = context.toolCall.name;
-			if (["bash", "powershell"].includes(name) && this.state.hasWritingTasks)
+			if (isShellTool(name) && this.state.hasWritingTasks)
 				return {
 					block: true,
 					reason:
@@ -569,7 +580,7 @@ export class WorkflowRuntime {
 		if (this.closed || signal?.aborted) throw new Error("Helper cancelled");
 		// Capture before awaiting setup: a queued prompt can arrive while the child runs.
 		const turnTimestamp = [...parent.messages].reverse().find((message) => message.role === "user")?.timestamp;
-		const { createAgentSession, SessionManager } = await pi();
+		const { createAgentSession, createBashToolDefinition, SessionManager } = await pi();
 		const fusion = this.fusionConfig
 			? await resolveFusion(this.fusionConfig, this.options.modelRuntime) : null;
 		const helperModel = helperOptions?.model ?? fusion?.sidekick ?? parent.model;
@@ -584,6 +595,7 @@ export class WorkflowRuntime {
 			interactive: false,
 			fastContext: helperOptions?.fastContext,
 			modelId: helperModel.provider + "/" + helperModel.id,
+			...this.shellContext(),
 		};
 		const resourceLoader = await createPromptResources(
 			this.options.cwd,
@@ -603,12 +615,14 @@ export class WorkflowRuntime {
 			tools: toolsForMode(context).filter((name) =>
 				(helperOptions?.fastContext
 					? ["read", "grep", "find", "ls", STAT_TOOL_NAME]
-					: ["read", "grep", "find", "ls", STAT_TOOL_NAME, "edit", "write",
-						...(allowWorkerShell ? ["bash", "powershell"] : [])]
-				).includes(name),
+					: ["read", "grep", "find", "ls", STAT_TOOL_NAME, "edit", "write"]
+				).includes(name) || (!helperOptions?.fastContext && allowWorkerShell && isShellTool(name)),
 			),
-			customTools: [createStatTool(this.options.cwd)],
-			toolOptions: NEKOCODE_TOOL_OPTIONS,
+			customTools: [
+				createStatTool(this.options.cwd),
+				...(allowWorkerShell ? this.shell.customTools(this.options.cwd, createBashToolDefinition) : []),
+			],
+			toolOptions: this.shell.toolOptions,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
 		});
 		const abort = () => {
@@ -867,7 +881,7 @@ export async function createWorkflowSession(options: WorkflowSessionOptions) {
 		options.agentDir,
 		options.builtinSkills,
 	);
-	const { createAgentSession } = await pi();
+	const { createAgentSession, createBashToolDefinition } = await pi();
 	try {
 		const result = await createAgentSession({
 			cwd: options.cwd,
@@ -877,8 +891,13 @@ export async function createWorkflowSession(options: WorkflowSessionOptions) {
 			model: fusion?.lead ?? options.model,
 			thinkingLevel: fusion?.config.leadThinkingLevel ?? options.thinkingLevel,
 			resourceLoader,
-			customTools: [...workflow.tools(), createStatTool(options.cwd), ...(options.customTools ?? [])],
-			toolOptions: NEKOCODE_TOOL_OPTIONS,
+			customTools: [
+				...workflow.tools(),
+				createStatTool(options.cwd),
+				...workflow.shell.customTools(options.cwd, createBashToolDefinition),
+				...(options.customTools ?? []),
+			],
+			toolOptions: workflow.shell.toolOptions,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
 		});
 		workflow.attach(result.session);

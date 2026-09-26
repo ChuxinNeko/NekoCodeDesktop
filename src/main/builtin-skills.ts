@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { SkillSummary } from "../shared/skills";
+import { readFrontmatterField, type SkillSummary } from "../shared/skills";
 
 /**
  * The skills that ship with the app.
@@ -30,49 +30,6 @@ export interface BuiltinSkillFile {
 	name: string;
 	description: string;
 	path: string;
-}
-
-/**
- * The first line of a skill's YAML frontmatter that matters here.
- *
- * Deliberately not a YAML parser: the loader in the agent core already validates
- * these files properly, and all this needs is the one line the settings page
- * shows. It handles the shapes the built-in skills are written in — a quoted or
- * bare scalar, and the folded/literal block forms — and returns empty for
- * anything else rather than guessing.
- */
-export function readFrontmatterField(content: string, field: string): string {
-	const normalized = content.replace(/\r\n?/g, "\n");
-	if (!normalized.startsWith("---\n")) return "";
-	const end = normalized.indexOf("\n---", 3);
-	if (end === -1) return "";
-	const lines = normalized.slice(4, end).split("\n");
-
-	for (let index = 0; index < lines.length; index++) {
-		const line = lines[index] ?? "";
-		if (!line.startsWith(`${field}:`)) continue;
-		const inline = line.slice(field.length + 1).trim();
-		if (inline && inline !== ">" && inline !== "|" && inline !== ">-" && inline !== "|-") {
-			return unquote(inline);
-		}
-		// Block scalar: every following line indented deeper than the key.
-		const block: string[] = [];
-		for (let next = index + 1; next < lines.length; next++) {
-			const candidate = lines[next] ?? "";
-			if (candidate.trim() && !/^\s/.test(candidate)) break;
-			block.push(candidate.trim());
-		}
-		return block.join(" ").trim();
-	}
-	return "";
-}
-
-function unquote(value: string): string {
-	const quote = value[0];
-	if ((quote === '"' || quote === "'") && value.endsWith(quote) && value.length >= 2) {
-		return value.slice(1, -1);
-	}
-	return value;
 }
 
 /**

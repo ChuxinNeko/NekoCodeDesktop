@@ -4,11 +4,14 @@ import {
 	MAX_CONTEXT_WINDOW,
 	MAX_OUTPUT_TOKENS,
 	MIN_TOKEN_LIMIT,
+	normalizeThinkingLevels,
+	THINKING_LEVEL_ORDER,
 	type ModelApiProtocol,
 	type ModelProfileSummary,
 	type ModelTokenLimits,
 	type ProviderKind,
 } from "../shared/settings";
+import type { ThinkingLevel } from "../shared/agent";
 import { resolveEndpoints } from "./model-endpoint";
 
 export const MAX_PROFILES = 100;
@@ -56,6 +59,8 @@ export interface StoredProfile {
 	maxTokens?: number;
 	/** Optional per-model ceilings; a missing key inherits the profile values. */
 	modelOverrides?: Record<string, ModelTokenLimits>;
+	/** Per-model thinking levels, in order; absent follows `reasoning`. */
+	modelThinking?: Record<string, ThinkingLevel[]>;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -109,6 +114,24 @@ export function isValidModelOverrides(value: unknown): value is Record<string, M
 			limits.maxTokens >= MIN_TOKEN_LIMIT &&
 			limits.maxTokens <= MAX_OUTPUT_TOKENS,
 	);
+}
+
+/** Each model's levels a non-empty, ordered set of known levels. */
+export function isValidModelThinking(value: unknown): value is Record<string, ThinkingLevel[]> {
+	if (value === undefined) return true;
+	if (!isPlainObject(value)) return false;
+	const entries = Object.entries(value);
+	if (entries.length > MAX_MODELS) return false;
+	return entries.every(([modelId, levels]) => {
+		if (!isNonEmptyString(modelId) || modelId.length > MAX_MODEL_ID) return false;
+		// Already in order and each once: exactly what normalizing would give back.
+		const normalized = normalizeThinkingLevels(levels);
+		return (
+			normalized !== null &&
+			normalized.length === (levels as unknown[]).length &&
+			normalized.every((level, index) => level === (levels as unknown[])[index])
+		);
+	});
 }
 
 /**
@@ -181,6 +204,13 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (
+			!isValidModelThinking(p.modelThinking) ||
+			(p.modelThinking !== undefined &&
+				!Object.keys(p.modelThinking).every((id) => (p.modelIds as string[]).includes(id)))
+		) {
+			throw new Error(SHAPE_ERROR);
+		}
+		if (
 			p.kind !== undefined &&
 			!PROVIDER_KINDS.includes(p.kind as ProviderKind)
 		) {
@@ -207,6 +237,28 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 	return parsed.profiles as StoredProfile[];
 }
 
+/**
+ * A model's levels as pi's model registration states them. pi offers a level
+ * unless the map says `null`, except xhigh and max, which it offers only when
+ * the map names them — so an unchecked level is `null`, and a checked xhigh or
+ * max is named. Everything else keeps pi's own request value. No levels of the
+ * model's own: the profile's switch, as before.
+ */
+export function thinkingRegistration(
+	levels: readonly ThinkingLevel[] | undefined,
+	profileReasoning: boolean,
+): { reasoning: boolean; thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>> } {
+	if (!levels) return { reasoning: profileReasoning };
+	const reasoning = levels.some((level) => level !== "off");
+	if (!reasoning) return { reasoning: false };
+	const thinkingLevelMap: Partial<Record<ThinkingLevel, string | null>> = {};
+	for (const level of THINKING_LEVEL_ORDER) {
+		if (!levels.includes(level)) thinkingLevelMap[level] = null;
+		else if (level === "xhigh" || level === "max") thinkingLevelMap[level] = level;
+	}
+	return { reasoning, thinkingLevelMap };
+}
+
 export function modelInputList(imageInput: boolean): ("text" | "image")[] {
 	return imageInput ? ["text", "image"] : ["text"];
 }
@@ -226,6 +278,9 @@ export function toSummary(p: StoredProfile): ModelProfileSummary {
 		maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
 		modelOverrides: Object.fromEntries(
 			Object.entries(p.modelOverrides ?? {}).map(([id, limits]) => [id, { ...limits }]),
+		),
+		modelThinking: Object.fromEntries(
+			Object.entries(p.modelThinking ?? {}).map(([id, levels]) => [id, [...levels]]),
 		),
 		hasApiKey: p.encryptedApiKey.length > 0,
 		createdAt: p.createdAt,

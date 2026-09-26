@@ -1,13 +1,91 @@
 import { useEffect, useState } from "react";
 import type { ProxyStatus } from "../../../../shared/settings";
-import type { AppPreferences } from "../../../../shared/preferences";
+import type { AppPreferences, CommandShellId, CommandShellOption } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
 import { LANGUAGE_OPTIONS, useTranslation, type TranslationKey } from "../../i18n";
 import { cn, getNavigatorPlatform, isWindowsPlatform } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./SettingsRow";
+
+const COMMAND_SHELL_KEYS: Record<CommandShellId, TranslationKey> = {
+	auto: "settings.commandShell.auto",
+	powershell: "settings.commandShell.powershell",
+	pwsh: "settings.commandShell.pwsh",
+	cmd: "settings.commandShell.cmd",
+	"git-bash": "settings.commandShell.gitBash",
+	bash: "settings.commandShell.bash",
+	zsh: "settings.commandShell.zsh",
+	sh: "settings.commandShell.sh",
+};
+
+/**
+ * Which shell the agent's commands run in. Every shell the platform knows is
+ * listed; one that is not installed is shown but cannot be picked, so the
+ * list says what exists rather than hiding it.
+ */
+function CommandShellRow({
+	value,
+	onChange,
+}: {
+	value: CommandShellId | undefined;
+	onChange: (value: CommandShellId) => void;
+}) {
+	const { t } = useTranslation();
+	const [shells, setShells] = useState<CommandShellOption[] | null>(null);
+	useEffect(() => {
+		api
+			.preferencesCommandShells()
+			.then(setShells)
+			.catch(() => setShells([]));
+	}, []);
+	const selected = shells?.find((shell) => shell.id === value);
+	// Chosen once, since uninstalled: new sessions fall back to automatic.
+	const missing = !!value && value !== "auto" && !!shells && !selected?.path;
+	return (
+		<div className="flex flex-col gap-1.5 py-2.5">
+			<div className="flex items-center justify-between gap-4">
+				<div className="flex min-w-0 flex-col">
+					<span className="text-[length:var(--app-font-size-ui,12px)]">{t("settings.commandShell")}</span>
+					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+						{t("settings.commandShellHint")}
+					</span>
+				</div>
+				<Select
+					value={value ?? "auto"}
+					disabled={!value || !shells}
+					onValueChange={(next) => {
+						if (next) onChange(next as CommandShellId);
+					}}
+				>
+					<SelectTrigger size="sm" className="w-52 shrink-0">
+						<SelectValue>{t(COMMAND_SHELL_KEYS[value ?? "auto"])}</SelectValue>
+					</SelectTrigger>
+					<SelectPopup surface="settings">
+						{(shells ?? []).map((shell) => (
+							<SelectItem key={shell.id} value={shell.id} disabled={shell.id !== "auto" && !shell.path}>
+								{t(COMMAND_SHELL_KEYS[shell.id])}
+								{shell.id !== "auto" && !shell.path ? ` · ${t("settings.commandShellMissing")}` : ""}
+							</SelectItem>
+						))}
+					</SelectPopup>
+				</Select>
+			</div>
+			{selected?.path ? (
+				<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground" title={selected.path}>
+					{selected.path}
+				</span>
+			) : null}
+			{missing ? (
+				<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-[var(--warning)]">
+					{t("settings.commandShellFallback")}
+				</span>
+			) : null}
+		</div>
+	);
+}
 
 const PROXY_SOURCE_KEYS: Record<ProxyStatus["source"], TranslationKey> = {
 	manual: "settings.proxy.source.manual",
@@ -85,6 +163,9 @@ export function GeneralSettings() {
 					))}
 				</div>
 			</SettingsRow>
+
+			{/* The agent runs every command through this; it is picked before the rest is tuned. */}
+			<CommandShellRow value={preferences?.commandShell} onChange={(commandShell) => setPreference({ commandShell })} />
 
 			<SettingsRow hint={t("settings.notifyOnTaskFinishHint")} label={t("settings.notifyOnTaskFinish")}>
 				<Switch

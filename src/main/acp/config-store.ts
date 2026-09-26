@@ -127,8 +127,8 @@ export class AcpConfigStore {
 		const command = request.command.trim();
 		const builtin = BUILTIN_ACP_AGENTS.find((agent) => agent.id === request.id);
 		if (!name) throw new Error("请填写代理名称");
-		// A built-in agent without a command runs its bundled adapter.
-		if (!command && !builtin?.bundled) throw new Error("请填写启动命令");
+		// A built-in agent without a command runs its bundled adapter or its own CLI.
+		if (!command && !builtin?.bundled && !builtin?.native) throw new Error("请填写启动命令");
 		const file = this.load();
 		const fields = { name, command, args: command ? [...request.args] : [], env: { ...request.env }, enabled: request.enabled };
 		if (builtin) {

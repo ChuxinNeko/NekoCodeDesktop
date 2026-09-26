@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Api, AssistantMessageEventStream, Model, SimpleStreamOptions, Context, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessageEventStream, Model, SimpleStreamOptions, Context, JsonObject, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
 import type { AntigravityMessage, Part } from "./antigravity-request";
 import { buildAntigravityRequest } from "./antigravity-request";
 import type { AntigravityOAuthService } from "./antigravity-oauth-service";
@@ -148,7 +148,8 @@ export class AntigravityStream {
 						const tool = context.tools?.find((entry) => entry.name === name);
 						const needsPlaceholder = model.id.includes("claude") || model.id.includes("gemini-3-pro") || model.id.includes("gemini-3.1-pro");
 						const args = tool ? restoreAntigravityToolArguments(part.functionCall.args ?? {}, tool.parameters, needsPlaceholder) : structuredClone(part.functionCall.args ?? {});
-						const call: ToolCall = { type: "toolCall", id: part.functionCall.id || `call_${randomUUID().replaceAll("-", "")}`, name, arguments: args, thoughtSignature: part.thoughtSignature };
+						// Parsed from the response JSON, so every value is already JSON.
+						const call: ToolCall = { type: "toolCall", id: part.functionCall.id || `call_${randomUUID().replaceAll("-", "")}`, name, arguments: args as JsonObject, thoughtSignature: part.thoughtSignature };
 						if (output.content.some((p) => p.type === "toolCall" && p.id === call.id)) throw new Error("Duplicate Antigravity tool call id");
 						output.content.push(call); index = output.content.length - 1; visible = true;
 						stream.push({ type: "toolcall_start", contentIndex: index, partial: output });

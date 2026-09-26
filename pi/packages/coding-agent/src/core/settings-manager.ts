@@ -73,6 +73,10 @@ export interface ThinkingBudgetsSettings {
 
 export type MermaidRenderingMode = "off" | "final" | "streaming";
 
+/** Cache-warming profile. "idle" also warms between agent runs. */
+export const CACHE_WARMING_MODES = ["off", "streaming", "idle"] as const;
+export type CacheWarmingMode = (typeof CACHE_WARMING_MODES)[number];
+
 export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
 	mermaid?: MermaidRenderingMode; // default: "streaming"
@@ -150,6 +154,7 @@ export interface Settings {
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
+	cacheWarming?: CacheWarmingMode; // default: "streaming"; global only because each refresh costs money
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
@@ -943,6 +948,18 @@ export class SettingsManager {
 		}
 		this.globalSettings.httpIdleTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("httpIdleTimeoutMs");
+		this.save();
+	}
+
+	/** Read from global settings only because warming costs money. */
+	getCacheWarmingMode(): CacheWarmingMode {
+		const mode = this.globalSettings.cacheWarming;
+		return mode !== undefined && CACHE_WARMING_MODES.includes(mode) ? mode : "streaming";
+	}
+
+	setCacheWarmingMode(mode: CacheWarmingMode): void {
+		this.globalSettings.cacheWarming = mode;
+		this.markModified("cacheWarming");
 		this.save();
 	}
 

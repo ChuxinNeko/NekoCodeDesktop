@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import type { SkillOrigin, SkillSummary, SkillsSnapshot } from "../../../../shared/skills";
+import type { ImportSkillsResult, SkillOrigin, SkillSummary, SkillsSnapshot } from "../../../../shared/skills";
 import { api, errorMessage } from "../../api";
 import { useTranslation, type TranslationKey } from "../../i18n";
+import { FolderIcon, PlusIcon, TrashCanIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
+import { useHostDirectoryPicker } from "../HostDirectoryPicker";
+import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
+import { ImportSkillsDialog, NewSkillDialog } from "./SkillDialogs";
 
 /**
  * Which skills the agent knows about, and which of the shipped ones are on.
@@ -12,7 +17,8 @@ import { Switch } from "../ui/switch";
  * A skill costs a name and a one-line description in every system prompt, and
  * buys a procedure the model can read when the task matches. That trade is the
  * whole reason this page exists: switching one off is how you take the line back
- * when you never use it.
+ * when you never use it. The user's own skills can be written or imported here
+ * too; they land as folders in the directories the loader already reads.
  */
 
 const ORIGIN_LABELS: Record<SkillOrigin, TranslationKey> = {
@@ -81,12 +87,24 @@ function Note({ children }: { children: React.ReactNode }) {
 	);
 }
 
+/** Paths as the loader and a directory listing may each spell them. */
+function pathKey(path: string): string {
+	return path.replace(/\\/g, "/").toLowerCase();
+}
+
 export function SkillSettings() {
 	const { t } = useTranslation();
 	const [snapshot, setSnapshot] = useState<SkillsSnapshot | null>(null);
 	const [loading, setLoading] = useState(true);
+	/** The built-in skill being switched, or the path of the skill being deleted. */
 	const [pending, setPending] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	/** The last import's outcome, until the next action replaces it. */
+	const [notice, setNotice] = useState<string | null>(null);
+	const [creating, setCreating] = useState(false);
+	const [importSource, setImportSource] = useState<string | null>(null);
+	const [removing, setRemoving] = useState<SkillSummary | null>(null);
+	const pickDirectory = useHostDirectoryPicker();
 
 	const load = useCallback(() => {
 		api
@@ -130,6 +148,45 @@ export function SkillSettings() {
 			.finally(() => setPending(null));
 	};
 
+	const chooseImportSource = async () => {
+		setError(null);
+		setNotice(null);
+		const path = await pickDirectory(importSource ?? api.homeDir);
+		if (path) setImportSource(path);
+	};
+
+	const imported = (result: ImportSkillsResult | null) => {
+		setImportSource(null);
+		if (!result) return;
+		setSnapshot(result.snapshot);
+		const lines = [
+			...(result.imported.length ? [t("skills.importDone", { count: result.imported.length })] : []),
+			...result.skipped.map((entry) =>
+				t("skills.importSkipped", {
+					name: entry.name,
+					reason: entry.message ?? t(`skills.importProblem.${entry.reason}` as TranslationKey),
+				}),
+			),
+		];
+		setNotice(lines.length ? lines.join("\n") : null);
+	};
+
+	const remove = (skill: SkillSummary) => {
+		setPending(skill.path);
+		setError(null);
+		setNotice(null);
+		api
+			.skillsRemove({ path: skill.path })
+			.then((value) => {
+				if (value) setSnapshot(value);
+			})
+			.catch((cause: unknown) => setError(errorMessage(cause)))
+			.finally(() => {
+				setPending(null);
+				setRemoving(null);
+			});
+	};
+
 	if (loading) {
 		return (
 			<section className="flex items-center gap-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
@@ -139,7 +196,75 @@ export function SkillSettings() {
 		);
 	}
 
-	return <SkillSettingsView snapshot={snapshot} pending={pending} error={error} onToggle={toggle} />;
+	const hasProject = !!snapshot?.directories.project;
+
+	return (
+		<>
+			<SkillSettingsView
+				snapshot={snapshot}
+				pending={pending}
+				error={error}
+				notice={notice}
+				onToggle={toggle}
+				onCreate={() => {
+					setNotice(null);
+					setCreating(true);
+				}}
+				onImport={() => void chooseImportSource()}
+				onRemove={setRemoving}
+			/>
+
+			{creating ? (
+				<NewSkillDialog
+					hasProject={hasProject}
+					onClose={() => setCreating(false)}
+					onSaved={(value) => {
+						if (value) setSnapshot(value);
+						setCreating(false);
+					}}
+				/>
+			) : null}
+
+			{importSource ? (
+				<ImportSkillsDialog
+					key={importSource}
+					source={importSource}
+					hasProject={hasProject}
+					onChooseOther={() => void chooseImportSource()}
+					onClose={() => setImportSource(null)}
+					onImported={imported}
+				/>
+			) : null}
+
+			<ConfirmDialog
+				open={removing !== null}
+				onOpenChange={(open) => {
+					if (!open && !pending) setRemoving(null);
+				}}
+				title={t("skills.removeTitle", { name: removing?.name ?? "" })}
+				description={t("skills.removeDescription")}
+				footer={
+					<>
+						<Button disabled={!!pending} onClick={() => setRemoving(null)} size="sm" variant="chrome-outline">
+							{t("common.cancel")}
+						</Button>
+						<Button
+							disabled={!!pending}
+							onClick={() => removing && remove(removing)}
+							size="sm"
+							variant="destructive"
+						>
+							{t("common.delete")}
+						</Button>
+					</>
+				}
+			>
+				<code className="break-all font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+					{removing?.path.replace(/[\\/]SKILL\.md$/, "")}
+				</code>
+			</ConfirmDialog>
+		</>
+	);
 }
 
 /**
@@ -150,23 +275,60 @@ export function SkillSettingsView({
 	snapshot,
 	pending,
 	error,
+	notice,
 	onToggle,
+	onCreate,
+	onImport,
+	onRemove,
 }: {
 	snapshot: SkillsSnapshot | null;
+	/** The built-in skill being switched, or the path of the skill being deleted. */
 	pending?: string | null;
 	error?: string | null;
+	notice?: string | null;
 	onToggle: (skill: SkillSummary, enabled: boolean) => void;
+	onCreate?: () => void;
+	onImport?: () => void;
+	onRemove?: (skill: SkillSummary) => void;
 }) {
 	const { t } = useTranslation();
 	const builtin = snapshot?.builtin ?? [];
+	const installed = snapshot?.installed ?? [];
+	const installedPaths = new Set(installed.map((skill) => pathKey(skill.path)));
 	// Everything the session loaded that this page does not already list above.
-	const discovered = (snapshot?.active ?? []).filter((skill) => skill.origin !== "builtin");
+	const discovered = (snapshot?.active ?? []).filter(
+		(skill) => skill.origin !== "builtin" && !installedPaths.has(pathKey(skill.path)),
+	);
 
 	return (
 		<section className="flex flex-col gap-4">
 			<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 				{t("skills.intro")}
 			</p>
+
+			{onCreate || onImport ? (
+				<div className="flex flex-col gap-1.5">
+					<div className="flex flex-wrap items-center gap-2">
+						{onCreate ? (
+							<Button onClick={onCreate} size="sm" variant="chrome-outline">
+								<PlusIcon className="size-3.5" />
+								{t("skills.create")}
+							</Button>
+						) : null}
+						{onImport ? (
+							<Button onClick={onImport} size="sm" variant="chrome-outline">
+								<FolderIcon className="size-3.5" />
+								{t("skills.import")}
+							</Button>
+						) : null}
+					</div>
+					{notice ? (
+						<span className="whitespace-pre-line text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+							{notice}
+						</span>
+					) : null}
+				</div>
+			) : null}
 
 			<div className="flex flex-col gap-2">
 				<h3 className="text-[length:var(--app-font-size-ui,12px)] font-medium">
@@ -199,19 +361,36 @@ export function SkillSettingsView({
 
 			<div className="flex flex-col gap-2">
 				<h3 className="text-[length:var(--app-font-size-ui,12px)] font-medium">
-					{t("skills.discoveredTitle")}
+					{t("skills.mineTitle")}
 				</h3>
 				<Card>
-					{!snapshot ? (
-						<Note>{t("skills.needSession")}</Note>
-					) : discovered.length === 0 ? (
-						<Note>{t("skills.discoveredEmpty")}</Note>
+					{installed.length === 0 ? (
+						<Note>{t("skills.mineEmpty")}</Note>
 					) : (
-						discovered.map((skill) => <SkillRow key={skill.path} skill={skill} />)
+						installed.map((skill) => (
+							<SkillRow
+								key={skill.path}
+								skill={skill}
+								action={
+									onRemove ? (
+										<Button
+											aria-label={t("common.delete")}
+											title={t("common.delete")}
+											disabled={pending === skill.path}
+											onClick={() => onRemove(skill)}
+											size="icon-xs"
+											variant="ghost"
+										>
+											<TrashCanIcon className="size-3.5" />
+										</Button>
+									) : undefined
+								}
+							/>
+						))
 					)}
 				</Card>
 				<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-					{t("skills.addYourOwn")}
+					{t("skills.mineHint")}
 				</span>
 				<div className="flex flex-col gap-0.5 font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 					<span className="truncate" title={snapshot?.directories.user}>
@@ -221,6 +400,21 @@ export function SkillSettingsView({
 						{snapshot?.directories.project ?? t("skills.noProject")}
 					</span>
 				</div>
+			</div>
+
+			<div className="flex flex-col gap-2">
+				<h3 className="text-[length:var(--app-font-size-ui,12px)] font-medium">
+					{t("skills.discoveredTitle")}
+				</h3>
+				<Card>
+					{!snapshot || snapshot.active.length === 0 ? (
+						<Note>{t("skills.needSession")}</Note>
+					) : discovered.length === 0 ? (
+						<Note>{t("skills.discoveredEmpty")}</Note>
+					) : (
+						discovered.map((skill) => <SkillRow key={skill.path} skill={skill} />)
+					)}
+				</Card>
 			</div>
 
 			{snapshot && snapshot.warnings.length > 0 ? (

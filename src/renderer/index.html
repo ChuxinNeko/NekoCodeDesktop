@@ -9,8 +9,137 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<link rel="icon" type="image/png" href="./icon.png" />
 		<title>NekoCode Desktop</title>
+		<!--
+			The boot splash: plain HTML and CSS, so it paints as soon as this file is
+			parsed — long before the bundle has loaded and React has rendered. It
+			sits over the window's own backdrop (Mica, Acrylic or the solid shell
+			color), so it brings no background of its own in the desktop app, and
+			follows the system theme the way that backdrop does. main.tsx fades it
+			out after the app's first render.
+		-->
+		<style>
+			#boot-splash {
+				position: fixed;
+				inset: 0;
+				z-index: 2147483647;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				gap: 14px;
+				font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
+				color: rgba(26, 26, 25, 0.72);
+				/* The window can be moved while it is still starting. */
+				-webkit-app-region: drag;
+				user-select: none;
+				transition: opacity 180ms ease-out;
+			}
+			#boot-splash[data-state="leaving"] {
+				opacity: 0;
+				pointer-events: none;
+			}
+			/* Held back a moment, so a fast start never flashes it. */
+			#boot-splash > .boot-splash__content {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 14px;
+				opacity: 0;
+				animation: boot-splash-in 240ms ease-out 120ms forwards;
+			}
+			#boot-splash img {
+				width: 64px;
+				height: 64px;
+				-webkit-user-drag: none;
+				animation: boot-splash-breathe 2.4s ease-in-out 360ms infinite;
+			}
+			#boot-splash .boot-splash__name {
+				font-size: 13px;
+				font-weight: 600;
+				letter-spacing: 0.01em;
+			}
+			#boot-splash .boot-splash__track {
+				position: relative;
+				width: 112px;
+				height: 3px;
+				overflow: hidden;
+				border-radius: 999px;
+				background: rgba(26, 26, 25, 0.1);
+			}
+			#boot-splash .boot-splash__bar {
+				position: absolute;
+				inset: 0 auto 0 0;
+				width: 40%;
+				border-radius: inherit;
+				background: rgba(26, 26, 25, 0.45);
+				animation: boot-splash-slide 1.1s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+			}
+			@media (prefers-color-scheme: dark) {
+				#boot-splash {
+					color: rgba(255, 255, 255, 0.72);
+				}
+				#boot-splash .boot-splash__track {
+					background: rgba(255, 255, 255, 0.12);
+				}
+				#boot-splash .boot-splash__bar {
+					background: rgba(255, 255, 255, 0.5);
+				}
+			}
+			/* A browser tab has no backdrop behind it, so the WebUI gets the shell color. */
+			html[data-runtime="web"] #boot-splash {
+				background: #f9f9f7;
+			}
+			@media (prefers-color-scheme: dark) {
+				html[data-runtime="web"] #boot-splash {
+					background: #1a1a19;
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				#boot-splash img,
+				#boot-splash .boot-splash__bar {
+					animation: none;
+				}
+				#boot-splash .boot-splash__bar {
+					left: 30%;
+				}
+			}
+			@keyframes boot-splash-in {
+				from {
+					opacity: 0;
+					transform: translateY(4px);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
+			@keyframes boot-splash-breathe {
+				0%,
+				100% {
+					transform: scale(1);
+				}
+				50% {
+					transform: scale(1.04);
+				}
+			}
+			@keyframes boot-splash-slide {
+				from {
+					transform: translateX(-100%);
+				}
+				to {
+					transform: translateX(250%);
+				}
+			}
+		</style>
 	</head>
 	<body>
+		<div id="boot-splash" aria-busy="true" aria-label="NekoCode Desktop">
+			<div class="boot-splash__content">
+				<img src="./icon.png" alt="" />
+				<span class="boot-splash__name">NekoCode</span>
+				<div class="boot-splash__track"><div class="boot-splash__bar"></div></div>
+			</div>
+		</div>
 		<div id="root"></div>
 		<script type="module" src="/src/main.tsx"></script>
 	</body>

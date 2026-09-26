@@ -2,14 +2,90 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Unified image models into the regular `Provider`/`Models` surface. The separate `ImagesModels` collection is removed: `createImagesModels()`, `createImagesProvider()`, `ImagesProvider`, `openrouterImagesProvider()`, `builtinImagesProviders()`, and `builtinImagesModels()` are gone. Use `builtinModels()`, `models.getModelOfType("image", ...)`, `models.generateImages()`, and `createProvider({ models, images })` instead. Existing unqualified reads remain chat-only.
+- Image models are now `ImageModel` with a required `type: "image"` and share `BaseModel` with chat models. The old plural image type names (`ImagesModel`, `ImagesApi`, `KnownImagesApi`, `KnownImagesProvider`, and `ImagesProviderId`) are removed. `generateImages()` accepts only image models. Output modalities (`output`) remain on image models only.
+- Generated model data schema is now version 6: every entry carries `type`, operation-specific catalogs include chat, image, and classifier models, and one upstream ID may have separate entries per type. OpenRouter image models live in the `openrouter-images` api group of `openrouter.json`; `image-models.generated.ts` and `scripts/generate-image-models.ts` are removed. Run `npm run hydrate:model-data`.
+
 ### Added
 
-- Enabled native deferred tool loading for Fireworks Messages models. Use `ToolSearch` or `tool_search` as the loader name for prompt-prefix deferral ([#9323](https://github.com/earendil-works/pi/issues/9323)).
+- Added `Models.generateImages()` with provider-resolved auth, `Provider.generateImages?`, and `createProvider({ images })` keyed by `model.api`. `createProvider()` `models` and `fetchModels` accept models of every type, and `api` is optional when `images` or `classifiers` is given.
+- Added an optional model `type` (`"chat"`, `"image"`, or `"classifier"`). Chat models may omit it, so existing chat models, providers, and stores keep working unchanged. Narrow mixed lists with the new `isModelType()` guard or read the effective type with `getModelType()`.
+- Added `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()`, and `getAllAvailable()` on `Models`; optional `Provider.getAllModels()` and `Provider.filterAllModels()`; corresponding generated-catalog accessors; and the `AnyModel` and `ModelTypeMap` types. `hasApi()`, `calculateCost()`, and `modelsAreEqual()` accept `AnyModel`.
+- Added support for models of every type in `ModelsStoreEntry.models`. Stored and fetched models of unknown types are dropped instead of failing a refresh.
+- Added classifier models and `Models.classify()` with a provider-neutral JEV-style `choice`/`score`/`bool` contract. The built-in TypeSafe provider exposes models.dev's `jev-latest` through the System One API and translates public `bool` questions to TypeSafe's `noul` wire format.
+- Added Jev classifier models on OpenRouter (`typesafe/jev-1.13`, `~typesafe/jev-latest`) through its TypeSafe-compatible System One endpoint, and on Cloudflare Workers AI (`typesafe/jev`) through the new `cloudflare-workers-ai-system-one` classifier API.
+- Added a runtime chat-model check to the `Models` stream entry points so non-chat models fail with a clear `ModelsError` instead of a missing-api stream error.
+- Added array-based `models.all.json` and `providers/{id}.all.json` variants to the generated and published JSON catalog, allowing the same upstream ID once per model type; the existing keyed `models.json` and `providers/{id}.json` stay chat-only for released clients.
+- Added `onProviderStreamEvent` to observe parsed provider stream events before normalization, including provider-specific fields not retained in assistant messages ([#9784](https://github.com/earendil-works/pi/issues/9784)).
 
 ### Fixed
 
-- Fixed Amazon Bedrock one-hour cache writes being priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
+- Fixed 1-hour Anthropic cache writes reported by Vercel AI Gateway in streaming deltas being priced at the 5-minute rate ([#9210](https://github.com/earendil-works/pi/issues/9210)).
+- Fixed model-level `samplingParams` being dropped by direct `stream()`/`complete()` calls on OpenAI-compatible APIs ([#9506](https://github.com/earendil-works/pi/issues/9506)).
+- Fixed Mistral GLM models producing empty text blocks and split thinking blocks from empty content deltas, which could make later requests fail with "Expected at most one leading ThinkChunk" ([#9674](https://github.com/earendil-works/pi/issues/9674)).
+- Fixed OpenAI Fast mode requests being priced at the standard rate when the response reports `service_tier: "fast"`, as GPT-6 models do ([#10034](https://github.com/earendil-works/pi/issues/10034)).
+
+## [0.87.1] - 2026-09-22
+
+### Added
+
+- Added Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna to the GitHub Copilot catalog.
+- Added GPT-6 Sol and GPT-6 Luna for OpenAI API keys and OpenAI Codex subscriptions, with full reasoning-effort, prompt-caching, tool-search, long-context pricing, and official cost metadata.
+- Added Claude Opus 5.5 to the built-in Anthropic model catalog with adaptive thinking, 1M context, and official pricing metadata.
+- Added Grok 4.7 to the built-in xAI model catalog with long-context pricing metadata.
+
+### Fixed
+
+- Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
+- Fixed Anthropic OAuth requests reporting an outdated Claude Code version.
+
+## [0.87.0] - 2026-09-21
+
+### Added
+
+- Added model image-input limit and cache-safe resize metadata to the generated catalog ([#9631](https://github.com/earendil-works/pi/issues/9631)).
+
+### Fixed
+
+- Fixed unknown OpenAI-compatible Chat Completions endpoints receiving strict tool schemas unless they explicitly advertise support, while preserving strict tools for capable built-in models ([#9816](https://github.com/earendil-works/pi/issues/9816)).
+
+## [0.86.1] - 2026-09-20
+
+### Added
+
+- Added Meta provider (Model API key and Muse subscription OAuth) with Muse Spark models ([#9096](https://github.com/earendil-works/pi/pull/9096) by [@xl0](https://github.com/xl0)).
+
+### Fixed
+
+- Fixed z.ai `Prompt too long` errors not being recognized as context overflow ([#9805](https://github.com/earendil-works/pi/issues/9805)).
+- Fixed Cerebras models advertising unsupported strict tool schemas, which caused HTTP 400 errors when strict and non-strict tools were mixed ([#9804](https://github.com/earendil-works/pi/pull/9804) by [@EdenGottlieb](https://github.com/EdenGottlieb)).
+
+## [0.86.0] - 2026-09-19
+
+### Breaking Changes
+
+- Changed provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers must read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. See [System Messages](README.md#system-messages).
+- Restricted `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly.
+
+### Added
+
+- Added transcript-backed mid-conversation system prompt and tool changes, with native replay on supported models and automatic collapse for other providers. See [System Messages](README.md#system-messages) ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+- Added a generated public Radius model catalog for synchronous API lookup, with cached and live gateway catalogs overlaid at runtime.
+- Enabled native deferred tool loading for Fireworks Messages models. Use `ToolSearch` or `tool_search` as the loader name for prompt-prefix deferral ([#9323](https://github.com/earendil-works/pi/issues/9323)).
 - Added `RetryPolicy.maxAgentDelayMs` support to cap shared assistant retry backoff for summarization calls ([#8826](https://github.com/earendil-works/pi/issues/8826)).
+- Added `Model.promptCache` lifetime metadata for short and long retention tiers to support prompt-cache warming decisions ([#9668](https://github.com/earendil-works/pi/pull/9668)).
+
+### Fixed
+
+- Fixed GitHub Copilot GPT models, including GPT-6 Astra, using the Chat Completions adapter instead of the required Responses adapter ([#9253](https://github.com/earendil-works/pi/pull/9253) by [@petrroll](https://github.com/petrroll)).
+- Fixed DeepSeek V4.1 thinking levels on OpenRouter and OpenCode Go preserving provider effort metadata ([#9485](https://github.com/earendil-works/pi/issues/9485)).
+- Fixed bodyless HTTP 400/413 errors from non-Cerebras providers being misclassified as context overflow ([#9482](https://github.com/earendil-works/pi/issues/9482)).
+- Fixed Vercel AI Gateway replaying unsigned thinking as assistant text ([#9676](https://github.com/earendil-works/pi/issues/9676)).
+- Fixed Google Generative AI and Vertex AI using unsupported thinking levels when reasoning is omitted or when model capabilities differ within a Gemini family ([#9455](https://github.com/earendil-works/pi/issues/9455)).
+- Fixed Anthropic-compatible relays breaking signed thinking replay when they report a different response model, while preserving fallback pricing ([#9188](https://github.com/earendil-works/pi/issues/9188)).
+- Fixed Amazon Bedrock one-hour cache writes being priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
 - Fixed quadratic CPU usage when draining buffered `EventStream` events ([#9055](https://github.com/earendil-works/pi/issues/9055)).
 - Fixed Mistral Medium reasoning requests to use `reasoning_effort` for all reasoning-capable `mistral-medium-*` model IDs instead of the unsupported `prompt_mode` ([#8700](https://github.com/earendil-works/pi/issues/8700)).
 - Fixed OpenCode and OpenCode Go requests to send `x-opencode-session` from `sessionId` across all supported API adapters ([#9326](https://github.com/earendil-works/pi/issues/9326)).
@@ -17,9 +93,15 @@
 - Fixed Fireworks unsigned thinking replay and reasoning effort selection using catalog metadata, with verified DeepSeek V4 and Qwen3.8 fallbacks and removal of redundant GLM 5.2 and Kimi K3 effort aliases ([#9323](https://github.com/earendil-works/pi/issues/9323)).
 - Fixed OpenRouter requests to send `x-session-id` from `sessionId` for Chat Completions and Anthropic Messages models when prompt caching is enabled ([#9102](https://github.com/earendil-works/pi/issues/9102)).
 - Fixed the DeepSeek catalog to advertise `deepseek-flash` for DeepSeek V4.1 Flash instead of retired Flash aliases, and refreshed DeepSeek pricing metadata ([#9423](https://github.com/earendil-works/pi/issues/9423)).
-- Removed GPT-5.4 and GPT-5.4 mini from the OpenAI Codex catalog after they became unavailable to ChatGPT accounts ([#9394](https://github.com/earendil-works/pi/issues/9394)).
 - Fixed Mistral-hosted GLM-5.2 reasoning requests to use `reasoning_effort` instead of the ignored `prompt_mode` ([#9375](https://github.com/earendil-works/pi/issues/9375)).
 - Fixed OpenAI-compatible Responses errors to identify the actual provider instead of always labeling them as OpenAI errors ([#9298](https://github.com/earendil-works/pi/issues/9298)).
+- Fixed Baseten requests to send session-affinity headers from `sessionId` for automatic prompt-cache routing ([#9629](https://github.com/earendil-works/pi/issues/9629)).
+- Fixed retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)).
+- Fixed retry classification for transient Azure peak-load capacity errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
+
+### Removed
+
+- Removed GPT-5.4 and GPT-5.4 mini from the OpenAI Codex catalog after they became unavailable to ChatGPT accounts ([#9394](https://github.com/earendil-works/pi/issues/9394)).
 
 ## [0.85.1] - 2026-09-05
 
@@ -45,6 +127,7 @@
 - Added an optional timestamp argument to `uuidv7()` for follower IDs.
 - Added narrow `api`, `providers`, and `utils` subpath exports for direct imports without loading the package barrel.
 - Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
+- Added Meta provider (Model API key and Muse subscription OAuth) with Muse Spark models.
 
 ### Fixed
 

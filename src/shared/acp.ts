@@ -29,7 +29,7 @@ export interface AcpAgentInfo extends AcpAgentConfig {
 	builtin: boolean;
 	/**
 	 * The command line the user set, as shown so they know what will run.
-	 * Empty for a built-in agent on its bundled adapter.
+	 * Empty for a built-in agent on its bundled adapter or its own CLI.
 	 */
 	commandLine: string;
 	/** Runs the ACP adapter shipped inside NekoCode, which drives the user's own CLI. */
@@ -41,6 +41,15 @@ export interface AcpAgentInfo extends AcpAgentConfig {
 		/** Where that CLI was found on this machine; null when it is not installed. */
 		cliPath: string | null;
 		/** How to get the CLI when it is missing. */
+		installHint: string;
+	};
+	/** Runs the agent's own CLI, which speaks ACP itself. */
+	native?: {
+		/** The arguments that put it in ACP mode, e.g. "acp". */
+		invocation: string;
+		cliName: string;
+		/** Where that CLI was found on this machine; null when it is not installed. */
+		cliPath: string | null;
 		installHint: string;
 	};
 }

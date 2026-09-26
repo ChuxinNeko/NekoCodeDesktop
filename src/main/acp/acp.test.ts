@@ -9,6 +9,7 @@ import { AcpSession } from "./session";
 import { AcpService, parseHistoryPage } from "./service";
 import { AcpConfigStore } from "./config-store";
 import { agentProxyEnv, type AcpAgentDefinition } from "./agents";
+import type { AcpAuthPlan } from "./auth";
 
 type Message = Record<string, unknown>;
 
@@ -716,12 +717,23 @@ describe("AcpConfigStore", () => {
 		return dir;
 	};
 
-	test("ships Codex on and Claude off", () => {
+	test("ships Codex on and every other agent off", () => {
 		const store = new AcpConfigStore(freshDir());
 		expect(store.list().map((agent) => [agent.id, agent.enabled])).toEqual([
 			["codex", true],
 			["claude", false],
+			["cursor", false],
+			["grok", false],
+			["droid", false],
+			["devin", false],
 		]);
+	});
+
+	test("a built-in agent on its own CLI may be saved without a command", () => {
+		const store = new AcpConfigStore(freshDir());
+		const saved = store.save({ id: "cursor", name: "Cursor", command: "", args: [], env: {}, enabled: true });
+		expect(saved).toMatchObject({ id: "cursor", command: "", enabled: true });
+		expect(saved.native?.args).toEqual(["acp"]);
 	});
 
 	test("keeps changes to built-in and custom agents across restarts", () => {
@@ -784,5 +796,100 @@ describe("agentProxyEnv", () => {
 	test("keeps loopback direct even when NekoCode connects directly", () => {
 		// The agent may still apply the OS proxy by itself, and the tool server is on loopback.
 		expect(agentProxyEnv(undefined, {})).toEqual({ NO_PROXY: "localhost,127.0.0.1,::1" });
+	});
+});
+
+describe("signing in to an agent with its own CLI", () => {
+	function authSession(auth: AcpAuthPlan, script: { authRequiredUntilSignedIn?: boolean; authFails?: boolean } = {}) {
+		const transport = new FakeTransport();
+		let signedIn = false;
+		transport.responder = (message) => {
+			const { id, method } = message;
+			if (method === "initialize") {
+				transport.reply(id, { protocolVersion: 1, agentCapabilities: {}, authMethods: [{ id: "cached_token" }, { id: "browser_login" }] });
+			} else if (method === "authenticate") {
+				if (script.authFails) {
+					transport.deliver({ jsonrpc: "2.0", id, error: { code: -32000, message: "not logged in" } });
+				} else {
+					signedIn = true;
+					transport.reply(id, {});
+				}
+			} else if (method === "session/new") {
+				if (script.authRequiredUntilSignedIn && !signedIn) {
+					transport.deliver({ jsonrpc: "2.0", id, error: { code: AUTH_REQUIRED, message: "Authentication required" } });
+				} else {
+					transport.reply(id, { sessionId: "agent-1" });
+				}
+			}
+		};
+		const session = new AcpSession({
+			id: "local-1",
+			agent: {
+				...AGENT,
+				builtin: true,
+				command: "",
+				native: { binary: "grok", args: ["stdio"], cliName: "Fake CLI", installHint: "", auth },
+			},
+			cwd: "/project",
+			clientVersion: "0.0.0",
+			createTransport: () => transport,
+			onChange: () => {},
+			env: { XAI_API_KEY: "" },
+			now: () => 1000,
+		});
+		return { session, transport };
+	}
+
+	const methods = (transport: FakeTransport) => transport.sent.map((message) => message.method);
+
+	test("signs in up front when the agent wants it before any session", async () => {
+		const seen: string[][] = [];
+		const { session, transport } = authSession({
+			when: "always",
+			choose: async (advertised) => {
+				seen.push([...advertised]);
+				return { methodId: "cached_token", meta: { headless: true } };
+			},
+		});
+		await session.start();
+		expect(session.snapshot().status).toBe("ready");
+		expect(seen).toEqual([["cached_token", "browser_login"]]);
+		expect(methods(transport)).toEqual(["initialize", "authenticate", "session/new"]);
+		expect(transport.sent[1].params).toEqual({ methodId: "cached_token", _meta: { headless: true } });
+	});
+
+	test("signs in on demand and opens the session again, once", async () => {
+		const { session, transport } = authSession(
+			{ when: "on-demand", choose: async () => ({ methodId: "cached_token" }) },
+			{ authRequiredUntilSignedIn: true },
+		);
+		await session.start();
+		expect(session.snapshot().status).toBe("ready");
+		expect(methods(transport)).toEqual(["initialize", "session/new", "authenticate", "session/new"]);
+	});
+
+	test("an on-demand agent that needs no sign-in is never asked to", async () => {
+		const { session, transport } = authSession({ when: "on-demand", choose: async () => ({ methodId: "cached_token" }) });
+		await session.start();
+		expect(methods(transport)).toEqual(["initialize", "session/new"]);
+	});
+
+	test("says what to run when there is no usable login", async () => {
+		const { session, transport } = authSession({
+			when: "always",
+			choose: async () => {
+				throw new Error("请先在终端运行 fake login");
+			},
+		});
+		await session.start();
+		expect(session.snapshot()).toMatchObject({ status: "error", error: "请先在终端运行 fake login" });
+		expect(methods(transport)).toEqual(["initialize"]);
+	});
+
+	test("a refused sign-in names the agent and the method", async () => {
+		const { session } = authSession({ when: "always", choose: async () => ({ methodId: "cached_token" }) }, { authFails: true });
+		await session.start();
+		expect(session.snapshot().status).toBe("error");
+		expect(session.snapshot().error).toContain("Fake 登录失败（cached_token）");
 	});
 });

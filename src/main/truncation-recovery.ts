@@ -43,17 +43,23 @@ export function attachTruncationRecovery(
 ): void {
 	let consecutive = 0;
 
-	const previousStop = session.agent.shouldStopAfterTurn;
-	session.agent.shouldStopAfterTurn = async (context, signal) => {
+	const previousFinish = session.agent.finishTurn;
+	session.agent.finishTurn = async (turn, signal) => {
+		// The previous hook always runs: the session dispatches turn_end through it.
+		const decision = await previousFinish?.(turn, signal);
+		// Error and aborted turns end the run regardless of the decision, and
+		// never counted toward or reset the truncation streak.
+		const { stopReason } = turn.message;
+		if (stopReason === "error" || stopReason === "aborted") return decision || undefined;
 		// Counted here rather than in prepareNextTurn, which only runs when the
 		// loop continues: a truncated turn that called no tools ends the run on
 		// its own and must not leave the count standing for the next prompt.
-		consecutive = context.message.stopReason === "length" ? consecutive + 1 : 0;
+		consecutive = stopReason === "length" ? consecutive + 1 : 0;
 		if (consecutive > MAX_TRUNCATION_NUDGES) {
 			onStopped(TRUNCATION_STOPPED_NOTICE);
-			return true;
+			return { action: "end" };
 		}
-		return (await previousStop?.(context, signal)) === true;
+		return decision || undefined;
 	};
 
 	const previousPrepare = session.agent.prepareNextTurnWithContext;

@@ -4,7 +4,34 @@
 
 ### Fixed
 
+- Fixed `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)).
+- Fixed path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<`, or a backtick, e.g. `(~/Dev<Tab>`.
+- Reduced image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938)).
+- Fixed the shell cursor staying hidden after exit when an extension closed an overlay during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)).
+
+## [0.87.1] - 2026-09-22
+
+## [0.87.0] - 2026-09-21
+
+## [0.86.1] - 2026-09-20
+
+## [0.86.0] - 2026-09-19
+
+### Added
+
+- Added bundled asynchronous native clipboard readers for macOS, Windows, and X11 through the exported `getNativeClipboard()` API, replacing the external native clipboard dependency in consumers ([#9163](https://github.com/earendil-works/pi/pull/9163)).
+
+### Changed
+
+- Reduced fuzzy search latency for long texts by using native substring search instead of scanning each character in JavaScript ([#9267](https://github.com/earendil-works/pi/issues/9267)).
+
+### Fixed
+
+- Fixed LaTeX legacy font switches falling back to raw source, centered `cases` layouts around surrounding equations, and vertically laid out unsupported and nested display scripts ([#8827](https://github.com/earendil-works/pi/issues/8827), [#9564](https://github.com/earendil-works/pi/issues/9564), [#7929](https://github.com/earendil-works/pi/issues/7929)).
 - Fixed fullscreen clipboard failures hiding actionable backend error messages behind a generic notice, and extended failure notices to five seconds ([#9618](https://github.com/earendil-works/pi/issues/9618)).
+- Fixed fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
+- Fixed skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
+- Fixed file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
 
 ## [0.85.1] - 2026-09-05
 

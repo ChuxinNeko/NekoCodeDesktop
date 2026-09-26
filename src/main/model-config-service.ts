@@ -18,6 +18,7 @@ import type {
 	ModelStoreStatus,
 	SaveModelProfileRequest,
 } from "../shared/settings";
+import type { ThinkingLevel } from "../shared/agent";
 import {
 	buildModelsHeaders,
 	parseModelsJson,
@@ -38,6 +39,7 @@ import {
 	MIN_TOKEN_LIMIT,
 	PROVIDER_KINDS,
 	isValidModelOverrides,
+	isValidModelThinking,
 	isValidTokenLimit,
 	toSummary,
 	validateProfileFile,
@@ -62,6 +64,7 @@ export interface RegistrationProfile {
 	contextWindow: number;
 	maxTokens: number;
 	modelOverrides: Record<string, ModelTokenLimits>;
+	modelThinking: Record<string, ThinkingLevel[]>;
 }
 
 export class ModelConfigService {
@@ -195,11 +198,24 @@ export class ModelConfigService {
 				.map(([id, limits]) => [id, { ...limits }]),
 		);
 
+		if (req.modelThinking !== undefined && !isValidModelThinking(req.modelThinking)) {
+			throw new Error("模型思考等级格式不正确");
+		}
+		const modelThinking = Object.fromEntries(
+			Object.entries(req.modelThinking ?? existing?.modelThinking ?? {})
+				.filter(([id]) => modelIds.includes(id))
+				.map(([id, levels]) => [id, [...levels]]),
+		);
+
 		const submittedKey = req.apiKey?.trim() ?? "";
 		let encryptedApiKey: string;
 		if (submittedKey) {
 			if (!safeStorage.isEncryptionAvailable()) {
-				throw new Error("系统密钥环不可用，无法安全保存 API Key");
+				throw new Error(
+					process.platform === "linux"
+						? "系统密钥环不可用，无法安全保存 API Key（可解锁系统密钥环，或以 --password-store=basic 启动）"
+						: "系统密钥环不可用，无法安全保存 API Key",
+				);
 			}
 			encryptedApiKey = safeStorage
 				.encryptString(submittedKey)
@@ -228,6 +244,7 @@ export class ModelConfigService {
 					contextWindow: req.contextWindow ?? existing.contextWindow,
 					maxTokens: req.maxTokens ?? existing.maxTokens,
 					modelOverrides,
+					modelThinking,
 					updatedAt: now,
 				}
 			: {
@@ -244,6 +261,7 @@ export class ModelConfigService {
 					contextWindow: req.contextWindow,
 					maxTokens: req.maxTokens,
 					modelOverrides,
+					modelThinking,
 					createdAt: now,
 					updatedAt: now,
 				};
@@ -337,6 +355,9 @@ export class ModelConfigService {
 					maxTokens: p.maxTokens ?? DEFAULT_MAX_TOKENS,
 					modelOverrides: Object.fromEntries(
 						Object.entries(p.modelOverrides ?? {}).map(([id, limits]) => [id, { ...limits }]),
+					),
+					modelThinking: Object.fromEntries(
+						Object.entries(p.modelThinking ?? {}).map(([id, levels]) => [id, [...levels]]),
 					),
 				};
 			});

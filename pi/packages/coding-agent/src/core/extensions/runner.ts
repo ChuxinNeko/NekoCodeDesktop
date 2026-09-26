@@ -3,24 +3,42 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
+import {
+	getCurrentSystemMessage,
+	type ImageContent,
+	type Model,
+	type Provider,
+	type ProviderHeaders,
+} from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
+import type { CacheWarmingAction } from "../cache-warmer.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
-import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	buildSystemPrompt,
+	type NormalizedBuildSystemPromptOptions,
+	normalizeBuildSystemPromptOptions,
+} from "../system-prompt.ts";
 import type {
+	AgentBeforeSettleEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
+	BoundaryContextPreview,
+	BoundaryResult,
+	CacheWarmingDecisionEvent,
+	CacheWarmingDecisionEventResult,
 	CompactOptions,
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	ContextWithSystemEvent,
 	EntryRenderer,
 	Extension,
 	ExtensionActions,
@@ -57,11 +75,13 @@ import type {
 	SessionBeforeForkResult,
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeResult,
+	SessionBoundaryDraft,
 	SessionShutdownEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
+	TurnEndEvent,
 	UIPromptKind,
 	UserBashEvent,
 	UserBashEventResult,
@@ -113,10 +133,36 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 	return builtinKeybindings;
 };
 
-/** Combined result from all before_agent_start handlers */
+function isUserBashEventResult(value: unknown): value is UserBashEventResult {
+	if (typeof value !== "object" || value === null) return false;
+	const candidate = value as Record<string, unknown>;
+	const hasOperations = candidate.operations !== undefined;
+	const hasResult = candidate.result !== undefined;
+	if (hasOperations === hasResult) return false;
+
+	if (hasOperations) {
+		const operations = candidate.operations;
+		if (typeof operations !== "object" || operations === null) return false;
+		return typeof (operations as Record<string, unknown>).exec === "function";
+	}
+
+	const result = candidate.result;
+	if (typeof result !== "object" || result === null) return false;
+	const resultRecord = result as Record<string, unknown>;
+	return (
+		typeof resultRecord.output === "string" &&
+		"exitCode" in resultRecord &&
+		(resultRecord.exitCode === undefined || typeof resultRecord.exitCode === "number") &&
+		typeof resultRecord.cancelled === "boolean" &&
+		typeof resultRecord.truncated === "boolean" &&
+		(resultRecord.fullOutputPath === undefined || typeof resultRecord.fullOutputPath === "string")
+	);
+}
+
+/** Combined result from all before_agent_start handlers. */
 interface BeforeAgentStartCombinedResult {
-	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
-	systemPrompt?: string;
+	messages: NonNullable<BeforeAgentStartEventResult["message"]>[];
+	systemPromptOptions: NormalizedBuildSystemPromptOptions;
 }
 
 /**
@@ -130,12 +176,16 @@ type RunnerEmitEvent = Exclude<
 	| ToolResultEvent
 	| UserBashEvent
 	| ContextEvent
+	| ContextWithSystemEvent
+	| CacheWarmingDecisionEvent
 	| BeforeProviderRequestEvent
 	| BeforeProviderHeadersEvent
 	| BeforeAgentStartEvent
 	| MessageEndEvent
 	| ResourcesDiscoverEvent
 	| InputEvent
+	| TurnEndEvent
+	| AgentBeforeSettleEvent
 >;
 
 type SessionBeforeEvent = Extract<
@@ -160,6 +210,17 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 				: undefined;
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
+
+type BoundaryBaseEvent =
+	| Omit<TurnEndEvent, "entries" | "continue" | "context">
+	| Omit<AgentBeforeSettleEvent, "entries" | "continue" | "context">;
+
+interface BoundaryDispatchResult {
+	entries: SessionBoundaryDraft[];
+	continue: boolean;
+	context: BoundaryContextPreview;
+	valid: boolean;
+}
 
 export type NewSessionHandler = (options?: {
 	parentSession?: string;
@@ -201,18 +262,41 @@ export async function emitSessionShutdownEvent(
 	return false;
 }
 
+function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
+	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
+}
+
+function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {
+	return left.length === right.length && left.every((message, index) => message === right[index]);
+}
+
+/**
+ * Re-attach the prompt and tool state after a `context` handler. Handlers only see the
+ * conversation; the system messages belong to Pi. An unchanged conversation keeps every
+ * system message in place, so models with mid-conversation support keep their cached
+ * prefix. A changed one gets the replayed prompt sections and tool declarations as one
+ * leading system message, so pruning, windowing, or slicing from a compaction summary
+ * cannot drop them.
+ */
+function restoreSystemMessages(
+	current: AgentMessage[],
+	visible: AgentMessage[],
+	returned: AgentMessage[],
+): AgentMessage[] {
+	if (sameMessages(returned, visible)) return current;
+	const head = getCurrentSystemMessage(current);
+	return head ? [head, ...returned] : returned;
+}
+
 export async function emitProjectTrustEvent(
 	extensionsResult: LoadExtensionsResult,
 	event: ProjectTrustEvent,
 	ctx: ProjectTrustContext,
 ): Promise<{ result?: ProjectTrustEventResult; errors: ExtensionError[] }> {
 	const errors: ExtensionError[] = [];
-	for (const ext of extensionsResult.extensions) {
+	for (const { ext, handlers } of snapshotEventHandlers(extensionsResult.extensions, "project_trust")) {
 		// A single extension may register multiple handlers for the same event.
 		// The first project_trust handler that returns yes/no wins; undecided falls through.
-		const handlers = ext.handlers.get("project_trust");
-		if (!handlers || handlers.length === 0) continue;
-
 		for (const handler of handlers) {
 			try {
 				const handlerResult = (await handler(event, ctx)) as ProjectTrustEventResult;
@@ -286,7 +370,8 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
-	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
+	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () =>
+		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -351,7 +436,8 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
-		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
+		this.getSystemPromptOptionsFn =
+			contextActions.getSystemPromptOptions ?? (() => normalizeBuildSystemPromptOptions({ cwd: this.cwd }));
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -839,6 +925,57 @@ export class ExtensionRunner {
 		return context;
 	}
 
+	async emitBoundary(
+		baseEvent: BoundaryBaseEvent,
+		buildContext: (entries: SessionBoundaryDraft[]) => BoundaryContextPreview | Promise<BoundaryContextPreview>,
+	): Promise<BoundaryDispatchResult> {
+		const ctx = this.createContext();
+		let entries: SessionBoundaryDraft[] = [];
+		let shouldContinue = false;
+		let context = await buildContext(entries);
+		let valid = true;
+
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, baseEvent.type)) {
+			for (const handler of handlers) {
+				const event = {
+					...baseEvent,
+					entries,
+					continue: shouldContinue,
+					context,
+				} as TurnEndEvent | AgentBeforeSettleEvent;
+				try {
+					const handlerResult = (await handler(event, ctx)) as BoundaryResult | undefined;
+					if (handlerResult?.entries !== undefined) entries = handlerResult.entries;
+					if (handlerResult?.continue !== undefined) shouldContinue = handlerResult.continue;
+				} catch (err) {
+					this.emitError({
+						extensionPath: ext.path,
+						event: baseEvent.type,
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+
+				try {
+					context = await buildContext(entries);
+					valid = true;
+				} catch (err) {
+					valid = false;
+					this.emitError({
+						extensionPath: ext.path,
+						event: baseEvent.type,
+						error: `Invalid boundary entries: ${err instanceof Error ? err.message : String(err)}`,
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		}
+
+		return valid
+			? { entries, continue: shouldContinue, context, valid: true }
+			: { entries: [], continue: false, context, valid: false };
+	}
+
 	private isSessionBeforeEvent(event: RunnerEmitEvent): event is SessionBeforeEvent {
 		return (
 			event.type === "session_before_switch" ||
@@ -852,10 +989,7 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let result: SessionBeforeEventResult | undefined;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get(event.type);
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = await handler(event, ctx);
@@ -882,15 +1016,36 @@ export class ExtensionRunner {
 		return result as RunnerEmitResult<TEvent>;
 	}
 
+	/** Returns the event's own action unless a handler overrides it; the last override wins. */
+	async emitCacheWarmingDecision(event: CacheWarmingDecisionEvent): Promise<CacheWarmingAction> {
+		const ctx = this.createContext();
+		let action = event.action;
+
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
+			for (const handler of handlers) {
+				try {
+					const result = (await handler(event, ctx)) as CacheWarmingDecisionEventResult | undefined;
+					if (result?.action !== undefined) action = result.action;
+				} catch (err) {
+					this.emitError({
+						extensionPath: ext.path,
+						event: event.type,
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		}
+
+		return action;
+	}
+
 	async emitMessageEnd(event: MessageEndEvent): Promise<AgentMessage | undefined> {
 		const ctx = this.createContext();
 		let currentMessage = event.message;
 		let modified = false;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("message_end");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "message_end")) {
 			for (const handler of handlers) {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
@@ -929,10 +1084,7 @@ export class ExtensionRunner {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("tool_result");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_result")) {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = (await handler(currentEvent, ctx)) as ToolResultEventResult | undefined;
@@ -983,10 +1135,7 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let result: ToolCallEventResult | undefined;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("tool_call");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
 			for (const handler of handlers) {
 				const handlerResult = await handler(event, ctx);
 
@@ -1005,16 +1154,17 @@ export class ExtensionRunner {
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
 		const ctx = this.createContext();
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("user_bash");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "user_bash")) {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = await handler(event, ctx);
-					if (handlerResult) {
-						return handlerResult as UserBashEventResult;
+					if (handlerResult === undefined) continue;
+					if (!isUserBashEventResult(handlerResult)) {
+						throw new Error(
+							"Invalid user_bash handler result: return undefined for local execution or exactly one valid { operations } or { result } object",
+						);
 					}
+					return handlerResult;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -1024,6 +1174,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					throw err;
 				}
 			}
 		}
@@ -1031,28 +1182,64 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
+	/**
+	 * Run the request-time transforms in two phases. `context` handlers see the conversation
+	 * only and Pi restores the prompt and tool state after each; `context_with_system`
+	 * handlers then see the full transcript and their output is used as returned.
+	 */
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
 		const ctx = this.createContext();
 		let currentMessages = structuredClone(messages);
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("context");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
 			for (const handler of handlers) {
 				try {
-					const event: ContextEvent = { type: "context", messages: currentMessages };
-					const handlerResult = await handler(event, ctx);
+					const visibleMessages = currentMessages.filter((message) => message.role !== "system");
+					const visibleSnapshot = visibleMessages.slice();
+					const event: ContextEvent = { type: "context", messages: visibleMessages };
+					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
 
-					if (handlerResult && (handlerResult as ContextEventResult).messages) {
-						currentMessages = (handlerResult as ContextEventResult).messages!;
-					}
+					// Handlers may return a new list or edit event.messages in place.
+					const returned =
+						handlerResult?.messages ??
+						(sameMessages(visibleMessages, visibleSnapshot) ? undefined : visibleMessages);
+					if (!returned) continue;
+					currentMessages = restoreSystemMessages(currentMessages, visibleSnapshot, returned);
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "context",
+						error: message,
+						stack,
+					});
+				}
+			}
+		}
+
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context_with_system")) {
+			for (const handler of handlers) {
+				try {
+					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
+					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
+					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
+					currentMessages = handlerResult?.messages ?? currentMessages;
+					// Providers read the prompt and initial tools from the leading system message.
+					// Losing it is never intended; report it but honor the handler's output.
+					if (hadLeadingSystemMessage && currentMessages[0]?.role !== "system") {
+						this.emitError({
+							extensionPath: ext.path,
+							event: "context_with_system",
+							error: "Handler removed the leading system message; the request has no prompt or initial tool declarations. Keep it at index 0 or replace a dropped prefix with getCurrentSystemMessage().",
+						});
+					}
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					const stack = err instanceof Error ? err.stack : undefined;
+					this.emitError({
+						extensionPath: ext.path,
+						event: "context_with_system",
 						error: message,
 						stack,
 					});
@@ -1067,10 +1254,7 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let currentPayload = payload;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("before_provider_request");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_request")) {
 			for (const handler of handlers) {
 				try {
 					const event: BeforeProviderRequestEvent = {
@@ -1100,10 +1284,7 @@ export class ExtensionRunner {
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
 		const ctx = this.createContext();
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("before_provider_headers");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
 			for (const handler of handlers) {
 				try {
 					// Handlers mutate `headers` in place; the return value is ignored.
@@ -1131,44 +1312,39 @@ export class ExtensionRunner {
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
-		systemPrompt: string,
 		systemPromptOptions: BuildSystemPromptOptions,
-	): Promise<BeforeAgentStartCombinedResult | undefined> {
-		let currentSystemPrompt = systemPrompt;
+	): Promise<BeforeAgentStartCombinedResult> {
+		const currentOptions = normalizeBuildSystemPromptOptions(systemPromptOptions);
+		const renderCurrentSystemPrompt = (): string => buildSystemPrompt(currentOptions);
 		const ctx = Object.defineProperties(
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionContext;
 		ctx.getSystemPrompt = () => {
 			this.assertActive();
-			return currentSystemPrompt;
+			return renderCurrentSystemPrompt();
 		};
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
-		let systemPromptModified = false;
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("before_agent_start");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
 			for (const handler of handlers) {
 				try {
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
 						prompt,
 						images,
-						systemPrompt: currentSystemPrompt,
-						systemPromptOptions,
+						get systemPrompt() {
+							return renderCurrentSystemPrompt();
+						},
+						systemPromptOptions: currentOptions,
 					};
 					const handlerResult = await handler(event, ctx);
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
-						if (result.message) {
-							messages.push(result.message);
-						}
+						if (result.message) messages.push(result.message);
 						if (result.systemPrompt !== undefined) {
-							currentSystemPrompt = result.systemPrompt;
-							systemPromptModified = true;
+							currentOptions.forceSystemPrompt = result.systemPrompt;
 						}
 					}
 				} catch (err) {
@@ -1184,14 +1360,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		if (messages.length > 0 || systemPromptModified) {
-			return {
-				messages: messages.length > 0 ? messages : undefined,
-				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
-			};
-		}
-
-		return undefined;
+		return { messages, systemPromptOptions: currentOptions };
 	}
 
 	async emitResourcesDiscover(
@@ -1207,10 +1376,7 @@ export class ExtensionRunner {
 		const promptPaths: Array<{ path: string; extensionPath: string }> = [];
 		const themePaths: Array<{ path: string; extensionPath: string }> = [];
 
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("resources_discover");
-			if (!handlers || handlers.length === 0) continue;
-
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "resources_discover")) {
 			for (const handler of handlers) {
 				try {
 					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
@@ -1253,8 +1419,8 @@ export class ExtensionRunner {
 		let currentText = text;
 		let currentImages = images;
 
-		for (const ext of this.extensions) {
-			for (const handler of ext.handlers.get("input") ?? []) {
+		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "input")) {
+			for (const handler of handlers) {
 				try {
 					const event: InputEvent = {
 						type: "input",

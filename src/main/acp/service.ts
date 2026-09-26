@@ -27,6 +27,7 @@ import type {
 } from "../../shared/acp";
 import { StdioTransport } from "../mcp/transport";
 import { acpAgentInfo, agentProxyEnv, type AcpAgentDefinition } from "./agents";
+import { authenticateAgent } from "./auth";
 import { resolveAgentBinary, type AgentBinary } from "./binaries";
 import { agentLaunch, type AgentLaunch } from "./launch";
 import type { AcpConfigStore } from "./config-store";
@@ -316,6 +317,20 @@ export class AcpService {
 					protocolVersion: ACP_PROTOCOL_VERSION,
 					clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
 					clientInfo: { name: "nekocode", title: "NekoCode", version: this.options.clientVersion },
+				})
+				.then(async (init) => {
+					// An agent that signs in up front will not list sessions before it has.
+					const auth = agent.native?.auth;
+					if (auth?.when === "always") {
+						await authenticateAgent(
+							(method, params) => connection.request(method, params),
+							auth,
+							init,
+							{ ...process.env, ...agent.native?.env, ...agent.env },
+							agent.name,
+						);
+					}
+					return init;
 				})
 				.then(
 					(init) => {

@@ -37,8 +37,11 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconChevronUp,
+  IconCircle,
   IconCircleArrowUp,
   IconCircleCheck,
+  IconCircleDot,
+  IconCircleX,
   IconClock,
   IconCloudUpload,
   IconCode,
@@ -197,6 +200,9 @@ export const ChevronUpIcon = adaptIcon(IconChevronUp);
 export const ChevronsUpDownIcon = adaptIcon(IconSelector);
 export const CircleAlertIcon = adaptIcon(IconAlertCircle);
 export const CircleCheckIcon = adaptIcon(IconCircleCheck);
+export const CircleIcon = adaptIcon(IconCircle);
+export const CircleDotIcon = adaptIcon(IconCircleDot);
+export const CircleXIcon = adaptIcon(IconCircleX);
 // User-input rows: a question-mark circle while the agent waits for an answer,
 // and an up-arrow circle once the answer is submitted. Sourced from the Central
 // set so they sit visually beside the other timeline glyphs (robot, search, …).

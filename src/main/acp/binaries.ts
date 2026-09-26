@@ -1,5 +1,7 @@
 /**
- * Finding the user's own Codex and Claude Code.
+ * Finding the user's own agent CLIs: Codex and Claude Code, which NekoCode
+ * drives through a bundled adapter, and Cursor, Grok, Droid and Devin, which
+ * speak ACP themselves.
  *
  * NekoCode ships the ACP adapters but not the agents: the Codex CLI is a
  * ~440 MB download of its own, and Claude Code's licence does not allow
@@ -14,7 +16,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
-export type AgentBinary = "codex" | "claude";
+export type AgentBinary = "codex" | "claude" | "cursor" | "grok" | "droid" | "devin";
 
 export interface ExecutableProbe {
 	platform: NodeJS.Platform;
@@ -122,8 +124,7 @@ export function resolveCodexExecutable(probe: ExecutableProbe): string | undefin
 		if (native) return native;
 	}
 	// The Codex desktop app keeps its CLI in a per-version directory.
-	const localAppData = envValue(probe.env, "LOCALAPPDATA") ?? join(probe.homeDir, "AppData", "Local");
-	for (const directory of probe.subdirectories(join(localAppData, "OpenAI", "Codex", "bin"))) {
+	for (const directory of probe.subdirectories(join(localAppData(probe), "OpenAI", "Codex", "bin"))) {
 		const candidate = join(directory, "codex.exe");
 		if (probe.isFile(candidate)) return candidate;
 	}
@@ -143,6 +144,58 @@ export function resolveClaudeExecutable(probe: ExecutableProbe): string | undefi
 	]);
 }
 
+function localAppData(probe: ExecutableProbe): string {
+	return envValue(probe.env, "LOCALAPPDATA") ?? join(probe.homeDir, "AppData", "Local");
+}
+
+/** The first of `paths` that is a file. */
+function firstFile(paths: readonly string[], probe: ExecutableProbe): string | undefined {
+	return paths.find((path) => probe.isFile(path));
+}
+
+/**
+ * Cursor's agent CLI. Only the `cursor-agent` name is trusted on PATH: its
+ * installer also drops a bare `agent`, which is too generic a name to assume is
+ * Cursor's (Grok ships one too) — except inside Cursor's own install directory.
+ */
+export function resolveCursorAgentExecutable(probe: ExecutableProbe): string | undefined {
+	if (probe.platform !== "win32") return findOnPath(["cursor-agent"], probe, unixExtraDirectories(probe));
+	const onPath = findOnPath(["cursor-agent.exe", "cursor-agent.cmd", "cursor-agent.ps1"], probe);
+	if (onPath) return onPath;
+	const root = join(localAppData(probe), "cursor-agent");
+	return firstFile(
+		["cursor-agent.exe", "agent.exe", "cursor-agent.cmd", "agent.cmd", "cursor-agent.ps1", "agent.ps1"].map((name) => join(root, name)),
+		probe,
+	);
+}
+
+export function resolveGrokExecutable(probe: ExecutableProbe): string | undefined {
+	if (probe.platform !== "win32") return findOnPath(["grok"], probe, [...unixExtraDirectories(probe), join(probe.homeDir, ".grok", "bin")]);
+	return findOnPath(["grok.exe", "grok.cmd"], probe, [join(probe.homeDir, ".grok", "bin")]);
+}
+
+export function resolveDroidExecutable(probe: ExecutableProbe): string | undefined {
+	if (probe.platform !== "win32") return findOnPath(["droid"], probe, unixExtraDirectories(probe));
+	return findOnPath(["droid.exe", "droid.cmd"], probe, [join(probe.homeDir, ".local", "bin"), join(probe.homeDir, ".factory", "bin")]);
+}
+
+export function resolveDevinExecutable(probe: ExecutableProbe): string | undefined {
+	if (probe.platform !== "win32") return findOnPath(["devin"], probe, unixExtraDirectories(probe));
+	return (
+		findOnPath(["devin.exe", "devin.cmd"], probe) ??
+		firstFile([join(localAppData(probe), "devin", "cli", "bin", "devin.exe"), join(localAppData(probe), "devin", "bin", "devin.exe")], probe)
+	);
+}
+
+const RESOLVERS: Record<AgentBinary, (probe: ExecutableProbe) => string | undefined> = {
+	codex: resolveCodexExecutable,
+	claude: resolveClaudeExecutable,
+	cursor: resolveCursorAgentExecutable,
+	grok: resolveGrokExecutable,
+	droid: resolveDroidExecutable,
+	devin: resolveDevinExecutable,
+};
+
 export function resolveAgentBinary(binary: AgentBinary, probe: ExecutableProbe = nodeProbe()): string | undefined {
-	return binary === "codex" ? resolveCodexExecutable(probe) : resolveClaudeExecutable(probe);
+	return RESOLVERS[binary](probe);
 }

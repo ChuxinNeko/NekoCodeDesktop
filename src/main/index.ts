@@ -1,6 +1,7 @@
 import { TaskManager } from "./task-manager";
 import { TaskNotifier } from "./task-notifier";
 import { AppPreferencesStore } from "./app-preferences";
+import { ModelPricingService } from "./model-pricing";
 import { WorktreeService, type PreparedWorkspace } from "./worktree-service";
 import { McpService } from "./mcp/service";
 import { AcpService } from "./acp/service";
@@ -15,6 +16,7 @@ import { CursorOverlay } from "./computer/cursor-overlay";
 import { QqBotService } from "./qqbot/service";
 import { renderBlock } from "./qqbot/code-image";
 import { LanService } from "./lan-service";
+import { settleLinuxKeyring } from "./linux-keyring";
 import { RelayService } from "./relay-service";
 import type {
 	RelayLoginRequest,
@@ -40,7 +42,7 @@ let browserInspector: BrowserInspector | undefined;
 import { GitHubAuthService } from "./github-auth";
 import { applyAction, getDiff, getStatus, initRepo, listScopeFiles } from "./git";
 import { ModelConfigService } from "./model-config-service";
-import { OAuthService } from "./oauth-service";
+import { OAuthService, oauthLoginOptions } from "./oauth-service";
 import { AntigravityOAuthService } from "./antigravity-oauth-service";
 import { OAuthCredentialStore } from "./oauth-credential-store";
 import { createAntigravityFetch } from "./antigravity-transport";
@@ -71,8 +73,16 @@ import type {
 	ThinkingLevel,
 } from "../shared/agent";
 import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
-import type { SetSkillEnabledRequest } from "../shared/skills";
-import type { AppPreferences } from "../shared/preferences";
+import type {
+	CreateSkillRequest,
+	ImportSkillsRequest,
+	ImportSkillsResult,
+	RemoveSkillRequest,
+	ScanSkillImportRequest,
+	SetSkillEnabledRequest,
+} from "../shared/skills";
+import type { AppPreferences, CommandShellOption } from "../shared/preferences";
+import { configureCommandShell, listCommandShells } from "./command-shell";
 import type {
 	WorktreeMergeRequest,
 	WorktreeMergeResult,
@@ -98,6 +108,7 @@ import type {
 import type {
 	FetchModelsRequest,
 	ModelTestRequest,
+	OAuthLoginOptions,
 	SaveModelProfileRequest,
 } from "../shared/settings";
 import type { AutomationEvent, SaveAutomationRequest } from "../shared/automation";
@@ -214,6 +225,18 @@ let automationService: AutomationService | null = null;
 let githubAuth: GitHubAuthService | null = null;
 let pullRequests: PullRequestService | null = null;
 let tokenStats: TokenStatsService | null = null;
+let modelPricing: ModelPricingService | null = null;
+
+/** LiteLLM's price list, for the token panel's cost; pulled daily for as long as the app runs. */
+function modelPricingService(): ModelPricingService {
+	modelPricing ??= new ModelPricingService({ userDataDir: app.getPath("userData") });
+	return modelPricing;
+}
+
+/** Wait briefly for prices that are being pulled; a slow network must not hold the panel up. */
+async function freshPrices(force = false): Promise<void> {
+	await Promise.race([modelPricingService().refresh(force), new Promise((resolve) => setTimeout(resolve, 8_000))]);
+}
 let webUiService: WebUiService | null = null;
 let contextBroadcasts = false;
 let webUiBridge: WebContents | null = null;
@@ -278,6 +301,8 @@ function tokenStatsService(): TokenStatsService {
 				Object.fromEntries(
 					(modelConfig?.list() ?? []).map((profile) => [`nekocode-${profile.id}`, profile.name]),
 				),
+			prices: () => modelPricingService().prices(),
+			pricingStatus: () => modelPricingService().status(),
 		});
 	}
 	return tokenStats;
@@ -459,6 +484,9 @@ function captionOverlay() {
 	};
 }
 
+/** How long a new window may stay hidden waiting for its first paint. */
+const WINDOW_REVEAL_TIMEOUT_MS = 2000;
+
 function createWindow(): void {
 	// A system backdrop is composited behind the window by DWM, so the window's
 	// own background has to be fully transparent for it to show at all. Bound to
@@ -472,6 +500,9 @@ function createWindow(): void {
 		minHeight: 700,
 		title: "NekoCode Desktop",
 		icon: process.platform === "win32" ? appIconIco : appIconPng,
+		// Shown on first paint (below), which is the boot splash — never the
+		// empty backdrop the window is before its page has loaded.
+		show: false,
 		backgroundColor: backdrop ? "#00000000" : opaqueBackgroundColor(),
 		// Only handed over on the platforms that understand it: elsewhere the
 		// option is inert at best, and on Windows 10 the backdrop it asks for is
@@ -498,6 +529,28 @@ function createWindow(): void {
 			webviewTag: true,
 		},
 	});
+
+	// The first paint is the splash in index.html, a few milliseconds after the
+	// HTML arrives. The timer is for a page that never paints — a load that
+	// failed or hangs — where a window late is better than no window at all.
+	let revealTimer: NodeJS.Timeout | undefined;
+	const reveal = () => {
+		clearTimeout(revealTimer);
+		if (!win.isDestroyed() && !win.isVisible()) win.show();
+	};
+	revealTimer = setTimeout(reveal, WINDOW_REVEAL_TIMEOUT_MS);
+	win.once("ready-to-show", reveal);
+
+	// Start loading the page now rather than after the services below: the
+	// renderer fetches and parses the bundle in parallel with them, and the boot
+	// splash in index.html paints the moment the HTML arrives. Safe this early
+	// because this function is synchronous — no IPC from the page, and no
+	// webContents event, is handled until it has returned with everything built.
+	if (process.env.ELECTRON_RENDERER_URL) {
+		void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+	} else {
+		void win.loadFile(join(__dirname, "../renderer/index.html"));
+	}
 
 	const inspector = installBrowserGuards(win);
 	browserInspector = inspector;
@@ -528,6 +581,8 @@ function createWindow(): void {
 			emit: (event) => { if (!win.isDestroyed()) win.webContents.send("oauth:event", event); },
 	});
 	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	// Read per session, so a change applies to the next one without a restart.
+	configureCommandShell(() => preferences?.get().commandShell ?? "auto");
 	taskNotifier = new TaskNotifier(win, preferences.get().notifyOnTaskFinish, (session) => {
 		if (!win.isDestroyed()) win.webContents.send("agent:revealSession", session);
 	});
@@ -646,12 +701,6 @@ function createWindow(): void {
 		void shell.openExternal(url);
 		return { action: "deny" };
 	});
-
-	if (process.env.ELECTRON_RENDERER_URL) {
-		void win.loadURL(process.env.ELECTRON_RENDERER_URL);
-	} else {
-		void win.loadFile(join(__dirname, "../renderer/index.html"));
-	}
 }
 
 function registerIpc(): void {
@@ -1019,6 +1068,7 @@ function registerIpc(): void {
 		if (!next.computerUse) computerUse?.stop();
 		return next;
 	});
+	ipcMain.handle("preferences:commandShells", (): CommandShellOption[] => listCommandShells());
 	ipcMain.handle("agent:abort", () => taskManager?.active.abort());
 	ipcMain.handle("agent:setFusion", (_e, config: FusionConfig) => toWindow(taskManager?.active.setFusion(config)));
 	ipcMain.handle("agent:setFastContext", (_e, config: FastContextConfig) =>
@@ -1136,16 +1186,45 @@ function registerIpc(): void {
 	ipcMain.handle("skills:setEnabled", (_e, request: SetSkillEnabledRequest) =>
 		taskManager?.active.setSkillEnabled(request),
 	);
+	// A skill written or copied here sits in a directory every session loads
+	// from, so every open session reloads — the same as an instructions file.
+	ipcMain.handle("skills:create", async (_e, request: CreateSkillRequest) => {
+		if (!taskManager) return null;
+		await taskManager.active.createSkill(request);
+		await taskManager.reloadContext();
+		return taskManager.active.skillsSnapshot();
+	});
+	ipcMain.handle("skills:scanImport", (_e, request: ScanSkillImportRequest) =>
+		taskManager?.active.scanSkillImport(request),
+	);
+	ipcMain.handle("skills:import", async (_e, request: ImportSkillsRequest): Promise<ImportSkillsResult | null> => {
+		if (!taskManager) return null;
+		const result = await taskManager.active.importSkills(request);
+		if (result.imported.length) await taskManager.reloadContext();
+		return { ...result, snapshot: await taskManager.active.skillsSnapshot() };
+	});
+	ipcMain.handle("skills:remove", async (_e, request: RemoveSkillRequest) => {
+		if (!taskManager) return null;
+		await taskManager.active.removeSkill(request);
+		await taskManager.reloadContext();
+		return taskManager.active.skillsSnapshot();
+	});
 
-	ipcMain.handle("stats:tokens", () => tokenStatsService().report());
-	// A full re-parse, for when the numbers are doubted rather than merely stale.
-	ipcMain.handle("stats:rescanTokens", () => {
+	ipcMain.handle("stats:tokens", async () => {
+		await freshPrices();
+		return tokenStatsService().report();
+	});
+	// A full re-parse, for when the numbers are doubted rather than merely stale —
+	// prices included.
+	ipcMain.handle("stats:rescanTokens", async () => {
+		await freshPrices(true);
 		tokenStatsService().reset();
 		return tokenStatsService().report();
 	});
 	ipcMain.handle("stats:exportTokens", async (event) => {
 		const win = BrowserWindow.fromWebContents(event.sender);
 		if (!win) return null;
+		await freshPrices();
 		const report = await tokenStatsService().report();
 		const stamp = new Date().toISOString().slice(0, 10);
 		const result = await dialog.showSaveDialog(win, {
@@ -1165,12 +1244,16 @@ function registerIpc(): void {
 
 	ipcMain.handle("oauth:list", () => oauthService?.list());
 	ipcMain.handle("oauth:refresh", (_e, id: string) => oauthService?.refresh(id));
-	ipcMain.handle("oauth:login", async (_e, id: string) => {
+	ipcMain.handle("oauth:login", async (_e, id: string, options?: OAuthLoginOptions) => {
 		if (!oauthService) throw new Error("OAuth service unavailable");
-		const account = await oauthService.login(id);
+		const account = await oauthService.login(id, oauthLoginOptions(options));
 		// The provider only becomes selectable once its models are registered.
 		await taskManager?.reloadModels();
 		return account;
+	});
+	ipcMain.handle("oauth:usage", (_e, id: string, force?: boolean) => {
+		if (!oauthService) throw new Error("OAuth service unavailable");
+		return oauthService.usage(id, force === true);
 	});
 	ipcMain.handle("oauth:cancel", (_e, id: string) => oauthService?.cancel(id));
 	ipcMain.handle("oauth:submitCode", (_e, id: string, code: string) =>
@@ -1249,6 +1332,11 @@ function registerIpc(): void {
 const PROXY_STARTUP_TIMEOUT_MS = 3000;
 
 app.whenReady().then(async () => {
+	// Before anything touches safeStorage: over remote desktop the keyring
+	// Chromium picked is often unreachable, and only a relaunch can switch.
+	const keyring = settleLinuxKeyring(safeStorage, app);
+	if (keyring === "relaunching") return;
+	if (keyring === "basic_text") console.warn("No system keyring this session; secrets use Electron's local key.");
 	if (process.platform === "darwin") app.dock?.setIcon(appIconPng);
 	if (process.platform !== "darwin") Menu.setApplicationMenu(null);
 	try {
@@ -1296,6 +1384,8 @@ app.whenReady().then(async () => {
 	void webUiService.startConfigured().catch((error: unknown) =>
 		console.error("Could not start the WebUI server:", error),
 	);
+	// After the proxy is in place: the price list is fetched through it.
+	modelPricingService().start();
 
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1304,6 +1394,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
 	void webUiService?.stop();
+	modelPricing?.stop();
 	automationService?.stop();
 	terminalService?.killAll();
 	// Clone dev servers are child processes the agent started and may not have stopped.

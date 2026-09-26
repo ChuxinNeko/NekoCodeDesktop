@@ -1,6 +1,23 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_APP_PREFERENCES, type AppPreferences } from "../shared/preferences";
+import { DEFAULT_APP_PREFERENCES, isCommandShellId, type AppPreferences } from "../shared/preferences";
+
+/** What each key may hold; anything else falls back to its default. */
+const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPreferences[K] } = {
+	notifyOnTaskFinish: (value): value is boolean => typeof value === "boolean",
+	isolateBackgroundTasks: (value): value is boolean => typeof value === "boolean",
+	computerUse: (value): value is boolean => typeof value === "boolean",
+	commandShell: isCommandShellId,
+};
+
+/** Only the keys and values a preference may take; the rest is dropped. */
+export function sanitizePreferences(source: Record<string, unknown>): Partial<AppPreferences> {
+	const result: Record<string, unknown> = {};
+	for (const key of Object.keys(DEFAULT_APP_PREFERENCES) as (keyof AppPreferences)[]) {
+		if (VALID[key](source[key])) result[key] = source[key];
+	}
+	return result as Partial<AppPreferences>;
+}
 
 /** Not `preferences.json`: AgentService has owned that file since before this. */
 const FILE = "app-preferences.json";
@@ -32,12 +49,7 @@ export class AppPreferencesStore {
 		try {
 			const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
 			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-			const source = parsed as Record<string, unknown>;
-			const result: Partial<AppPreferences> = {};
-			for (const key of Object.keys(DEFAULT_APP_PREFERENCES) as (keyof AppPreferences)[]) {
-				if (typeof source[key] === "boolean") result[key] = source[key];
-			}
-			return result;
+			return sanitizePreferences(parsed as Record<string, unknown>);
 		} catch {
 			// A corrupt file is not worth failing startup over — defaults, and the
 			// next write replaces it.
@@ -46,7 +58,8 @@ export class AppPreferencesStore {
 	}
 
 	update(patch: Partial<AppPreferences>): AppPreferences {
-		const next = { ...this.get(), ...patch };
+		// The patch arrives over IPC: a key or value it may not hold is ignored.
+		const next = { ...this.get(), ...sanitizePreferences(patch as Record<string, unknown>) };
 		this.cached = next;
 		// Written through a temporary file: a half-flushed preferences.json would
 		// be read back as corrupt on the next launch and silently reset.

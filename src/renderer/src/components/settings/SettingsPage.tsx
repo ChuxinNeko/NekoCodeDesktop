@@ -19,22 +19,27 @@ import { HooksSettings } from "./HooksSettings";
 import { api } from "../../api";
 import { ArrowLeftIcon } from "../../lib/icons";
 
+/**
+ * In the order someone setting the app up meets them, grouped so the nav reads
+ * as a few topics rather than one long list: the app itself, what it talks to
+ * and what that costs, what the agent can do, what reaches in from outside.
+ */
 const SECTIONS = [
-	{ id: "general", labelKey: "settings.section.general" },
-	{ id: "connect", labelKey: "settings.section.connect" },
-	{ id: "appearance", labelKey: "settings.section.appearance" },
-	{ id: "providers", labelKey: "settings.section.providers" },
-	{ id: "agents", labelKey: "settings.section.agents" },
-	{ id: "tokens", labelKey: "settings.section.tokens" },
-	{ id: "context", labelKey: "settings.section.context" },
-	{ id: "hooks", labelKey: "settings.section.hooks" },
-	{ id: "skills", labelKey: "settings.section.skills" },
-	{ id: "plugins", labelKey: "settings.section.plugins" },
-	{ id: "mcp", labelKey: "settings.section.mcp" },
-	{ id: "github", labelKey: "settings.section.github" },
-	{ id: "webui", labelKey: "settings.section.webui" },
-	{ id: "about", labelKey: "settings.section.about" },
-] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey }>;
+	{ id: "general", labelKey: "settings.section.general", group: "app" },
+	{ id: "appearance", labelKey: "settings.section.appearance", group: "app" },
+	{ id: "providers", labelKey: "settings.section.providers", group: "models" },
+	{ id: "agents", labelKey: "settings.section.agents", group: "models" },
+	{ id: "tokens", labelKey: "settings.section.tokens", group: "models" },
+	{ id: "context", labelKey: "settings.section.context", group: "capabilities" },
+	{ id: "skills", labelKey: "settings.section.skills", group: "capabilities" },
+	{ id: "mcp", labelKey: "settings.section.mcp", group: "capabilities" },
+	{ id: "plugins", labelKey: "settings.section.plugins", group: "capabilities" },
+	{ id: "hooks", labelKey: "settings.section.hooks", group: "capabilities" },
+	{ id: "github", labelKey: "settings.section.github", group: "integrations" },
+	{ id: "connect", labelKey: "settings.section.connect", group: "integrations" },
+	{ id: "webui", labelKey: "settings.section.webui", group: "integrations" },
+	{ id: "about", labelKey: "settings.section.about", group: "about" },
+] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey; group: string }>;
 
 export type SettingsSectionId = (typeof SECTIONS)[number]["id"];
 type SectionId = SettingsSectionId;
@@ -76,7 +81,11 @@ export function SettingsPage({
 						{t("settings.title")}
 					</span>
 				</div>
-				{sections.map((entry) => (
+				{sections.map((entry, index) => [
+					// A hairline where the topic changes; filtered sections leave no empty group behind.
+					index > 0 && sections[index - 1].group !== entry.group ? (
+						<div key={`${entry.group}-divider`} className="mx-2 my-1 h-px bg-[color:var(--app-surface-divider)]" />
+					) : null,
 					<button
 						key={entry.id}
 						type="button"
@@ -89,8 +98,8 @@ export function SettingsPage({
 						)}
 					>
 						{t(entry.labelKey)}
-					</button>
-				))}
+					</button>,
+				])}
 			</nav>
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-5">

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 interface FakeOpenAIClientOptions {
@@ -99,10 +99,10 @@ describe("openai-completions prompt caching", () => {
 	) {
 		await streamOpenAICompletions(
 			model,
-			{
+			normalizeContext({
 				systemPrompt: "sys",
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-			},
+			}),
 			{ apiKey: "test-key", ...options },
 		).result();
 
@@ -180,6 +180,14 @@ describe("openai-completions prompt caching", () => {
 			expect(headers["x-session-affinity"]).toBe("fireworks-session");
 		},
 	);
+
+	it("sends Baseten session affinity for built-in catalog models", async () => {
+		const model = getModel("baseten", "zai-org/GLM-5.2");
+		const { headers } = await captureRequest({ sessionId: "baseten-catalog-session" }, model);
+
+		expect(headers["x-session-affinity"]).toBe("baseten-catalog-session");
+		expect(headers["x-client-request-id"]).toBe("baseten-catalog-session");
+	});
 
 	it("uses OpenAI no-session format when configured", async () => {
 		const model = createModel({

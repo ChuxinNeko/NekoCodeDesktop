@@ -32,16 +32,17 @@ The design has a few connected pieces:
   stable facade while a provider disconnects or is replaced.
 
 - **Replicated state** exposes authoritative state to local and remote
-  connected consumers. Producers mutate the tracked `state` proxy and call
-  `publish(context)`; consumers receive complete immutable values. Chord flushes
-  one decoded operation batch per publication, while each remote client/state
-  stream owns independent path-codec state. Replicas become unready on disconnect
-  or replacement until they are rehydrated.
+  connected consumers. Producers publish atomic overlay transactions with
+  `change(context, callback)`; consumers receive complete immutable values. Draft
+  proxies exist only during the callback and become unusable afterward. Preparation
+  materializes a structurally shared immutable candidate and one exact decoded
+  operation batch, while each remote client/state stream owns independent path-codec
+  state. Replicas become unready on disconnect or replacement until rehydrated.
 
-- **Delta tracking** derives compact operations from tracked plain JSON at
-  flush time. It preserves string append/front-truncation and array-append
-  behavior without retaining mutation history, supports durable base batches,
-  and validates untrusted operations as they are applied.
+- **Delta tracking** records and coalesces operations over tracked plain JSON.
+  It preserves common string and array operations, supports durable base
+  batches, and validates untrusted operations as they are applied. Batches
+  guarantee convergence but are not canonical or necessarily minimal.
 
 - **Remote service sources** advertise services available outside a facet host
   and open bindings for the services its facets require. Bindings carry logical
@@ -88,38 +89,56 @@ outer protocol.
 
 ## Tracking JSON deltas
 
-Import the standalone delta primitive from `@earendil-works/chord/delta`:
+Import the standalone transactional tracker from `@earendil-works/chord/delta`:
 
 ```ts
-import { apply, track } from "@earendil-works/chord/delta";
+import { applyImmutable, track } from "@earendil-works/chord/delta";
 
-const changes = track({ output: "", count: 0 });
-changes.flush(); // opening base batch
-changes.state.output += "done\n";
-changes.state.count += 1;
+const tracker = track({ output: "", count: 0 });
+const change = tracker.beginChange();
+change.state.output += "done\n";
+change.state.count += 1;
+const prepared = change.prepare();
 
-const ops = changes.flush();
-const replica = apply({ output: "", count: 0 }, ops);
+tracker.adopt(prepared);
+const replica = applyImmutable(prepared.base, prepared.ops);
 ```
 
-The first flush is always a complete base batch. Later flushes contain path-based
-changes. `applyImmutable()` applies those batches while preserving prior replica
-revisions. `replicatedState(initial)` uses tracking directly:
+`tracker.value` is always the latest adopted immutable revision. Preparation does
+not change authority; adoption validates the preparation and swaps the root pointer.
+Assigned containers are copied by value and unchanged subtrees may be shared between
+revisions.
+
+The tracker uses trusted immutable ownership rather than defensive copying or
+freezing. `track(initial)`, `prepareReplace(value)`, `replicatedState(initial)`, and
+`replace(context, value)` take ownership of alias-free strict-JSON roots without
+walking them. Callers must not mutate transferred or published data. Values placed
+through drafts are already copied, so that walk also rejects non-strict JSON before
+the draft changes. Published values are not frozen. In-process loopback consumers
+may share their containers with the provider; mutating a consumed value violates
+the contract and can corrupt authority. Clone or serialize at any mutable trust
+boundary.
+
+Replicated state provides the same model through a callback:
 
 ```ts
-const status = env.replicatedState({ output: "", count: 0 });
-status.state.output += "done\n";
-status.state.count += 1;
-status.publish(context);
+const initial = { output: "", count: 0 };
+const status = env.replicatedState(initial); // transfers ownership of initial
+status.change(context, (draft) => {
+	draft.output += "done\n";
+	draft.count += 1;
+});
 ```
 
-`publish()` flushes once; remote connection plumbing encodes that operation batch
-independently for every client/state pairing. String assignments preserve pure
-appends and rolling-window movement as append and front-truncate operations;
-unrelated rewrites fall back to a set. Values inserted into tracked state become
-tracker-owned and must subsequently be mutated only through `state`. See the
-[Delta guide](src/delta/README.md) for mutation, array, lifecycle, and
-consumer-ownership rules.
+A successful `change()` publishes exactly one atomic revision. If its callback
+throws, the original value and sequence remain unchanged. Draft handles become
+unusable when the callback returns. Chord emits string append and front-truncate
+operations, array splices and permutations, sets, and deletes; large edit sets may
+fold into a complete replacement. Remote connection plumbing encodes each batch
+independently for every client/state pairing.
+
+The standalone [Delta guide](src/delta/README.md) defines the complete ownership,
+lifecycle, operation, and replica contracts.
 
 ## Bundling and loading facets
 
@@ -193,10 +212,10 @@ receiving host.
 
 To reload, load a candidate, pass its facets to `FacetHost.reload()`, dispose the
 candidate on failure, and dispose the retired `LoadedFacets` only after a
-successful cutover. The host activates and validates the candidate while the old
-providers remain routed, then replaces each singleton directly without an
-unavailable interval. Stable service handles therefore do not become disconnected
-during an ordinary reload. Keyed instances
+successful cutover. The host activates and validates the candidate while the
+currently active providers remain routed, then replaces each singleton directly
+without an unavailable interval. Stable service handles therefore do not become
+disconnected during an ordinary reload. Keyed instances
 remain incarnation-specific and replacements receive fresh generations. The
 bundler writes a complete temporary directory before replacing the previous
 output, so loaders do not observe partially built generations.

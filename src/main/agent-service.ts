@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
-import { app, type BrowserWindow } from "electron";
+import { app, shell, type BrowserWindow } from "electron";
 import type {
 	AgentSession,
 	AgentSessionEvent,
@@ -58,7 +58,20 @@ import { contextUsage } from "./context-usage";
 import type { ModelTestRequest, ModelTestResult } from "../shared/settings";
 import { PluginService } from "./plugin-service";
 import { BuiltinSkillStore, resolveBuiltinSkillsDir } from "./builtin-skills";
-import type { SetSkillEnabledRequest, SkillOrigin, SkillSummary, SkillsSnapshot } from "../shared/skills";
+import type {
+	CreateSkillRequest,
+	ImportSkillsRequest,
+	ImportSkillsResult,
+	RemoveSkillRequest,
+	ScanSkillImportRequest,
+	SetSkillEnabledRequest,
+	SkillImportScan,
+	SkillOrigin,
+	SkillScope,
+	SkillSummary,
+	SkillsSnapshot,
+} from "../shared/skills";
+import { createSkill, importSkillFolders, installedSkillFolder, listInstalledSkills, scanSkillSource } from "./user-skills";
 import type { SlashCommandSummary } from "../shared/commands";
 import {
 	CellProjector,
@@ -68,7 +81,7 @@ import {
 	type ProjectionEvent,
 } from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
-import { modelInputList } from "./model-config-store";
+import { modelInputList, thinkingRegistration } from "./model-config-store";
 import { decideModelAfterReload } from "./model-refresh";
 import { registerOAuthClientIdentity } from "./oauth-service";
 import type { AntigravityOAuthService } from "./antigravity-oauth-service";
@@ -163,7 +176,7 @@ const MODES: ExecutionMode[] = ["read-only", "auto", "full-access"];
 
 /**
  * Preferred model per provider when nothing is configured — a verbatim copy of
- * `defaultModelPerProvider` from pi's model-resolver (vendored pi@0.85.1), which
+ * `defaultModelPerProvider` from pi's model-resolver (vendored pi@0.87.1), which
  * the package does not re-export. Keep in sync when bumping pi.
  */
 const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
@@ -181,7 +194,7 @@ const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
 	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway": "zai/glm-5.1",
-	xai: "grok-4.6",
+	xai: "grok-4.7",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "gpt-oss-120b",
 	zai: "glm-5.3",
@@ -198,6 +211,7 @@ const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
 	opencode: "kimi-k2.6",
 	"opencode-go": "kimi-k2.6",
 	"kimi-coding": "kimi-for-coding",
+	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
 	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
 	"qwen-token-plan": "qwen3.7-max",
@@ -444,7 +458,7 @@ export class AgentService {
 	 * make the prompt look emptier than it is.
 	 */
 	async skillsSnapshot(): Promise<SkillsSnapshot> {
-		const { getAgentDir, getProjectConfigDir } = await pi();
+		const directories = await this.skillDirectories();
 		const loaded = this.resourceLoader?.getSkills();
 		const origin = (skill: { filePath: string; sourceInfo?: { scope?: string; origin?: string } }): SkillOrigin => {
 			if (this.builtinSkills.isBuiltin(skill.filePath)) return "builtin";
@@ -462,16 +476,70 @@ export class AgentService {
 		return {
 			builtin: this.builtinSkills.list(),
 			active,
-			directories: {
-				user: join(getAgentDir(), "skills"),
-				project: this.cwd ? join(getProjectConfigDir(this.cwd), "skills") : null,
-			},
+			installed: [
+				...listInstalledSkills(directories.user, "user"),
+				...listInstalledSkills(directories.project, "project"),
+			],
+			directories,
 			// Every diagnostic the loader emits is a problem — a bad frontmatter, a
 			// path that vanished, two skills claiming one name.
 			warnings: (loaded?.diagnostics ?? []).map(
 				(diagnostic) => `${diagnostic.message} — ${diagnostic.path}`,
 			),
 		};
+	}
+
+	/** The two directories a user keeps skills in; no project one without a project. */
+	private async skillDirectories(): Promise<{ user: string; project: string | null }> {
+		const { getAgentDir, getProjectConfigDir } = await pi();
+		return {
+			user: join(getAgentDir(), "skills"),
+			project: this.cwd ? join(getProjectConfigDir(this.cwd), "skills") : null,
+		};
+	}
+
+	private async skillDirectory(scope: SkillScope): Promise<string> {
+		const directories = await this.skillDirectories();
+		if (scope === "user") return directories.user;
+		if (!directories.project) throw new Error("请先打开一个项目，才能添加项目技能");
+		return directories.project;
+	}
+
+	/**
+	 * Skills the user writes or brings in land as folders in a directory the
+	 * loader already watches, so nothing else has to know about them. Which
+	 * sessions to reload afterwards is the caller's call — a user skill is in
+	 * every one of them.
+	 */
+	async createSkill(request: CreateSkillRequest): Promise<void> {
+		createSkill(await this.skillDirectory(request.scope), request);
+	}
+
+	async scanSkillImport(request: ScanSkillImportRequest): Promise<SkillImportScan> {
+		const directories = await this.skillDirectories();
+		const destination = request.scope === "project" ? directories.project : directories.user;
+		return scanSkillSource(request.source, destination);
+	}
+
+	async importSkills(request: ImportSkillsRequest): Promise<Omit<ImportSkillsResult, "snapshot">> {
+		const destination = await this.skillDirectory(request.scope);
+		// Scanned again rather than taking folders from the request: only what
+		// the source actually holds is ever copied.
+		const wanted = new Set(request.dirs);
+		const scan = scanSkillSource(request.source, destination);
+		return importSkillFolders(
+			destination,
+			scan.candidates.filter((candidate) => wanted.has(candidate.dir)),
+			request.overwrite,
+		);
+	}
+
+	/** To the recycle bin rather than gone: a skill can be a lot of hand-written work. */
+	async removeSkill(request: RemoveSkillRequest): Promise<void> {
+		const directories = await this.skillDirectories();
+		const folder = installedSkillFolder(request.path, [directories.user, directories.project]);
+		if (!folder) throw new Error("只能删除用户或项目技能目录中的技能");
+		await shell.trashItem(folder);
 	}
 
 	/**
@@ -813,8 +881,9 @@ export class AgentService {
 						name: id,
 						api: profile.api,
 						// PI clamps every thinking level to "off" on a model that is not
-						// flagged as reasoning, so this is what makes the picker do anything.
-						reasoning: profile.reasoning,
+						// flagged as reasoning, so this is what makes the picker do anything;
+						// a model's own levels, where set, decide exactly which it offers.
+						...thinkingRegistration(profile.modelThinking[id], profile.reasoning),
 						input: modelInputList(profile.imageInput),
 						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 						// A custom endpoint advertises neither limit, and PI clamps every
