@@ -5,6 +5,7 @@ import type { LanState, LanTaskOptions } from "../../src/shared/lan";
 import type { RelayDeviceSummary } from "../../src/shared/relay";
 import type { WorkflowAnswer } from "../../src/shared/workflow";
 import type { SlashCommandSummary } from "../../src/shared/commands";
+import type { AcpHistory, AcpSessionSnapshot, AcpState } from "../../src/shared/acp";
 import { account, AccountClient } from "./account-client";
 import { lan, LanClient, LanError, type SubmitResult } from "./lan-client";
 import { relay, RelayClient } from "./relay-client";
@@ -56,6 +57,15 @@ interface ActiveClient {
 	answer(id: string, answer: WorkflowAnswer): Promise<AgentSnapshot>;
 	cancelWorker(id: string, workerId: string): Promise<AgentSnapshot>;
 	commands(id: string): Promise<SlashCommandSummary[]>;
+	acpState(): Promise<AcpState>;
+	acpHistory(agentId: string): Promise<AcpHistory>;
+	acpSnapshot(id: string): Promise<AcpSessionSnapshot>;
+	acpCreate(agentId: string, projectId: string): Promise<AcpSessionSnapshot>;
+	acpOpen(agentId: string, sessionId: string, cwd: string, title?: string): Promise<AcpSessionSnapshot>;
+	acpPrompt(id: string, text: string): Promise<{ accepted: boolean }>;
+	acpCancel(id: string): Promise<AcpSessionSnapshot>;
+	acpSetConfig(id: string, configId: string, value: string): Promise<AcpSessionSnapshot>;
+	acpPermission(id: string, requestId: string, optionId: string | null): Promise<AcpSessionSnapshot>;
 }
 
 export class DesktopClient {
@@ -289,6 +299,15 @@ export class DesktopClient {
 	commands(id: string) {
 		return this.active().commands(id);
 	}
+	acpState() { return this.active().acpState(); }
+	acpHistory(agentId: string) { return this.active().acpHistory(agentId); }
+	acpSnapshot(id: string) { return this.active().acpSnapshot(id); }
+	acpCreate(agentId: string, projectId: string) { return this.active().acpCreate(agentId, projectId); }
+	acpOpen(agentId: string, sessionId: string, cwd: string, title?: string) { return this.active().acpOpen(agentId, sessionId, cwd, title); }
+	acpPrompt(id: string, text: string) { return this.active().acpPrompt(id, text); }
+	acpCancel(id: string) { return this.active().acpCancel(id); }
+	acpSetConfig(id: string, configId: string, value: string) { return this.active().acpSetConfig(id, configId, value); }
+	acpPermission(id: string, requestId: string, optionId: string | null) { return this.active().acpPermission(id, requestId, optionId); }
 }
 
 export const desktop = new DesktopClient();

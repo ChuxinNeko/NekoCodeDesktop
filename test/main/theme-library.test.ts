@@ -55,6 +55,29 @@ describe("ThemeLibrary", () => {
 		expect(lib.art("lavender-snow")).toBe(`data:image/png;base64,${PNG}`);
 	});
 
+	test("imports an extracted theme folder", () => {
+		const lib = library();
+		const source = join(base, "extracted-theme");
+		mkdirSync(source, { recursive: true });
+		writeFileSync(
+			join(source, "theme.json"),
+			JSON.stringify({ id: "extracted", displayName: "Extracted", mode: "light", art: "assets/artwork.png", palette: { canvas: "#ffffff", text: "#000000", accent: "#3366ff" } }),
+		);
+		mkdirSync(join(source, "assets"));
+		writeFileSync(join(source, "assets", "artwork.png"), Buffer.from(PNG, "base64"));
+		const theme = lib.installDirectory(source);
+		expect(theme.id).toBe("extracted");
+		expect(existsSync(join(lib.dir, "extracted", "theme.json"))).toBe(true);
+		expect(lib.snapshot().themes[0]?.art).toBe(true);
+	});
+
+	test("rejects an extracted theme folder without its manifest", () => {
+		const lib = library();
+		const source = join(base, "not-a-theme");
+		mkdirSync(source, { recursive: true });
+		expect(() => lib.installDirectory(source)).toThrow("theme.json");
+	});
+
 	test("reinstalling replaces the theme", () => {
 		const lib = library();
 		lib.install(themePackage("snow", "#111111"));

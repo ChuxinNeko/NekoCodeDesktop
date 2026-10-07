@@ -80,6 +80,8 @@ export interface TurnUsage {
 	fusion?: {
 		lead: TurnUsage;
 		sidekick: { provider: string; model: string; usage?: TurnUsage };
+		/** Actual model/task/category totals, including auxiliary maintenance requests. */
+		breakdown?: Array<{ taskId?: string; kind: "inference" | "compaction" | "cache-warm"; usage: TurnUsage }>;
 	};
 	fastContext?: {
 		primary: TurnUsage;

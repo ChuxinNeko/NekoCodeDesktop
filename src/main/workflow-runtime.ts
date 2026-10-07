@@ -12,12 +12,14 @@ import type {
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExecutionMode, ThinkingLevel } from "../shared/agent";
+import type { ExecutionMode, ThinkingLevel, TurnUsage } from "../shared/agent";
 import type { FusionConfig } from "../shared/fusion";
 import { FUSION_ENTRY, resolveFusion, savedFusion } from "./fusion-config";
 import {
 	FAST_CONTEXT_USAGE_ENTRY,
 	FUSION_USAGE_ENTRY,
+	maintenanceUsage,
+	type FusionUsageKind,
 	type FusionUsageRecord,
 } from "./fusion-usage";
 import { completeHelper } from "./helper-completion";
@@ -39,6 +41,8 @@ import {
 	type PromptRole,
 	type TaskInput,
 	type TaskStep,
+	type TaskRunResult,
+	type FusionTaskReport,
 	type WorkMode,
 	type WorkflowAnswer,
 	type WorkflowTask,
@@ -64,6 +68,11 @@ import { createGithubTool, GITHUB_TOOL_NAME } from "./github-tool";
 import { createSshTool, sshToolAvailable } from "./ssh-tool";
 import { createRemoteDesktopTool } from "./remote-desktop/tool";
 import { isShellTool } from "../shared/hooks";
+import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence } from "./fusion-handoff";
+import { FusionSidekickSession } from "./fusion-sidekick-session";
+import { createFusionReportTool, createFusionUpgradeTool, FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, fusionTaskResult,
+	type FusionUpgradeRequest } from "./fusion-report-tool";
+import { fusionRouteAtCompaction } from "./fusion-routing";
 import { currentCommandShell, type CommandShellSetup } from "./command-shell";
 import { containsPath, resolveWorkspacePath } from "./workflow-paths";
 import { readSavedWorkflow, WorkflowState } from "./workflow-state";
@@ -302,6 +311,25 @@ interface HelperRunOptions {
 	thinkingLevel?: ThinkingLevel;
 	fastContext?: boolean;
 	usage?: "fusion" | "fast-context";
+	reuseFusionWorker?: boolean;
+	taskId?: string;
+	onReport?: (report: FusionTaskReport) => void;
+}
+interface HelperUsageOrigin {
+	turnTimestamp: number;
+	parentEntryId?: string;
+	taskId?: string;
+	usageKind: "fusion" | "fast-context";
+}
+interface SidekickLease {
+	context: PromptContext;
+	upgrade?: FusionUpgradeRequest;
+	routeChanges: number;
+	onStep?: (step: TaskStep) => void;
+	origin?: HelperUsageOrigin;
+	scopes: string[];
+	signal?: AbortSignal;
+	onReport?: (report: FusionTaskReport) => void;
 }
 
 /**
@@ -330,12 +358,17 @@ export class WorkflowRuntime {
 			}
 			this.fusionConfig = resolved.config;
 		} else this.fusionConfig = null;
+		this.resetHelpers();
 		this.options.sessionManager.appendCustomEntry(FUSION_ENTRY, this.fusionConfig);
 		this.refresh();
 		this.options.onChange();
 	}
 	readonly state: WorkflowState;
 	private session: AgentSession | null = null;
+	private readonly sidekick = new FusionSidekickSession<AgentSession, SidekickLease>();
+	private sidekickParentAnchor?: string;
+	private readonly helperUsageSources = new Set<string>();
+	private helperCallSequence = 0;
 	private mode: WorkMode;
 	private phase: AgentPhase;
 	private closed = false;
@@ -364,7 +397,7 @@ export class WorkflowRuntime {
 			maxWorkers: () => this.fusionConfig ? 1 : 4,
 			saved,
 			onChange: () => this.changed(),
-			runTask: (input, signal, onStep) => this.runTask(input, signal, onStep),
+			runTask: (input, signal, onStep, taskId) => this.runTask(input, signal, onStep, taskId),
 			onTaskComplete: async (task) => {
 				this.notices.push(task);
 				await this.deliverNotices();
@@ -398,10 +431,11 @@ export class WorkflowRuntime {
 			...(this.options.getGoal?.() ? { goal: this.options.getGoal() } : {}),
 			workflowContext: JSON.stringify({
 				todos,
-				tasks: tasks.map(({ id, description, status, writablePaths }) => ({
+				tasks: tasks.map(({ id, description, status, outcome, writablePaths }) => ({
 					id,
 					description,
 					status,
+					outcome,
 					writablePaths,
 				})),
 			}),
@@ -419,6 +453,7 @@ export class WorkflowRuntime {
 		this.state.assertParentWrite(path);
 	}
 	attach(session: AgentSession): void {
+		if (this.session && this.session !== session) this.resetHelpers();
 		this.session = session;
 		const before = session.agent.beforeToolCall;
 		session.agent.beforeToolCall = async (context, signal) => {
@@ -431,9 +466,15 @@ export class WorkflowRuntime {
 			)
 				return {
 					block: true,
-					reason: "Tool is not allowed in the current work mode and execution permission",
+					reason: this.fusionConfig
+						? "Fusion Lead cannot execute this tool. Delegate investigation to Sidekick via code_search or task(kind=explore), and edits or commands via a concrete task.executionPlan. Lead decides from evidence; do not bypass the current mode or permission."
+						: "Tool is not allowed in the current work mode and execution permission",
 				};
 			const name = context.toolCall.name;
+			if (name === "task" && this.fusionConfig) {
+				const reason = fusionTaskError(context.args);
+				if (reason) return { block: true, reason };
+			}
 			if (isShellTool(name) && this.state.hasWritingTasks)
 				return {
 					block: true,
@@ -455,6 +496,10 @@ export class WorkflowRuntime {
 	refresh(): void {
 		if (this.closed) return;
 		this.session?.setActiveToolsByName(toolsForMode(this.context()));
+		const lease = this.sidekick.current;
+		if (lease) this.sidekick.session?.setActiveToolsByName(toolsForMode({
+			...lease.context, permission: this.options.getPermission(),
+		}));
 	}
 	private changed(): void {
 		if (this.closed) return;
@@ -563,7 +608,17 @@ export class WorkflowRuntime {
 			void this.deliverNotices();
 		}
 	}
+	/** Invalidate on model/configuration changes and history/code restoration. */
+	resetHelpers(): void {
+		this.sidekick.reset();
+		this.sidekickParentAnchor = undefined;
+	}
+	async whenSettled(): Promise<void> {
+		await this.state.whenSettled();
+		await this.sidekick.whenSettled();
+	}
 	stop(): void {
+		this.resetHelpers();
 		this.noticeGeneration++;
 		this.notices = [];
 		this.state.abortAll();
@@ -591,7 +646,7 @@ export class WorkflowRuntime {
 								" | " +
 								task.description +
 								" | " +
-								task.status +
+								task.status + (task.outcome ? ` | outcome=${task.outcome}` : "") +
 								"\n" +
 								(task.result ?? ""),
 						)
@@ -624,23 +679,52 @@ export class WorkflowRuntime {
 		input: TaskInput,
 		signal: AbortSignal,
 		onStep: (step: TaskStep) => void,
-	): Promise<string> {
+		taskId?: string,
+	): Promise<string | TaskRunResult> {
 		const writablePaths =
 			input.kind === "worker"
 				? input.writablePaths.map((path) => resolveWorkspacePath(this.options.cwd, path))
 				: [];
-		return this.runHelper(
-			input.kind === "explore" ? "subagent" : "agent",
-			input.prompt +
-				(input.designSpec ? "\n\n## Lead 视觉设计规格\n" + input.designSpec +
-					"\n\n按此规格实施；不要自行改变构图、配色、比例或动画风格。仅自行决定不影响视觉结果的实现细节。规格缺失或冲突且会改变视觉结果时，停止相关部分并把具体问题返回 Lead。完成说明列出对应实现及任何偏差，不要声称已进行未执行的视觉检查。" : "") +
-				"\n\nDeclared writable paths: " +
-				(input.writablePaths.join(", ") || "none") +
-				". Report changes and checks honestly so Lead can integrate and verify. Use only tools actually available.",
-			signal,
-			writablePaths,
-			onStep,
-		);
+		const evidence = this.fusionConfig && input.kind === "worker" ? new FusionExecutionEvidence() : null;
+		let report: FusionTaskReport | undefined;
+		try {
+			const result = await this.runHelper(
+				input.kind === "explore" ? "subagent" : "agent",
+				taskHandoffPrompt(input),
+				signal,
+				writablePaths,
+				(step) => {
+					evidence?.record(step);
+					onStep(step);
+				},
+				{ reuseFusionWorker: !!this.fusionConfig && input.kind === "worker", taskId, onReport: (value) => {
+					const criteria = input.executionPlan?.acceptanceCriteria ?? [];
+					if (value.acceptance.length !== criteria.length || new Set(value.acceptance.map((item) => item.criterion)).size !== criteria.length ||
+						!criteria.every((criterion) => value.acceptance.some((item) => item.criterion === criterion)))
+						throw new Error("Report each executionPlan acceptance criterion exactly once, using its original text");
+					report = value;
+				} },
+			);
+			if (!evidence) return result;
+			const handoff = fusionTaskResult(result, report);
+			return { ...handoff, text: evidence.appendTo(handoff.text) };
+		} catch (error) {
+			if (!evidence) throw error;
+			throw new Error(evidence.appendTo(error instanceof Error ? error.message : String(error)));
+		}
+	}
+	private recordHelperUsage(origin: HelperUsageOrigin | undefined, usage: TurnUsage, kind: FusionUsageKind, sourceEntryId: string): void {
+		if (!origin || this.closed || this.helperUsageSources.has(sourceEntryId)) return;
+		if (origin.parentEntryId && !this.options.sessionManager.getBranch().some((entry) => entry.id === origin.parentEntryId)) return;
+		try {
+			this.options.sessionManager.appendCustomEntry(
+				origin.usageKind === "fast-context" ? FAST_CONTEXT_USAGE_ENTRY : FUSION_USAGE_ENTRY,
+				{ turnTimestamp: origin.turnTimestamp, parentEntryId: origin.parentEntryId, taskId: origin.taskId,
+					kind, sourceEntryId, usage } satisfies FusionUsageRecord,
+			);
+			this.helperUsageSources.add(sourceEntryId);
+			this.options.onChange();
+		} catch (error) { this.options.onError?.("辅助模型用量未能保存：" + String(error)); }
 	}
 	private async runHelper(
 		role: PromptRole,
@@ -654,7 +738,9 @@ export class WorkflowRuntime {
 		if (!parent?.model) throw new Error("Select a model before running a helper");
 		if (this.closed || signal?.aborted) throw new Error("Helper cancelled");
 		// Capture before awaiting setup: a queued prompt can arrive while the child runs.
-		const turnTimestamp = [...parent.messages].reverse().find((message) => message.role === "user")?.timestamp;
+		const parentUser = [...this.options.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && entry.message.role === "user");
+		const turnTimestamp = parentUser?.type === "message" ? parentUser.message.timestamp :
+			[...parent.messages].reverse().find((message) => message.role === "user")?.timestamp;
 		const piModule = await pi();
 		const { createAgentSession, createBashToolDefinition, SessionManager } = piModule;
 		const fusion = this.fusionConfig
@@ -664,6 +750,7 @@ export class WorkflowRuntime {
 			scopes.some((scope) => scope === resolveWorkspacePath(this.options.cwd, "."));
 		const context: PromptContext = {
 			fusionRole: fusion && !helperOptions?.fastContext ? "sidekick" : undefined,
+			fusionAdaptiveRouting: !!fusion?.config.adaptiveRouting,
 			allowWorkerShell,
 			mode: role,
 			permission: scopes.length ? this.options.getPermission() : "read-only",
@@ -676,9 +763,26 @@ export class WorkflowRuntime {
 			modelId: helperModel.provider + "/" + helperModel.id,
 			...this.shellContext(),
 		};
+		const persistent = !!fusion && !!helperOptions?.reuseFusionWorker;
+		if (persistent && this.sidekickParentAnchor && !this.options.sessionManager.getBranch()
+			.some((entry) => entry.id === this.sidekickParentAnchor)) this.resetHelpers();
+		const usageKind = helperOptions?.usage ?? (fusion && role !== "commit" ? "fusion" : undefined);
+		const origin: HelperUsageOrigin | undefined = usageKind && turnTimestamp !== undefined ? {
+			turnTimestamp, parentEntryId: parentUser?.id, taskId: helperOptions?.taskId, usageKind,
+		} : undefined;
+		const lease: SidekickLease = { context, scopes, signal, origin, routeChanges: 0, onStep, onReport: helperOptions?.onReport };
+		const currentLease = () => persistent ? this.sidekick.current : lease;
+		const getContext = (): PromptContext => {
+			const active = currentLease();
+			return { ...(active?.context ?? context),
+				permission: active?.scopes.length ? this.options.getPermission() : "read-only",
+				allowWorkerShell: !!active && !active.signal?.aborted && active.context.allowWorkerShell,
+			};
+		};
+		const create = async (): Promise<AgentSession> => {
 		const resourceLoader = await createPromptResources(
 			this.options.cwd,
-			() => context,
+			getContext,
 			true,
 			this.options.agentDir,
 		);
@@ -691,13 +795,24 @@ export class WorkflowRuntime {
 			thinkingLevel:
 				helperOptions?.thinkingLevel ?? fusion?.config.sidekickThinkingLevel ?? parent.thinkingLevel,
 			resourceLoader,
-			tools: toolsForMode(context).filter((name) =>
+			tools: toolsForMode(persistent ? { ...context, permission: "auto", allowWorkerShell: true } : context).filter((name) =>
 				(helperOptions?.fastContext
 					? ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME]
-					: ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, ...WEB_TOOL_NAMES, GITHUB_TOOL_NAME, "edit", AST_EDIT_TOOL_NAME, "write"]
-				).includes(name) || (!helperOptions?.fastContext && allowWorkerShell && isShellTool(name)),
+					: ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, ...WEB_TOOL_NAMES, GITHUB_TOOL_NAME, "edit", AST_EDIT_TOOL_NAME, "write", FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL]
+				).includes(name) || (!helperOptions?.fastContext && (persistent || allowWorkerShell) && isShellTool(name)),
 			),
 			customTools: [
+				...(persistent && fusion?.config.adaptiveRouting ? [createFusionUpgradeTool((value) => {
+					const active = currentLease();
+					if (!active || active.signal?.aborted || this.closed) throw new Error("No active Fusion task");
+					if (active.upgrade) throw new Error("An upgrade was already requested; return to Lead if blocked");
+					active.upgrade = value;
+				})] : []),
+				...(persistent ? [createFusionReportTool((value) => {
+					const active = currentLease();
+					if (!active || active.signal?.aborted || this.closed) throw new Error("No active Fusion task");
+					active.onReport?.(value);
+				})] : []),
 				createReadTool(piModule, this.options.cwd),
 				createStatTool(this.options.cwd),
 				createAstGrepTool(this.options.cwd),
@@ -710,16 +825,67 @@ export class WorkflowRuntime {
 							// Same boundary the gate below holds edit and write to.
 							createAstEditTool(this.options.cwd, {
 								assertWritable: (path) => {
-									if (!scopes.some((scope) => containsPath(scope, resolveWorkspacePath(this.options.cwd, path))))
+									const active = currentLease();
+									if (!active || active.signal?.aborted || this.closed || this.options.getPermission() === "read-only" ||
+										!active.scopes.some((scope) => containsPath(scope, resolveWorkspacePath(this.options.cwd, path))))
 										throw new Error(`Write is outside the worker's declared scope: ${path}`);
 								},
 							}),
 						]),
-				...(allowWorkerShell ? this.shell.customTools(this.options.cwd, createBashToolDefinition) : []),
+				...(persistent || allowWorkerShell ? this.shell.customTools(this.options.cwd, createBashToolDefinition) : []),
 			],
 			toolOptions: this.shell.toolOptions,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
+			afterCompaction: persistent && fusion?.config.adaptiveRouting ? async ({ signal: compactSignal }) => {
+				const active = currentLease();
+				if (!active || active.signal?.aborted || compactSignal.aborted || this.closed || !session.model) return;
+				const route = fusionRouteAtCompaction(fusion.config, `${session.model.provider}/${session.model.id}`,
+					active.upgrade, active.routeChanges);
+				if (!route) return;
+				// Count attempts too: an auth failure must not retry an expensive route at every boundary.
+				active.routeChanges++;
+				try {
+					const target = route === "lead" ? fusion.lead : fusion.sidekick;
+					await session.setModel(target);
+					if (active !== currentLease() || active.signal?.aborted || compactSignal.aborted || this.closed) return;
+					session.setThinkingLevel(route === "lead" ? fusion.config.leadThinkingLevel : fusion.config.sidekickThinkingLevel);
+					active.context.modelId = `${target.provider}/${target.id}`;
+					session.setActiveToolsByName(toolsForMode(getContext()));
+					active.onStep?.({ kind: "message", id: `route-${Date.now()}`, startedAt: Date.now(),
+						text: `Fusion 在压缩边界切换执行模型为 ${target.provider}/${target.id}；权限不变。` });
+				} catch (error) {
+					active.onStep?.({ kind: "message", id: `route-error-${Date.now()}`, startedAt: Date.now(),
+						text: "Fusion 路由失败，保留当前模型并交由 Lead 审查：" + String(error) });
+				}
+			} : undefined,
 		});
+		// This subscription survives healthy task handoffs, so idle cache warming is not lost.
+		// Attribute warming to the request that wrote the cache, not a newly leased task.
+		let lastRequestOrigin = origin;
+		let compactionModel = session.model;
+		session.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "assistant")
+				lastRequestOrigin = currentLease()?.origin;
+			if (event.type === "compaction_start") compactionModel = session.model;
+			if (event.type === "entry_appended" && event.entry.type === "usage" && event.entry.kind === "cache_warm") {
+				const entry = event.entry;
+				this.recordHelperUsage(lastRequestOrigin, maintenanceUsage(entry.provider, entry.model, entry.usage),
+					"cache-warm", `${session.sessionId}:${entry.id}`);
+			}
+			if (event.type === "compaction_end" && event.result?.usage && !event.aborted && compactionModel) {
+				const entry = [...session.sessionManager.getBranch()].reverse().find((entry) => entry.type === "compaction");
+				if (entry) this.recordHelperUsage(currentLease()?.origin ?? lastRequestOrigin,
+					maintenanceUsage(compactionModel.provider, compactionModel.id, event.result.usage),
+					"compaction", `${session.sessionId}:${entry.id}`);
+			}
+		});
+		return session;
+		};
+		const session = persistent
+			? await this.sidekick.acquire(JSON.stringify(fusion!.config), lease, create)
+			: await create();
+		if (session.model) lease.context.modelId = `${session.model.provider}/${session.model.id}`;
+		session.setActiveToolsByName(toolsForMode(getContext()));
 		const abort = () => {
 			void session.abort();
 		};
@@ -730,10 +896,8 @@ export class WorkflowRuntime {
 		// UI show the worker working.
 		const started = new Map<string, Extract<TaskStep, { kind: "tool" }>>();
 		const reasoning = new Map<number, Reasoning>();
-		const callTiming = new Map<number, { startedAt: number; endedAt?: number }>();
+		const callTiming = new Map<number, { startedAt: number; endedAt?: number; sourceId: string }>();
 		let previousCallEnd: number | undefined;
-		const usageKind =
-			helperOptions?.usage ?? (fusion && role !== "commit" ? "fusion" : undefined);
 		const unsubscribeUsage = session.subscribe((event) => {
 			if (!usageKind || role === "commit" || turnTimestamp === undefined) return;
 			if (usageKind === "fusion" && !fusion) return;
@@ -741,7 +905,7 @@ export class WorkflowRuntime {
 			if (event.message.role !== "assistant") return;
 			const timestamp = event.message.timestamp;
 			if (event.type === "message_start") {
-				callTiming.set(timestamp, { startedAt: Date.now() });
+				callTiming.set(timestamp, { startedAt: Date.now(), sourceId: `${session.sessionId}:call:${++this.helperCallSequence}` });
 				return;
 			}
 			const timing = callTiming.get(timestamp);
@@ -752,18 +916,9 @@ export class WorkflowRuntime {
 				usage.durationMs = Math.max(0, timing.endedAt - (previousCallEnd ?? timing.startedAt));
 				previousCallEnd = timing.endedAt;
 			}
-			if (usage && !this.closed) {
-				try {
-					this.options.sessionManager.appendCustomEntry(
-						usageKind === "fast-context" ? FAST_CONTEXT_USAGE_ENTRY : FUSION_USAGE_ENTRY,
-						{ turnTimestamp, usage } satisfies FusionUsageRecord,
-					);
-				} catch (error) {
-					this.options.onError?.(
-						(usageKind === "fast-context" ? "Fast Context 用量未能保存：" : "Sidekick 用量未能保存：") +
-							String(error),
-					);
-				}
+			if (usage) {
+				// message_end is emitted before SessionManager persists it; use the request's identity, not a prior message entry.
+				this.recordHelperUsage(origin, usage, "inference", timing?.sourceId ?? `${session.sessionId}:call:${++this.helperCallSequence}`);
 			}
 		});
 		const pushReasoning = (entry: Reasoning, report: (step: TaskStep) => void): void => {
@@ -839,29 +994,37 @@ export class WorkflowRuntime {
 				})
 			: undefined;
 		session.agent.beforeToolCall = async ({ toolCall, args }) => {
-			if (this.closed || signal?.aborted) return { block: true, reason: "Helper cancelled" };
-			if (!toolsForMode(context).includes(toolCall.name))
+			const active = currentLease();
+			if (this.closed || !active || active.signal?.aborted) return { block: true, reason: "Helper cancelled or idle" };
+			if (!toolsForMode(getContext()).includes(toolCall.name))
 				return { block: true, reason: "Tool is outside the helper's allowlist" };
-			const guarded = await guardToolCall(toolCall.name, args, this.options.cwd, toolsForMode(context));
+			const guarded = await guardToolCall(toolCall.name, args, this.options.cwd, toolsForMode(getContext()));
 			if (guarded) return guarded;
+			if (active !== currentLease() || this.closed || active.signal?.aborted || !toolsForMode(getContext()).includes(toolCall.name))
+				return { block: true, reason: "Helper authority changed during the tool check" };
 			if (["write", "edit"].includes(toolCall.name)) {
 				const target = resolveWorkspacePath(this.options.cwd, (args as { path: string }).path);
-				if (!scopes.some((scope) => containsPath(scope, target)))
+				if (!active.scopes.some((scope) => containsPath(scope, target)))
 					return { block: true, reason: "Write is outside the worker's declared scope" };
 			}
 			return undefined;
 		};
+		let healthy = false;
 		try {
 			if (this.closed || signal?.aborted) throw new Error("Helper cancelled");
 			let recovery = 0;
-			return await completeHelper(session, prompt, helperModel, signal, (text) => {
+			const result = await completeHelper(session, prompt, helperModel, signal, (text) => {
 				onStep?.({ kind: "message", id: `recovery-${++recovery}`, text, startedAt: Date.now() });
 			});
+			healthy = !this.closed && !signal?.aborted;
+			if (persistent && healthy) this.sidekickParentAnchor = this.options.sessionManager.getBranch().at(-1)?.id;
+			return result;
 		} finally {
 			signal?.removeEventListener("abort", abort);
 			unsubscribeUsage();
 			unsubscribe?.();
-			session.dispose();
+			if (persistent) this.sidekick.release(lease, healthy);
+			else session.dispose();
 		}
 	}
 	async searchCode(query: string, signal?: AbortSignal, toolCallId?: string): Promise<string> {

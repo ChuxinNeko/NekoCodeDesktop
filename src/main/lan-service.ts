@@ -11,6 +11,7 @@ import type { AgentService } from "./agent-service";
 import { isWorkMode } from "../shared/workflow";
 import { isFusionConfig } from "../shared/fusion";
 import type { TaskManager } from "./task-manager";
+import type { AcpService } from "./acp/service";
 
 type Device = LanDevice & { tokenHash: string };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -19,6 +20,8 @@ class HttpError extends Error { constructor(readonly status: number, message: st
 /** Explicitly enabled LAN gateway. No Electron IPC or arbitrary filesystem API is exposed.
  * Once the user turns it on it stays on across launches until they turn it off. */
 export class LanService {
+	private acpProvider: (() => AcpService) | null = null;
+	setAcpProvider(provider: () => AcpService): void { this.acpProvider = provider; }
 	private server: Server | null = null;
 	private devices: Device[] = [];
 	private projects: LanProject[] = [];
@@ -253,6 +256,7 @@ export class LanService {
 		path: string,
 		body?: Record<string, unknown>,
 	): Promise<unknown> {
+		if (path.startsWith("/api/acp/")) return this.dispatchAcp(principal, method, path, body);
 		const defaults = /^\/api\/projects\/([a-zA-Z0-9-]+)\/defaults$/.exec(path);
 		if (method === "GET" && defaults) {
 			const project = this.projects.find((p) => p.id === defaults[1]);
@@ -334,6 +338,64 @@ export class LanService {
 			}
 			const snapshot = agent.getSnapshot();
 			return snapshot ? this.withoutSessionFile(snapshot) : null;
+		}
+		throw new HttpError(404, "Not found");
+	}
+
+	private async dispatchAcp(principal: { id: string }, method: string, path: string, body?: Record<string, unknown>): Promise<unknown> {
+		if (!this.acpProvider) throw new HttpError(503, "ACP 服务尚未就绪");
+		const acp = this.acpProvider();
+		const authorized = (cwd: string) => this.projects.some((project) => project.path === cwd);
+		const requireSession = (id: string) => {
+			const session = acp.view(id);
+			if (!session || !authorized(session.cwd)) throw new HttpError(404, "ACP 会话不存在或项目未授权");
+			return session;
+		};
+		if (method === "GET" && path === "/api/acp/state") {
+			const state = acp.state();
+			return { agents: state.agents.map((agent) => ({ ...agent, env: {}, command: "", args: [], commandLine: "" })), sessions: state.sessions.filter((session) => authorized(session.cwd)) };
+		}
+		const history = /^\/api\/acp\/agents\/([a-zA-Z0-9_-]+)\/history$/.exec(path);
+		if (method === "GET" && history) {
+			if (!acp.agents().some((agent) => agent.id === history[1] && agent.enabled)) throw new HttpError(404, "ACP 代理不存在");
+			const result = await acp.history(history[1]);
+			return { ...result, entries: result.entries.filter((entry) => authorized(entry.cwd)) };
+		}
+		if (method === "POST" && path === "/api/acp/sessions") {
+			const input = body!;
+			const project = this.projects.find((entry) => entry.id === input.projectId);
+			if (!project) throw new HttpError(403, "请先在电脑端授权此项目");
+			if (typeof input.agentId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(input.agentId)) throw new HttpError(400, "无效的 ACP 代理");
+			return acp.create({ agentId: input.agentId, cwd: project.path, warm: true });
+		}
+		if (method === "POST" && path === "/api/acp/open") {
+			const input = body!;
+			if (typeof input.agentId !== "string" || typeof input.sessionId !== "string" || typeof input.cwd !== "string" || !authorized(input.cwd)) throw new HttpError(403, "项目未授权");
+			if (input.sessionId.length > 500 || input.agentId.length > 100) throw new HttpError(400, "无效的 ACP 会话");
+			const opened = acp.openHistory({ agentId: input.agentId, sessionId: input.sessionId, cwd: input.cwd, title: typeof input.title === "string" ? input.title.slice(0, 300) : undefined });
+			if (!authorized(opened.cwd)) throw new HttpError(403, "项目未授权");
+			return opened;
+		}
+		const session = /^\/api\/acp\/sessions\/([a-zA-Z0-9-]+)(?:\/(prompt|cancel|config|permission|close))?$/.exec(path);
+		if (session) {
+			const current = requireSession(session[1]);
+			if (method === "GET" && !session[2]) return current;
+			if (method === "POST" && session[2] === "prompt") {
+				const input = body!;
+				if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 32_000) throw new HttpError(400, "请输入有效消息");
+				return this.once(principal, `acp-prompt:${session[1]}`, input, async () => { await acp.prompt({ sessionId: session[1], text: input.text as string }); return { accepted: true }; });
+			}
+			if (method === "POST" && session[2] === "cancel") { await acp.cancel(session[1]); return acp.view(session[1]); }
+			if (method === "POST" && session[2] === "config") {
+				if (typeof body!.configId !== "string" || typeof body!.value !== "string" || body!.configId.length > 100 || body!.value.length > 300) throw new HttpError(400, "无效的 ACP 设置");
+				await acp.setConfig({ sessionId: session[1], configId: body!.configId, value: body!.value }); return acp.view(session[1]);
+			}
+			if (method === "POST" && session[2] === "permission") {
+				const input = body!;
+				if (typeof input.requestId !== "string" || !current.permissions.some((permission) => permission.id === input.requestId && (input.optionId === null || permission.options.some((option) => option.optionId === input.optionId)))) throw new HttpError(409, "权限请求已变化，请刷新后重试");
+				acp.respondPermission({ sessionId: session[1], requestId: input.requestId, optionId: input.optionId as string | null }); return acp.view(session[1]);
+			}
+			if (method === "POST" && session[2] === "close") { acp.close(session[1]); return { closed: true }; }
 		}
 		throw new HttpError(404, "Not found");
 	}

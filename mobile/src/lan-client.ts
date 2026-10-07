@@ -8,6 +8,7 @@ import type { DeltaRequest, ToolOutputChunk } from "./desktop-client";
 import type { LanState, LanTaskOptions } from "../../src/shared/lan";
 import type { WorkflowAnswer } from "../../src/shared/workflow";
 import type { SlashCommandSummary } from "../../src/shared/commands";
+import type { AcpHistory, AcpSessionSnapshot, AcpState } from "../../src/shared/acp";
 
 export interface Binding { endpoint: string; token: string; name: string }
 export interface SubmitResult { id: string; accepted: boolean; error?: string }
@@ -85,6 +86,15 @@ export class LanClient {
 	answer(id: string, answer: WorkflowAnswer) { return this.request<AgentSnapshot>(`/api/tasks/${encodeURIComponent(id)}/answer`, answer); }
 	cancelWorker(id: string, workerId: string) { return this.request<AgentSnapshot>(`/api/tasks/${encodeURIComponent(id)}/cancel-worker`, { id: workerId }); }
 	commands(id: string) { return this.request<SlashCommandSummary[]>(`/api/tasks/${encodeURIComponent(id)}/commands`); }
+	acpState() { return this.request<AcpState>("/api/acp/state"); }
+	acpHistory(agentId: string) { return this.request<AcpHistory>(`/api/acp/agents/${encodeURIComponent(agentId)}/history`); }
+	acpSnapshot(id: string) { return this.request<AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}`); }
+	acpCreate(agentId: string, projectId: string) { return this.request<AcpSessionSnapshot>("/api/acp/sessions", { agentId, projectId }); }
+	acpOpen(agentId: string, sessionId: string, cwd: string, title?: string) { return this.request<AcpSessionSnapshot>("/api/acp/open", { agentId, sessionId, cwd, title }); }
+	acpPrompt(id: string, text: string) { return this.submit<{ accepted: boolean }>(`/api/acp/sessions/${encodeURIComponent(id)}/prompt`, { text }); }
+	acpCancel(id: string) { return this.request<AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}/cancel`, {}); }
+	acpSetConfig(id: string, configId: string, value: string) { return this.request<AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}/config`, { configId, value }); }
+	acpPermission(id: string, requestId: string, optionId: string | null) { return this.request<AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}/permission`, { requestId, optionId }); }
 }
 
 export const lan = new LanClient();

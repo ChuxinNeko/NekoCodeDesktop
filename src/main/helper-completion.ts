@@ -42,14 +42,15 @@ export async function completeHelper(
 			await session.prompt(continuations === 0 ? prompt : HELPER_CONTINUATION_PROMPT, { expandPromptTemplates: false });
 			if (signal?.aborted) throw new Error("子代理已取消");
 			const last = [...session.messages].reverse().find((message) => message.role === "assistant");
+			const activeModel = session.model ?? model;
 			if (last?.role === "assistant" && last.stopReason === "length" && continuations < MAX_HELPER_CONTINUATIONS) {
-				onRecovery?.(`子代理 ${model.id} 的输出被截断，正在原任务中续写（${continuations + 1}/${MAX_HELPER_CONTINUATIONS}），保留已完成的文件操作。`);
+				onRecovery?.(`子代理 ${activeModel.id} 的输出被截断，正在原任务中续写（${continuations + 1}/${MAX_HELPER_CONTINUATIONS}），保留已完成的文件操作。`);
 				continue;
 			}
 			if (!last || last.role !== "assistant" || ["error", "aborted", "length"].includes(last.stopReason))
-				throw new Error(failureDetail(last?.role === "assistant" ? last : undefined, model, continuations));
+				throw new Error(failureDetail(last?.role === "assistant" ? last : undefined, activeModel, continuations));
 			const text = last.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-			if (!text.trim()) throw new Error(failureDetail(last, model, continuations));
+			if (!text.trim()) throw new Error(failureDetail(last, activeModel, continuations));
 			return text.slice(0, 12000);
 		}
 	} finally {

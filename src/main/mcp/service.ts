@@ -1,15 +1,19 @@
+import { createHash } from "node:crypto";
 import type { TSchema } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AuthProvider, McpClient, McpTransport, Tool } from "@earendil-works/pi-mcp";
 import type { OAuthChallenge } from "@earendil-works/pi-mcp/oauth";
 import {
 	qualifyToolName,
+	type McpDesktopConnection,
+	type McpDesktopViewer,
 	type McpServerConfig,
 	type McpServerStatus,
 	type McpSnapshot,
 	type McpToolSummary,
 	type SaveMcpServerRequest,
 } from "../../shared/mcp";
+import { isDesktopBridge, parseDesktopTicket, parseDesktopViewerMetadata, type McpDesktopCapability } from "../../shared/mcp-desktop";
 import { piMcp, piMcpOAuth } from "../pi";
 import { createMcpAuthProvider, McpSignInRequiredError, signInMcpServer, type McpAuthStore } from "./oauth";
 import { McpStore } from "./store";
@@ -25,6 +29,11 @@ interface Connection {
 	client: McpClient;
 	transport: McpTransport;
 	tools: Tool[];
+	config: McpServerConfig;
+	authProvider?: AuthProvider;
+	desktop?: McpDesktopCapability;
+	closed: AbortController;
+	openingDesktop?: boolean;
 }
 
 export type McpTransportFactory = (
@@ -41,6 +50,8 @@ export interface McpServiceOptions {
 	openUrl?: (url: string) => void | Promise<void>;
 	/** Tests hand in their own; the default dials stdio and streamable HTTP. */
 	createTransport?: McpTransportFactory;
+	/** Metadata/ticket HTTP boundary; separate from the MCP transport. */
+	desktopFetch?: typeof globalThis.fetch;
 }
 
 /**
@@ -107,8 +118,9 @@ export class McpService {
 			const { McpClient, toLlmContent } = await piMcp();
 			this.toLlmContent = toLlmContent;
 			let transport: McpTransport;
+			const authProvider = this.authProviderFor(config);
 			try {
-				transport = await this.createTransport(config, this.getCwd(), this.authProviderFor(config));
+				transport = await this.createTransport(config, this.getCwd(), authProvider);
 			} catch (error) {
 				this.states.set(config.id, { state: "error", error: message(error) });
 				return;
@@ -117,7 +129,11 @@ export class McpService {
 			try {
 				await client.connect(transport);
 				const tools = await client.listTools();
-				const connection: Connection = { client, transport, tools };
+				if (this.store.list().find(entry => entry.id === config.id) !== config || !config.enabled) {
+					await client.close().catch(() => undefined);
+					return;
+				}
+				const connection: Connection = { client, transport, tools, config, authProvider, closed: new AbortController() };
 				this.connections.set(config.id, connection);
 				this.states.set(config.id, { state: "ready" });
 				// A server that crashes or drops mid-session: say so, and let the
@@ -125,6 +141,7 @@ export class McpService {
 				client.onClose(() => {
 					if (this.connections.get(config.id) !== connection) return;
 					this.connections.delete(config.id);
+					connection.closed.abort();
 					this.states.set(config.id, { state: "error", error: dropReason(transport) });
 					this.onChange();
 				});
@@ -137,6 +154,7 @@ export class McpService {
 						})
 						.catch(() => undefined);
 				});
+				await this.discoverDesktop(config, connection);
 			} catch (error) {
 				await client.close().catch(() => undefined);
 				this.states.set(config.id, await this.failure(config, transport, error));
@@ -183,6 +201,7 @@ export class McpService {
 		const connection = this.connections.get(id);
 		if (!connection) return;
 		this.connections.delete(id);
+		connection.closed.abort();
 		void connection.client.close().catch(() => undefined);
 	}
 
@@ -192,15 +211,106 @@ export class McpService {
 				const recorded = this.states.get(config.id);
 				const state = config.enabled ? (recorded?.state ?? "connecting") : "disabled";
 				const oauth = usesOAuth(config) && !!this.options.auth && !!config.url;
+				const desktop = this.connections.get(config.id)?.desktop;
+				const signedIn = oauth && this.options.auth!.signedIn(config.url!);
 				return {
 					config,
 					state,
 					error: recorded?.error,
 					tools: this.summaries(config),
-					...(oauth ? { signedIn: this.options.auth!.signedIn(config.url!) } : {}),
+					...(oauth ? { signedIn: !!signedIn } : {}),
+					...(config.enabled && state === "ready" && signedIn && desktop ? {
+						desktopViewer: { url: desktop.url, partition: desktop.partition, readOnly: true as const },
+					} : {}),
 				};
 			}),
 		};
+	}
+
+	/** The guest allowlist contains public URLs, never the one-use fragment. */
+	desktopViewers(): McpDesktopViewer[] {
+		return this.snapshot().servers.flatMap(server => server.desktopViewer ? [server.desktopViewer] : []);
+	}
+
+	private async discoverDesktop(config: McpServerConfig, connection: Connection): Promise<void> {
+		if (!connection.authProvider || !config.url || !isDesktopBridge(connection.client.serverInfo?.name, connection.tools)) return;
+		try {
+			let capability = parseDesktopViewerMetadata(config.url, this.options.auth?.load(config.url)?.discovery?.resourceMetadata);
+			if (!capability) {
+				const url = new URL(config.url);
+				if (url.username || url.password || url.search || url.hash) return;
+				const paths = new Set([`/.well-known/oauth-protected-resource${url.pathname.replace(/\/$/, "")}`, "/.well-known/oauth-protected-resource"]);
+				for (const path of paths) {
+					const response = await (this.options.desktopFetch ?? globalThis.fetch)(new URL(path, url.origin), {
+						redirect: "error", signal: AbortSignal.any([connection.closed.signal, AbortSignal.timeout(5000)]),
+					});
+					if (!response.ok) { await response.body?.cancel(); continue; }
+					capability = parseDesktopViewerMetadata(config.url, await response.json());
+					if (capability) break;
+				}
+			}
+			if (capability && this.connections.get(config.id) === connection && this.store.list().find(entry => entry.id === config.id) === config) {
+				connection.desktop = {
+					...capability,
+					partition: `persist:nekocode-mcp-desktop-${createHash("sha256").update(JSON.stringify([config.id, capability.url])).digest("hex")}`,
+				};
+			}
+		} catch {
+			// Optional capability failures must not break a working MCP connection.
+		}
+	}
+
+	/** Only the trusted renderer may request a ticket; this is not an agent tool. */
+	async openDesktop(id: string): Promise<McpDesktopConnection> {
+		const connection = this.connections.get(id);
+		const config = this.store.list().find(entry => entry.id === id);
+		const desktop = connection?.desktop;
+		if (!connection || !config?.enabled || connection.config !== config || !config.url || !desktop ||
+			!connection.authProvider || this.states.get(id)?.state !== "ready" || !this.options.auth?.signedIn(config.url)) {
+			throw new Error("MCP 桌面不可用，请确认服务器已连接并完成 OAuth 登录");
+		}
+		if (connection.openingDesktop) throw new Error("桌面连接正在建立，请稍后重试");
+		connection.openingDesktop = true;
+		const current = () => this.connections.get(id) === connection &&
+			this.store.list().find(entry => entry.id === id) === config && config.enabled && !!this.options.auth?.signedIn(config.url!);
+		const needsAuth = () => {
+			if (current()) {
+				this.disconnect(id);
+				this.states.set(id, { state: "needs-auth", error: "需要登录" });
+				this.onChange();
+			}
+			return new McpSignInRequiredError();
+		};
+		const fetch = this.options.desktopFetch ?? globalThis.fetch;
+		try {
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const token = await connection.authProvider.token();
+				if (!current()) throw new Error("桌面来源已改变");
+				if (!token) throw needsAuth();
+				const response = await fetch(desktop.ticketEndpoint, {
+					method: "POST", headers: { Authorization: `Bearer ${token}` }, redirect: "error",
+					signal: AbortSignal.any([connection.closed.signal, AbortSignal.timeout(15000)]),
+				});
+				if (!current()) { await response.body?.cancel(); throw new Error("桌面来源已改变"); }
+				if (response.status === 401 || response.status === 403 && response.headers.get("www-authenticate")?.includes("insufficient_scope")) {
+					try {
+						if (attempt || !connection.authProvider.onUnauthorized) throw needsAuth();
+						await connection.authProvider.onUnauthorized({ response, serverUrl: new URL(config.url), fetch, token });
+					} catch { throw needsAuth(); }
+					finally { await response.body?.cancel(); }
+					continue;
+				}
+				if (!response.ok) { await response.body?.cancel(); throw new Error("桌面授权被拒绝"); }
+				const viewerUrl = parseDesktopTicket(desktop, await response.json());
+				if (!viewerUrl || !current()) throw new Error("无效桌面连接");
+				return { serverId: id, viewerUrl, partition: desktop.partition };
+			}
+			throw needsAuth();
+		} catch (error) {
+			if (error instanceof McpSignInRequiredError) throw error;
+			// Neither response text nor a URL containing a ticket may enter logs/IPC errors.
+			throw new Error("无法打开 MCP 桌面，请重试；若授权已失效，请在 MCP 设置中重新登录");
+		} finally { connection.openingDesktop = false; }
 	}
 
 	private summaries(config: McpServerConfig): McpToolSummary[] {
@@ -283,6 +393,7 @@ export class McpService {
 		// or the URL, and a live connection to the old one would be a lie.
 		this.disconnect(config.id);
 		this.states.delete(config.id);
+		await this.connecting.get(config.id);
 		await this.refresh();
 		return this.snapshot();
 	}
@@ -300,6 +411,7 @@ export class McpService {
 	async reconnect(id: string): Promise<McpSnapshot> {
 		this.disconnect(id);
 		this.states.delete(id);
+		await this.connecting.get(id);
 		await this.refresh();
 		return this.snapshot();
 	}

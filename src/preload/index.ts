@@ -87,7 +87,7 @@ import type {
 	WorktreeRecord,
 	WorktreeStatus,
 } from "../shared/worktree";
-import type { McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
+import type { McpDesktopConnection, McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
 import type {
 	AcpAgentInfo,
 	AcpCreateSessionRequest,
@@ -337,6 +337,7 @@ const api = {
 	mcpReconnect: (id: string): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:reconnect", id),
 	mcpSignIn: (id: string): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:signIn", id),
 	mcpSignOut: (id: string): Promise<McpSnapshot> => ipcRenderer.invoke("mcp:signOut", id),
+	mcpOpenDesktop: (id: string): Promise<McpDesktopConnection> => ipcRenderer.invoke("mcp:openDesktop", id),
 	/** Connection states move on their own — a server can drop at any time. */
 	onMcpChanged: (listener: (snapshot: McpSnapshot) => void) => subscribe("mcp:changed", listener),
 	acpState: (): Promise<AcpState> => ipcRenderer.invoke("acp:state"),
@@ -448,7 +449,9 @@ const api = {
 	skillsImport: (request: ImportSkillsRequest): Promise<ImportSkillsResult> => ipcRenderer.invoke("skills:import", request),
 	skillsRemove: (request: RemoveSkillRequest): Promise<SkillsSnapshot> => ipcRenderer.invoke("skills:remove", request),
 	themesList: (): Promise<ThemeLibrarySnapshot> => ipcRenderer.invoke("themes:list"),
+	themesChooseDirectory: (): Promise<string | null> => ipcRenderer.invoke("themes:chooseDirectory"),
 	themesInstall: (source: string): Promise<CommunityTheme> => ipcRenderer.invoke("themes:install", source),
+	themesInstallDirectory: (sourceDir: string): Promise<CommunityTheme> => ipcRenderer.invoke("themes:installDirectory", sourceDir),
 	themesArt: (id: string): Promise<string | null> => ipcRenderer.invoke("themes:art", id),
 	themesRemove: (id: string): Promise<ThemeLibrarySnapshot> => ipcRenderer.invoke("themes:remove", id),
 	themesOpenDir: (): Promise<void> => ipcRenderer.invoke("themes:openDir"),

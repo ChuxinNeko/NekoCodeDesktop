@@ -107,6 +107,34 @@ describe("withFusionUsage", () => {
 		expect(result(out)).toBe(lead);
 	});
 
+	test("includes compaction and warming with task/model attribution without double counting", () => {
+		const lead = usage("anthropic", "lead", 100);
+		const record = (kind: string, model: string, tokens: number, id: string) => custom(FUSION_USAGE_ENTRY, {
+			turnTimestamp: 1, parentEntryId: "user-1", taskId: "worker-1", kind, sourceEntryId: id,
+			usage: { ...usage("anthropic", model, tokens), costUsd: tokens / 1000 },
+		});
+		const out = withFusionUsage(cells(lead), [custom(FUSION_ENTRY, FUSION), { ...user(1), id: "user-1" },
+			record("inference", "side", 30, "call-1"), record("compaction", "side", 10, "compact-1"),
+			record("cache-warm", "side", 5, "warm-1"), record("cache-warm", "side", 5, "warm-1"),
+			record("inference", "lead", 20, "call-2"),
+		]);
+		const merged = result(out)!;
+		expect(merged.totalTokens).toBe(165);
+		expect(merged.costUsd).toBeCloseTo(0.065);
+		expect(merged.durationMs).toBe(lead.durationMs);
+		expect(merged.fusion?.breakdown).toHaveLength(4);
+		expect(merged.fusion?.breakdown?.map((entry) => entry.kind)).toEqual(["inference", "compaction", "cache-warm", "inference"]);
+		expect(merged.fusion?.breakdown?.at(-1)?.usage.model).toBe("lead");
+		expect(merged.fusion?.breakdown?.every((entry) => entry.taskId === "worker-1")).toBe(true);
+	});
+	test("does not attach usage from another history branch with the same timestamp", () => {
+		const lead = usage("anthropic", "lead", 100);
+		const out = withFusionUsage(cells(lead), [custom(FUSION_ENTRY, FUSION), { ...user(1), id: "new-user" },
+			custom(FUSION_USAGE_ENTRY, { turnTimestamp: 1, parentEntryId: "old-user", usage: usage("zai", "side", 30) }),
+		]);
+		expect(result(out)?.totalTokens).toBe(100);
+		expect(result(out)?.fusion?.breakdown).toHaveLength(0);
+	});
 	test("hides the running turn's usage while helpers run", () => {
 		const lead = usage("anthropic", "lead", 100);
 		const out = withFusionUsage(cells(lead), [

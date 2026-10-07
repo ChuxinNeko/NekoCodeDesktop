@@ -1454,7 +1454,7 @@ export class AgentService {
 		this.helperAbort?.abort();
 		this.workflow?.stop();
 		await this.session?.abort();
-		await this.workflow?.state.whenSettled();
+		await this.workflow?.whenSettled();
 		this.emit();
 	}
 
@@ -1664,6 +1664,7 @@ export class AgentService {
 			}
 		}
 
+		if (restored || deleted || conversationRewound) this.workflow?.resetHelpers();
 		if (conversationRewound) {
 			// Reset, not just rebuild: the overlay still holds the live cells of the
 			// turn that was just undone, and they have no persisted message left to
@@ -1932,7 +1933,7 @@ export class AgentService {
 		this.journal = null;
 
 		await retiring;
-		await previousWorkflow?.state.whenSettled();
+		await previousWorkflow?.whenSettled();
 		if (generation !== this.generation) throw new Error("Session superseded");
 		const { SettingsManager } = await pi();
 		const modelRuntime = await this.getModelRuntime();
@@ -2233,6 +2234,7 @@ export class AgentService {
 				const session = this.session;
 				if (!session) return { cancelled: true };
 				const result = await session.navigateTree(targetId, options);
+				if (!result.cancelled) this.workflow?.resetHelpers();
 				this.projectionDirty = true;
 				this.emit();
 				this.emitSessionsChanged();

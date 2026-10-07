@@ -39,7 +39,7 @@ import { migrateAgentHome } from "./agent-home";
 import { ThemeLibrary, resolveThemesDir } from "./theme-library";
 import { THEMES_DIR_ENV } from "../shared/themes";
 import { AutomationService } from "./automation/service";
-import { installBrowserGuards } from "./browser-service";
+import { installBrowserGuards, revokeUnavailableDesktopGuests } from "./browser-service";
 import type { BrowserInspector } from "./browser-inspector";
 
 let browserInspector: BrowserInspector | undefined;
@@ -771,7 +771,7 @@ function createWindow(): void {
 		void win.loadFile(join(__dirname, "../renderer/index.html"));
 	}
 
-	const inspector = installBrowserGuards(win);
+	const inspector = installBrowserGuards(win, () => mcpService?.desktopViewers() ?? []);
 	browserInspector = inspector;
 
 	if (process.platform === "win32") {
@@ -851,7 +851,13 @@ function createWindow(): void {
 	mcpService ??= new McpService(
 		app.getPath("userData"),
 		() => taskManager?.active.getSnapshot()?.session.cwd ?? app.getPath("home"),
-		() => { if (!win.isDestroyed()) win.webContents.send("mcp:changed", mcpService?.snapshot()); },
+		() => {
+			for (const window of BrowserWindow.getAllWindows()) {
+				if (window.isDestroyed()) continue;
+				revokeUnavailableDesktopGuests(window, mcpService?.desktopViewers() ?? []);
+				window.webContents.send("mcp:changed", mcpService?.snapshot());
+			}
+		},
 		{
 			version: app.getVersion(),
 			auth: new McpAuthStore(app.getPath("userData"), safeStorage),
@@ -1351,6 +1357,13 @@ function registerIpc(): void {
 		if (!mcpService) throw new Error("MCP service unavailable");
 		return mcpService.signIn(id);
 	});
+	ipcMain.handle("mcp:openDesktop", (event, id: string) => {
+		const window = BrowserWindow.fromWebContents(event.sender);
+		if (!window || window.webContents !== event.sender || event.senderFrame !== event.sender.mainFrame ||
+			typeof id !== "string" || !id || id.length > 256) throw new Error("Invalid desktop request");
+		if (!mcpService) throw new Error("MCP service unavailable");
+		return mcpService.openDesktop(id);
+	});
 	ipcMain.handle("mcp:signOut", (_e, id: string): Promise<McpSnapshot> => {
 		if (!mcpService) throw new Error("MCP service unavailable");
 		return mcpService.signOut(id);
@@ -1378,6 +1391,7 @@ function registerIpc(): void {
 				for (const win of BrowserWindow.getAllWindows()) win.webContents.send("acp:snapshot", snapshot);
 			},
 		}));
+	lanService?.setAcpProvider(acp);
 	ipcMain.handle("acp:state", () => acp().state());
 	ipcMain.handle("acp:snapshot", (_e, sessionId: string) => acp().view(sessionId));
 	ipcMain.handle("acp:create", (_e, req: AcpCreateSessionRequest) => acp().create(req));
@@ -1594,6 +1608,19 @@ function registerIpc(): void {
 	ipcMain.handle("themes:install", (_e, source: string) => {
 		if (typeof source !== "string") throw new Error("主题包内容无效");
 		return themeLibrary().install(source);
+	});
+	ipcMain.handle("themes:chooseDirectory", async (e): Promise<string | null> => {
+		const win = BrowserWindow.fromWebContents(e.sender);
+		if (!win) return null;
+		const result = await dialog.showOpenDialog(win, {
+			properties: ["openDirectory"],
+			title: "选择主题文件夹",
+		});
+		return result.canceled ? null : result.filePaths[0] ?? null;
+	});
+	ipcMain.handle("themes:installDirectory", (_e, sourceDir: string) => {
+		if (typeof sourceDir !== "string") throw new Error("主题文件夹路径无效");
+		return themeLibrary().installDirectory(sourceDir);
 	});
 	ipcMain.handle("themes:art", (_e, id: string) => themeLibrary().art(id));
 	ipcMain.handle("themes:remove", (_e, id: string) => themeLibrary().remove(id));

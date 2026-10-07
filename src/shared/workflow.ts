@@ -81,7 +81,36 @@ export interface WorkflowTodo {
 	text: string;
 	status: "pending" | "in_progress" | "completed" | "cancelled";
 }
+export const TASK_OUTCOMES = ["completed", "blocked", "needs_decision", "needs_escalation"] as const;
+export type TaskOutcome = (typeof TASK_OUTCOMES)[number];
+export interface FusionTaskReport {
+	outcome: TaskOutcome;
+	summary: string;
+	acceptance: Array<{ criterion: string; status: "met" | "unverified" | "not_met"; evidence: string }>;
+	/** Evidence and a concrete question, never authorization to switch models. */
+	decision?: string;
+}
+export interface TaskRunResult {
+	text: string;
+	outcome?: TaskOutcome;
+}
+
+export interface TaskExecutionPlan {
+	/** Ordered implementation steps decided by Lead. */
+	steps: string[];
+	/** User restrictions and decisions that the isolated worker must preserve. */
+	constraints: string[];
+	acceptanceCriteria: string[];
+	verification: {
+		mode: "run" | "skip";
+		/** Specific commands/scenarios; empty when verification is forbidden. */
+		checks: string[];
+	};
+}
+
 export interface TaskInput {
+	/** Required for Fusion workers, optional for ordinary tasks. */
+	executionPlan?: TaskExecutionPlan;
 	/** Lead-authored visual decisions, passed verbatim to the isolated worker. */
 	designSpec?: string;
 	description: string;
@@ -150,6 +179,8 @@ export interface WorkflowTask {
 	startedAt: number;
 	endedAt?: number;
 	result?: string;
+	/** Run completion is separate from meeting acceptance or needing Lead's decision. */
+	outcome?: TaskOutcome;
 	steps: TaskStep[];
 }
 

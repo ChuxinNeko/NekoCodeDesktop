@@ -167,6 +167,10 @@ function useStickToBottom(dependency: unknown) {
 }
 
 interface AcpChatViewProps {
+	/** Mobile transport currently accepts text prompts only. */
+	allowImages?: boolean;
+	disabled?: boolean;
+	mobile?: boolean;
 	agent: AcpAgentInfo;
 	/** Text to drop into the composer — an element picked in the browser panel. */
 	insertion?: ComposerInsertion | null;
@@ -306,11 +310,11 @@ export function AcpChatView(props: AcpChatViewProps) {
 			<ComposerShell
 				insertion={props.insertion}
 				onInsertionConsumed={props.onInsertionConsumed}
-				allowImageAttachments={snapshot ? snapshot.supportsImages : true}
+				allowImageAttachments={props.allowImages !== false && (snapshot ? snapshot.supportsImages : true)}
 				autoFocus
 				context={snapshot?.context}
 				// An unsent conversation that failed to start is replaced on send.
-				disabled={!props.cwd || (snapshot?.status === "error" && !snapshot.pristine)}
+				disabled={props.disabled || !props.cwd || (snapshot?.status === "error" && !snapshot.pristine)}
 				header={props.composerHeader}
 				loadCommands={snapshot ? commands : undefined}
 				onAbort={props.onAbort}
@@ -320,9 +324,9 @@ export function AcpChatView(props: AcpChatViewProps) {
 				}}
 				placeholder={t("acp.placeholder", { agent: agent.name })}
 				streaming={snapshot?.streaming ?? false}
-				supportsImages={snapshot ? snapshot.supportsImages : true}
+				supportsImages={props.allowImages !== false && (snapshot ? snapshot.supportsImages : true)}
 				toolbar={
-					<div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+					<div className={cn("flex min-w-0 flex-1 items-center gap-1", props.mobile ? "overflow-x-auto" : "overflow-hidden")}>
 						{(snapshot?.configOptions ?? []).map((option) => (
 							<ConfigPicker
 								disabled={snapshot?.status !== "ready"}

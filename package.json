@@ -1,6 +1,6 @@
 {
   "name": "nekocode-desktop",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "NekoCode Desktop - Electron desktop coding agent built on the PI agent core",
   "author": "ChuxinNeko",

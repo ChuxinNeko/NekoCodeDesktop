@@ -10,6 +10,8 @@ import {
 	type SavedWorkflowTask,
 	type TaskInput,
 	type TaskStep,
+	type TaskRunResult,
+	TASK_OUTCOMES,
 	type WorkMode,
 	type WorkflowAnswer,
 	type WorkflowQuestion,
@@ -35,7 +37,8 @@ export interface WorkflowStateOptions {
 		input: TaskInput,
 		signal: AbortSignal,
 		onStep: (step: TaskStep) => void,
-	) => Promise<string>;
+		taskId: string,
+	) => Promise<string | TaskRunResult>;
 	saved?: unknown;
 	taskTimeoutMs?: number;
 }
@@ -81,6 +84,7 @@ export function readSavedWorkflow(value: unknown): WorkflowSavedState | undefine
 							steps: undefined,
 							description: task.description.slice(0, 200),
 							writablePaths: [],
+							outcome: TASK_OUTCOMES.includes(task.outcome!) ? task.outcome : undefined,
 							status: task.status === "running" ? ("cancelled" as const) : task.status,
 							result:
 								task.status === "running"
@@ -303,7 +307,7 @@ export class WorkflowState {
 			.then(() => {
 				if (controller.signal.aborted) throw new Error("Task cancelled");
 				return this.options.runTask(structuredClone(input), controller.signal, (step) =>
-					this.recordStep(task, step),
+					this.recordStep(task, step), task.id,
 				);
 			})
 			.then(
@@ -390,8 +394,10 @@ export class WorkflowState {
 			}
 		}
 	}
-	private finishTask(task: WorkflowTask, status: WorkflowTask["status"], result: string): void {
+	private finishTask(task: WorkflowTask, status: WorkflowTask["status"], output: string | TaskRunResult): void {
 		if (task.status !== "running") return;
+		const result = typeof output === "string" ? output : output.text;
+		if (typeof output !== "string") task.outcome = output.outcome;
 		this.closeSteps(task, status);
 		task.status = status;
 		task.result = result.slice(0, 12000);

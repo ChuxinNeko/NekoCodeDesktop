@@ -16,6 +16,7 @@ export {
 } from "./config.ts";
 export {
 	AgentSession,
+	type AfterCompactionContext,
 	type AgentSessionConfig,
 	type AgentSessionEvent,
 	type AgentSessionEventListener,

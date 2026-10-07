@@ -263,17 +263,28 @@ function ThemeImportDialog({ onClose, onImport }: { onClose: () => void; onImpor
 	const { t } = useTranslation();
 	const [value, setValue] = useState("");
 	const [file, setFile] = useState<{ name: string; source: string } | null>(null);
+	const [folder, setFolder] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const trimmed = value.trim();
-	const share = !file && trimmed ? readThemeShare(trimmed) : null;
+	const share = !file && !folder && trimmed ? readThemeShare(trimmed) : null;
 	const packageSource = file?.source ?? (trimmed.startsWith("{") ? trimmed : null);
 	const pack = useMemo(() => (packageSource ? readThemePackage(packageSource) : null), [packageSource]);
 	const packTheme = pack && "theme" in pack ? pack.theme : null;
 	const invalid =
 		pack && "error" in pack ? pack.error : trimmed && !share && !packageSource ? t("settings.themeImportInvalid") : null;
 	const variantName = (variant: ThemeVariant) => t(variant === "dark" ? "theme.dark" : "theme.light");
+
+	const chooseFolder = async () => {
+		setError(null);
+		const chosen = await api.themesChooseDirectory();
+		if (chosen) {
+			setFile(null);
+			setValue("");
+			setFolder(chosen);
+		}
+	};
 
 	const chooseFile = async (chosen: File | undefined) => {
 		if (!chosen) return;
@@ -285,9 +296,11 @@ function ThemeImportDialog({ onClose, onImport }: { onClose: () => void; onImpor
 		const source = await chosen.text();
 		if (source.trim().startsWith("codex-theme-v1:")) {
 			setFile(null);
+			setFolder(null);
 			setValue(source.trim());
 		} else {
 			setValue("");
+			setFolder(null);
 			setFile({ name: chosen.name, source });
 		}
 	};
@@ -297,6 +310,18 @@ function ThemeImportDialog({ onClose, onImport }: { onClose: () => void; onImpor
 		if (share) {
 			onImport(trimmed, share.variant);
 			onClose();
+			return;
+		}
+		if (folder) {
+			setBusy(true);
+			try {
+				await api.themesInstallDirectory(folder);
+				onClose();
+			} catch (cause) {
+				setError(errorMessage(cause));
+			} finally {
+				setBusy(false);
+			}
 			return;
 		}
 		if (!packageSource || !packTheme) return;
@@ -331,19 +356,24 @@ function ThemeImportDialog({ onClose, onImport }: { onClose: () => void; onImpor
 					<Button className="mr-auto" onClick={() => fileInput.current?.click()} size="sm" variant="subtle">
 						{t("settings.themeImportFile")}
 					</Button>
+					{api.runtime === "electron" ? (
+						<Button onClick={() => void chooseFolder()} size="sm" variant="subtle">
+							{t("settings.themeImportFolder")}
+						</Button>
+					) : null}
 					<Button onClick={onClose} size="sm" variant="subtle">
 						{t("common.cancel")}
 					</Button>
-					<Button disabled={busy || !(share || packTheme)} onClick={() => void apply()} size="sm">
+					<Button disabled={busy || !(share || packTheme || folder)} onClick={() => void apply()} size="sm">
 						{t("settings.themeImportApply")}
 					</Button>
 				</>
 			}
 		>
-			{file ? (
+			{file || folder ? (
 				<div className="flex items-center gap-2 rounded-lg border border-[color:var(--color-border)] px-2 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)]">
-					<span className="min-w-0 flex-1 truncate font-mono">{file.name}</span>
-					<Button aria-label={t("common.clear")} onClick={() => setFile(null)} size="icon-chip" variant="ghost">
+					<span className="min-w-0 flex-1 truncate font-mono">{file?.name ?? folder}</span>
+					<Button aria-label={t("common.clear")} onClick={() => { setFile(null); setFolder(null); }} size="icon-chip" variant="ghost">
 						<XIcon />
 					</Button>
 				</div>
@@ -366,6 +396,8 @@ function ThemeImportDialog({ onClose, onImport }: { onClose: () => void; onImpor
 					{t("settings.themeImportTarget", { variant: variantName(share.variant) })}
 					{share.unknownCodeThemeId ? ` ${t("settings.themeImportUnknownCode", { id: share.unknownCodeThemeId })}` : null}
 				</p>
+			) : folder ? (
+				<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{t("settings.themeImportFolderReady")}</p>
 			) : packTheme ? (
 				<p className="flex items-center gap-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 					<ColorDots colors={[packTheme.colors.surface, packTheme.colors.ink, packTheme.colors.accent]} />

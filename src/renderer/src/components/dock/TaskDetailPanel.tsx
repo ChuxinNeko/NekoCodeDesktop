@@ -162,7 +162,7 @@ export function TaskDetailPanel({
 					<span>{t(KIND_KEYS[task.kind])}</span>
 					<span>·</span>
 					<span className={task.status === "failed" ? "text-destructive" : undefined}>
-						{t(STATUS_KEYS[task.status])}
+						{t(task.status === "completed" && task.outcome ? `fusion.outcome.${task.outcome}` : STATUS_KEYS[task.status])}
 					</span>
 					<span>·</span>
 					<span className="tabular-nums">{formatElapsed(seconds)}</span>

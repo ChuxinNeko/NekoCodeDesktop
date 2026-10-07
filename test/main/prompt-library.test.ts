@@ -81,6 +81,70 @@ describe("fast context prompts", () => {
 	});
 });
 
+describe("Fusion responsibility split", () => {
+	test("Lead cannot execute edits, commands or arbitrary plugin tools in any phase", () => {
+		for (const phase of AGENT_PHASES) {
+			const tools = toolsForMode({ ...base, mode: "agent", phase, fusionRole: "lead",
+				shellTools: ["powershell"], sshTools: true, pluginTools: ["browser_action", "custom_write", "edit"] });
+			for (const name of ["edit", "write", "ast_edit", "bash", "powershell", "ssh", "remote_desktop", "browser_action", "custom_write"])
+				expect(tools, `${phase}: ${name}`).not.toContain(name);
+			expect(tools).toContain("read");
+			expect(tools).toContain("code_search");
+			if (!["answer", "plan"].includes(phase)) expect(tools).toContain("task");
+		}
+		for (const mode of WORK_MODES) {
+			const tools = toolsForMode({ ...base, mode, fusionRole: "lead" });
+			expect(tools, mode).not.toContain("edit");
+			expect(tools, mode).not.toContain("bash");
+		}
+	});
+	test("only Sidekick gets investigation tools; Lead keeps evidence review and delegation", () => {
+		const investigation = ["grep", "find", "ls", "stat", "ast_grep", "semantic_search", "github", "web_search", "web_fetch"];
+		for (const phase of AGENT_PHASES) {
+			const lead = toolsForMode({ ...base, mode: "agent", phase, fusionRole: "lead", webTools: true, semanticSearch: true });
+			for (const name of investigation) expect(lead, `${phase}: ${name}`).not.toContain(name);
+			expect(lead).toContain("read");
+			expect(lead).toContain("code_search");
+		}
+		const side = toolsForMode({ ...base, mode: "subagent", child: true, fusionRole: "sidekick",
+			permission: "read-only", webTools: true, semanticSearch: true });
+		for (const name of investigation) expect(side, name).toContain(name);
+		expect(side).not.toContain("write");
+	});
+	test("ordinary sessions keep execution tools and Sidekick retains permission boundaries", () => {
+		expect(toolsForMode({ ...base, mode: "agent" })).toContain("edit");
+		const tools = toolsForMode({ ...base, mode: "agent", child: true, fusionRole: "sidekick",
+			allowWorkerShell: true, permission: "read-only" });
+		expect(tools).not.toContain("edit");
+		expect(tools).not.toContain("bash");
+	});
+	test("Sidekick owns investigation while Lead decides from evidence and delegates execution", () => {
+		const prompt = buildModePrompt({ ...base, mode: "agent", fusionRole: "lead" });
+		expect(prompt).toContain("调查由 Sidekick 执行，决策由 Lead 完成");
+		expect(prompt).not.toContain("根因调查、假设取舍、架构设计、安全边界和正确性判断由你负责");
+		expect(prompt).toContain("编写代码、文件编辑、构建、测试和改动验证必须交给 Sidekick 实际执行");
+		expect(prompt).toContain("微小改动也不例外");
+		expect(prompt).not.toContain("微小改动，以及必须由你处理的高正确性工作可直接完成");
+		expect(prompt).toContain("必须填写 task.executionPlan");
+		expect(prompt).toContain("不再亲自重复构建/测试");
+		expect(prompt).toContain("不能保证固定降本比例");
+	});
+	test("Sidekick executes decisions and reports acceptance coverage and failures", () => {
+		const prompt = buildModePrompt({ ...base, mode: "agent", child: true, fusionRole: "sidekick" });
+		expect(prompt).toContain("按 Lead 给出的 executionPlan");
+		expect(prompt).toContain("每项 acceptanceCriteria 的满足情况");
+		expect(prompt).toContain("verification.mode=skip 时禁止测试、构建和浏览器验证");
+		expect(prompt).toContain("返回错误证据和已完成部分");
+	});
+	test("planning remains read-only and the Sidekick cannot recursively delegate", () => {
+		expect(toolsForMode({ ...base, mode: "agent", phase: "plan", fusionRole: "lead" })).not.toContain("task");
+		const tools = toolsForMode({ ...base, mode: "agent", child: true, fusionRole: "sidekick", allowWorkerShell: true });
+		expect(tools).not.toContain("task");
+		expect(tools).toContain("edit");
+		expect(tools.some((name) => ["bash", "powershell"].includes(name))).toBe(true);
+	});
+});
+
 describe("custom prompts", () => {
 	afterEach(() => configureCustomPrompt(() => null));
 	const defaultLine = (text: string) => text.trim().split("\n").find((line) => line.trim().length > 12)!.trim();
@@ -109,7 +173,10 @@ describe("custom prompts", () => {
 		configureCustomPrompt(() => "MINE");
 		expect(buildModePrompt({ mode: "subagent", permission: "read-only", child: true, fastContext: true })).toContain(FAST_CONTEXT_PROMPT);
 		expect(buildModePrompt({ mode: "agent", permission: "auto", child: true, fusionRole: "sidekick" })).not.toContain("MINE");
-		expect(buildModePrompt({ ...base, mode: "agent", fusionRole: "lead" })).toContain("## Fusion · Lead");
+		const lead = buildModePrompt({ ...base, mode: "agent", fusionRole: "lead", pluginTools: ["custom_write"] });
+		expect(lead).toContain("## Fusion · Lead");
+		expect(lead).toContain("必须交给 Sidekick 实际执行");
+		expect(toolsForMode({ ...base, mode: "agent", fusionRole: "lead", pluginTools: ["custom_write"] })).not.toContain("custom_write");
 		expect(buildModePrompt({ ...base, mode: "commit" })).not.toContain("MINE");
 	});
 

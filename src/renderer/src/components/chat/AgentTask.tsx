@@ -186,7 +186,7 @@ export function TaskCard({
 							task.status === "failed" ? "text-destructive" : MUTED_LABEL_TEXT_CLASS_NAME,
 						)}
 					>
-						{t(STATUS_KEYS[task.status])} · {formatElapsed(seconds)}
+						{t(task.status === "completed" && task.outcome ? `fusion.outcome.${task.outcome}` : STATUS_KEYS[task.status])} · {formatElapsed(seconds)}
 					</span>
 				</button>
 				{running && onCancel ? (

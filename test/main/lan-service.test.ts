@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskManager } from "../../src/main/task-manager";
 import { LanService } from "../../src/main/lan-service";
+import type { AcpService } from "../../src/main/acp/service";
 import { encodeLanPairing, parseLanPairing } from "../../src/shared/lan-pairing";
 import type { AgentCell, AgentSnapshot } from "../../src/shared/agent";
 import { applySnapshotDelta, SnapshotDeltaCache, type AgentSnapshotDelta } from "../../src/shared/agent-delta";
@@ -304,4 +305,51 @@ describe("relay dispatch", () => {
 		expect(response.status).toBe(500);
 		expect(response.body).toEqual({ error: "Request failed" });
 	});
+});
+
+test("mobile ACP routes share LAN and relay authorization, hide credentials, and deduplicate prompts", async () => {
+	const f = await setup();
+	const token = await f.pair();
+	const project = f.service.addProject(f.dir).projects[0];
+	let prompts = 0;
+	let allowed = false;
+	const snapshot = (cwd: string) => ({
+		id: "acp-session-123", agentId: "codex", agentName: "Codex", cwd, title: "ACP task",
+		status: "ready", pristine: false, createdAt: 1, updatedAt: 2, cells: [], streaming: false,
+		configOptions: [], commands: [], supportsImages: false,
+		permissions: [{ id: "permission-1", title: "Run", options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }] }],
+	});
+	const acp = {
+		agents: () => [{ id: "codex", name: "Codex", enabled: true, env: { TOKEN: "secret" }, command: "secret-command", args: ["secret"], commandLine: "secret-command secret" }],
+		state: () => ({ agents: acp.agents(), sessions: [snapshot(f.dir), snapshot("/private/project")] }),
+		view: (id: string) => id === "acp-session-123" ? snapshot(f.dir) : null,
+		history: async () => ({ agentId: "codex", entries: [
+			{ sessionId: "one", cwd: f.dir, title: "Allowed", updatedAt: 1 },
+			{ sessionId: "two", cwd: "/private/project", title: "Denied", updatedAt: 2 },
+		] }),
+		create: ({ cwd }: { cwd: string }) => snapshot(cwd),
+		openHistory: ({ cwd }: { cwd: string }) => snapshot(cwd),
+		prompt: async () => { prompts++; },
+		respondPermission: () => { allowed = true; },
+	} as unknown as AcpService;
+	f.service.setAcpProvider(() => acp);
+	const state = await (await f.request("/api/acp/state", undefined, token)).json();
+	expect(state.agents[0].env).toEqual({});
+	expect(state.agents[0].commandLine).toBe("");
+	expect(state.sessions).toHaveLength(1);
+	const relay = (path: string, body?: Record<string, unknown>) => f.service.handleRelay("peer-mobile-123456", {
+		id: "relay-request-12345", method: body ? "POST" : "GET", path, ...(body ? { body } : {}),
+	});
+	expect((await relay("/api/acp/agents/codex/history")).body).toMatchObject({ entries: [{ sessionId: "one" }] });
+	expect((await relay("/api/acp/sessions", { agentId: "codex", projectId: "missing" })).status).toBe(403);
+	expect((await relay("/api/acp/sessions", { agentId: "codex", projectId: project.id })).status).toBe(200);
+	expect((await relay("/api/acp/open", { agentId: "codex", sessionId: "two", cwd: "/private/project" })).status).toBe(403);
+	const prompt = { text: "Continue", requestId: "mobile-acp-request-123" };
+	const [first, second] = await Promise.all([relay("/api/acp/sessions/acp-session-123/prompt", prompt), relay("/api/acp/sessions/acp-session-123/prompt", prompt)]);
+	expect(first.status).toBe(200); expect(second.status).toBe(200); expect(prompts).toBe(1);
+	expect((await relay("/api/acp/sessions/acp-session-123/permission", { requestId: "permission-1", optionId: "wrong" })).status).toBe(409);
+	expect((await relay("/api/acp/sessions/acp-session-123/permission", { requestId: "permission-1", optionId: "allow" })).status).toBe(200);
+	expect(allowed).toBe(true);
+	f.service.removeProject(project.id);
+	expect((await f.request("/api/acp/sessions/acp-session-123", undefined, token)).status).toBe(404);
 });

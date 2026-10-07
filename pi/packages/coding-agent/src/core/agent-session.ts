@@ -201,6 +201,7 @@ export type AgentSessionEvent =
 			followUp: readonly string[];
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
+	| { type: "compaction_hook_error"; errorMessage: string }
 	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
@@ -243,6 +244,13 @@ function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<str
 		: undefined;
 }
 
+export interface AfterCompactionContext {
+	result: CompactionResult;
+	reason: "manual" | "threshold" | "overflow";
+	willRetry: boolean;
+	signal: AbortSignal;
+}
+
 export interface AgentSessionConfig {
 	agent: Agent;
 	sessionManager: SessionManager;
@@ -254,6 +262,8 @@ export interface AgentSessionConfig {
 	resourceLoader: ResourceLoader;
 	/** Additional instructions for the default manual and automatic compaction generator. */
 	compactionInstructions?: string;
+	/** Awaited after context projection is refreshed, before the next model request. */
+	afterCompaction?: (context: AfterCompactionContext) => Promise<void>;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
 	/** Options for the built-in filesystem and shell tools. */
@@ -425,6 +435,7 @@ export class AgentSession {
 	private _customTools: ToolDefinition[];
 	private readonly _toolOptions?: ToolsOptions;
 	private readonly _compactionInstructions?: string;
+	private readonly _afterCompaction?: AgentSessionConfig["afterCompaction"];
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
@@ -474,6 +485,7 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._toolOptions = config.toolOptions;
 		this._compactionInstructions = config.compactionInstructions;
+		this._afterCompaction = config.afterCompaction;
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
 		this._cacheWarmer = config.cacheWarmer;
@@ -2833,6 +2845,8 @@ export class AgentSession {
 				usage,
 				details,
 			};
+			await this._notifyAfterCompaction({ result: compactionResult, reason: "manual", willRetry: false,
+				signal: this._compactionAbortController.signal });
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
 			this._clearManualCompactionState();
 			this._emit({
@@ -3163,6 +3177,7 @@ export class AgentSession {
 				usage,
 				details,
 			};
+			await this._notifyAfterCompaction({ result, reason, willRetry, signal: abortController.signal });
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) return true;
@@ -3201,6 +3216,15 @@ export class AgentSession {
 				this._autoCompactionAbortController = undefined;
 			}
 			this._resolveIdleWaitIfIdle();
+		}
+	}
+
+	private async _notifyAfterCompaction(context: AfterCompactionContext): Promise<void> {
+		if (context.signal.aborted || !this._afterCompaction) return;
+		try { await this._afterCompaction(context); }
+		catch (error) {
+			// The summary is already committed; a routing hook failure must not turn it into a failed compaction.
+			this._emit({ type: "compaction_hook_error", errorMessage: String(error) });
 		}
 	}
 

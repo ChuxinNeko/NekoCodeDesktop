@@ -123,7 +123,7 @@ import type {
 	WorktreeRecord,
 	WorktreeStatus,
 } from "../../shared/worktree";
-import type { McpSnapshot, SaveMcpServerRequest } from "../../shared/mcp";
+import type { McpDesktopConnection, McpSnapshot, SaveMcpServerRequest } from "../../shared/mcp";
 import type {
 	AcpAgentInfo,
 	AcpCreateSessionRequest,
@@ -302,6 +302,8 @@ export interface AgentApi {
 	/** Sign in to a hosted server through the browser (OAuth), then reconnect it. */
 	mcpSignIn(id: string): Promise<McpSnapshot>;
 	mcpSignOut(id: string): Promise<McpSnapshot>;
+	/** Desktop-only, ephemeral viewer ticket. Never forward this result to an agent. */
+	mcpOpenDesktop(id: string): Promise<McpDesktopConnection>;
 	/** Connection states move on their own — a server can drop at any time. */
 	onMcpChanged(listener: (snapshot: McpSnapshot) => void): () => void;
 	/** External ACP agents. Desktop only: the WebUI has no bridge for these. */
@@ -412,8 +414,12 @@ export interface AgentApi {
 
 	/** Community themes installed in `~/.nekocode/themes`. */
 	themesList(): Promise<ThemeLibrarySnapshot>;
+	/** Opens a native folder picker for an already-extracted theme. */
+	themesChooseDirectory(): Promise<string | null>;
 	/** Installs a `.codex-theme` package's palette and artwork; replaces one with the same id. */
 	themesInstall(source: string): Promise<CommunityTheme>;
+	/** Installs an already-extracted theme folder containing theme.json. */
+	themesInstallDirectory(sourceDir: string): Promise<CommunityTheme>;
 	/** A theme's background artwork as a data URL; null when it has none. */
 	themesArt(id: string): Promise<string | null>;
 	/** Moves an installed theme to the recycle bin. */

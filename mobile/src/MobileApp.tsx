@@ -3,9 +3,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import type { AgentDefaults, AgentSnapshot, SendPromptRequest, SessionSummary } from "../../src/shared/agent";
+import { NEKO_LOCAL_WORKSPACE, type AcpHistory, type AcpSessionSnapshot, type AcpState } from "../../src/shared/acp";
+import { acpAgentsRows } from "../../src/shared/acp-sessions";
 import type { LanProject, LanTaskOptions } from "../../src/shared/lan";
 import type { ComposerInsertion } from "../../src/shared/browser";
 import { ChatView } from "../../src/renderer/src/components/ChatView";
+import { AcpChatView } from "../../src/renderer/src/components/agents/AcpChatView";
 import { SessionRow } from "../../src/renderer/src/components/sessions/SessionRow";
 import { Button } from "../../src/renderer/src/components/ui/button";
 import { Spinner } from "../../src/renderer/src/components/ui/spinner";
@@ -30,6 +33,15 @@ export function MobileApp() {
 	const [view, setView] = useState<"tasks" | "chat" | "settings">("tasks");
 	const [projects, setProjects] = useState<LanProject[]>([]);
 	const [sessions, setSessions] = useState<SessionSummary[]>([]);
+	const [workspace, setWorkspace] = useState(NEKO_LOCAL_WORKSPACE);
+	const [acpState, setAcpState] = useState<AcpState>({ agents: [], sessions: [] });
+	const [histories, setHistories] = useState<Record<string, AcpHistory>>({});
+	const [acpId, setAcpId] = useState<string | null>(null);
+	const acpSelected = useRef<string | null>(null);
+	const [acpSnapshot, setAcpSnapshot] = useState<AcpSessionSnapshot | null>(null);
+	const historyPending = useRef(new Set<string>());
+	const warmPending = useRef<string | null>(null);
+	const openVersion = useRef(0);
 	const [projectId, setProjectId] = useState("");
 	const [id, setId] = useState<string | null>(null);
 	const selected = useRef<string | null>(null);
@@ -51,6 +63,8 @@ export function MobileApp() {
 
 	const clearSession = useCallback(() => {
 		desktop.forgetSync();
+		openVersion.current++; historyPending.current.clear();
+		acpSelected.current = null; setAcpId(null); setAcpSnapshot(null); setAcpState({ agents: [], sessions: [] }); setHistories({}); setWorkspace(NEKO_LOCAL_WORKSPACE);
 		selected.current = null; setId(null); setSnapshot(null); setDefaults(null); setEarlier(false);
 		setProjects([]); setSessions([]); setProjectId(""); setInsertion(null);
 	}, []);
@@ -82,23 +96,31 @@ export function MobileApp() {
 		refreshing.current = true;
 		try {
 			const selectedId = selected.current;
+			const requestedAcpId = acpSelected.current;
 			// Only pull the transcript while it is on screen. Backing out to the task
 			// list used to leave it streaming in the background for the whole session.
 			const wanted = selectedId && navigation.current.view === "chat" ? selectedId : null;
 			// In parallel, not in turn: the two are independent, and over the relay a
 			// serial pair spends a second full round trip on every tick.
-			const [state, pulled] = await Promise.all([
+			const [state, remoteAcp, pulled, pulledAcp] = await Promise.all([
 				desktop.state(),
-				wanted === null ? null : desktop.syncSnapshot(wanted).then(
+				desktop.acpState(),
+				wanted === null || requestedAcpId ? null : desktop.syncSnapshot(wanted).then(
 					(synced) => ({ ok: true as const, synced }),
 					(error: unknown) => ({ ok: false as const, error }),
 				),
+				requestedAcpId && navigation.current.view === "chat" ? desktop.acpSnapshot(requestedAcpId).catch(() => null) : null,
 			]);
 			if (desktop.marker !== marker) return;
 			setSessions(state.tasks.map((task) => ({ ...task, sessionFile: "" })));
+			setAcpState(remoteAcp);
+			if (pulledAcp && pulledAcp.id === acpSelected.current) setAcpSnapshot(pulledAcp);
+			if (requestedAcpId && acpSelected.current === requestedAcpId && !remoteAcp.sessions.some((session) => session.id === requestedAcpId)) {
+				acpSelected.current = null; setAcpId(null); setAcpSnapshot(null); setView("tasks");
+			}
 			setProjects(state.projects);
 			setProjectId((previous) => state.projects.some((p) => p.id === previous) ? previous : state.projects[0]?.id ?? "");
-			if (selectedId && !state.tasks.some((task) => task.id === selectedId)) {
+			if (selectedId && !acpSelected.current && !state.tasks.some((task) => task.id === selectedId)) {
 				// The task is gone, so a transcript that failed to load is expected.
 				desktop.forgetSync();
 				selected.current = null; setId(null); setSnapshot(null); setEarlier(false); setView("tasks");
@@ -142,6 +164,35 @@ export function MobileApp() {
 		return () => { cancelled = true; };
 	}, [paired, projectId, id, transport]);
 
+	const enabledAgentIds = acpState.agents.filter((agent) => agent.enabled).map((agent) => agent.id).join("\n");
+	useEffect(() => { if (paired && view === "tasks") setHistories({}); }, [paired, view, transport]);
+	useEffect(() => {
+		if (!paired) return;
+		const marker = desktop.marker;
+		for (const agentId of enabledAgentIds.split("\n").filter(Boolean)) {
+			if (histories[agentId] || historyPending.current.has(agentId)) continue;
+			historyPending.current.add(agentId);
+			void desktop.acpHistory(agentId).then((history) => { if (desktop.marker === marker) setHistories((previous) => ({ ...previous, [agentId]: history })); })
+				.catch((cause) => { if (desktop.marker === marker) setHistories((previous) => ({ ...previous, [agentId]: { agentId, entries: [], error: message(cause) } })); })
+				.finally(() => historyPending.current.delete(agentId));
+		}
+	}, [paired, transport, enabledAgentIds, histories]);
+
+	useEffect(() => {
+		if (!paired || !online || view !== "chat" || workspace === NEKO_LOCAL_WORKSPACE || !projectId || acpSelected.current || busyRef.current) return;
+		const key = `${workspace}:${projectId}`;
+		if (warmPending.current === key) return;
+		warmPending.current = key;
+		const version = openVersion.current;
+		const marker = desktop.marker;
+		void desktop.acpCreate(workspace, projectId).then((created) => {
+			if (desktop.marker !== marker || openVersion.current !== version || acpSelected.current) return;
+			acpSelected.current = created.id; setAcpId(created.id); setAcpSnapshot(created);
+		}).catch((cause) => {
+			if (desktop.marker === marker && openVersion.current === version) setError(message(cause));
+		}).finally(() => { if (warmPending.current === key) warmPending.current = null; });
+	}, [paired, online, view, workspace, projectId, acpId, busy]);
+
 	/** The rest of a tool result the transcript only carries the head of. */
 	const loadToolOutput = useCallback((toolCallId: string, offset: number) => {
 		const target = selected.current;
@@ -158,6 +209,8 @@ export function MobileApp() {
 	};
 
 	const open = (session: SessionSummary) => {
+		openVersion.current++;
+		setWorkspace(NEKO_LOCAL_WORKSPACE); acpSelected.current = null; setAcpId(null); setAcpSnapshot(null);
 		// Navigate first, fetch second. The transcript is a round trip away, and
 		// over the relay that is long enough for the tap to feel ignored.
 		selected.current = session.id;
@@ -191,6 +244,8 @@ export function MobileApp() {
 	}, []);
 
 	const newTask = (project?: string) => {
+		openVersion.current++;
+		acpSelected.current = null; setAcpId(null); setAcpSnapshot(null);
 		selected.current = null; setId(null); setSnapshot(null); setInsertion(null); setError(null); setEarlier(false);
 		if (project) setProjectId(project);
 		setView("chat"); setProjectSheet(!project && projects.length !== 1);
@@ -244,9 +299,48 @@ export function MobileApp() {
 		} catch (cause) { setInsertion({ id: crypto.randomUUID(), text }); throw cause; }
 	});
 
+	const sendAcp = (request: SendPromptRequest) => action(async () => {
+		const text = request.text;
+		try {
+			let target = acpSelected.current;
+			if (!target || acpSnapshot?.status === "error" && acpSnapshot.pristine) {
+				if (!projectId) throw new Error("请先选择电脑授权的项目");
+				const created = await desktop.acpCreate(workspace, projectId);
+				target = created.id; acpSelected.current = target; setAcpId(target); setAcpSnapshot(created);
+			}
+			await desktop.acpPrompt(target, text);
+			const next = await desktop.acpSnapshot(target);
+			if (acpSelected.current === target) setAcpSnapshot(next);
+			void refresh();
+		} catch (cause) { setInsertion({ id: crypto.randomUUID(), text }); throw cause; }
+	});
+
+	const acpRows = acpAgentsRows(acpState.agents.filter((agent) => agent.enabled).map((agent) => agent.id),
+		Object.fromEntries(Object.entries(histories).map(([key, value]) => [key, value.entries])), acpState.sessions);
+	const isActive = (task: SessionSummary) => {
+		if (!task.agentId) return id === task.id;
+		const target = acpRows.targets.get(task.id);
+		return target?.kind === "live" && target.sessionId === acpId;
+	};
+	const allSessions = [...sessions, ...acpRows.rows].sort((a, b) => b.updatedAt - a.updatedAt);
+	const openAcp = (row: SessionSummary) => {
+		const target = acpRows.targets.get(row.id);
+		if (!target) return;
+		const version = ++openVersion.current;
+		selected.current = null; setId(null); setSnapshot(null); setWorkspace(target.agentId); setView("chat");
+		acpSelected.current = target.kind === "live" ? target.sessionId : null;
+		setAcpId(acpSelected.current); setAcpSnapshot(null);
+		void action(async () => {
+			const next = target.kind === "live" ? await desktop.acpSnapshot(target.sessionId) :
+				await desktop.acpOpen(target.agentId, target.entry.sessionId, target.entry.cwd, target.entry.title);
+			if (openVersion.current !== version) return;
+			acpSelected.current = next.id; setAcpId(next.id); setAcpSnapshot(next);
+		});
+	};
+
 	const project = projects.find((p) => p.id === projectId);
 	const groups = new Map<string, SessionSummary[]>();
-	for (const task of sessions) groups.set(task.cwd, [...(groups.get(task.cwd) ?? []), task]);
+	for (const task of allSessions) groups.set(task.cwd, [...(groups.get(task.cwd) ?? []), task]);
 
 	return <div className="mobile-shell flex flex-col bg-background text-foreground">
 		{!ready ? <div className="flex flex-1 items-center justify-center"><Spinner /></div> : !paired ?
@@ -263,11 +357,19 @@ export function MobileApp() {
 			</header>
 			{error && view !== "chat" && <div role="alert" className="flex items-start gap-2 bg-destructive/6 px-4 py-3 text-xs text-destructive"><span className="min-w-0 flex-1 break-words">{error}</span><Button aria-label="关闭错误" size="icon-xs" variant="ghost" onClick={() => setError(null)}><XIcon className="size-3" /></Button></div>}
 			{view === "tasks" && <div className="min-h-0 flex-1 overflow-y-auto p-3">
-				<div className="mb-5 flex items-center justify-between px-2 pt-3"><h1 className="text-base font-medium">任务</h1><span className="text-xs text-muted-foreground">{sessions.filter((s) => s.running).length} 项运行中</span></div>
-				{!sessions.length && <p className="px-2 py-10 text-center text-sm text-muted-foreground">{online ? "暂无任务，点击右上角 ＋ 创建" : "等待电脑连接…"}</p>}
-				{[...groups].map(([cwd, tasks]) => <section key={cwd} className="mb-5"><div className="mb-2 flex items-center gap-2 px-2 text-xs text-muted-foreground"><FolderOpenIcon className="size-3.5" /><span className="truncate">{projectLabel(cwd)}</span></div>{tasks.map((task) => <SessionRow key={task.id} hideActions session={task} active={id === task.id} running={!!task.running} now={Date.now()} disabled={busy || !online} renaming={false} confirmingDelete={false} onOpen={() => { void open(task); }} onStartRename={noop} onRename={noop} onCancelRename={noop} onStartDelete={noop} onDelete={noop} onCancelDelete={noop} />)}</section>)}
+				<div className="mb-5 flex items-center justify-between px-2 pt-3"><h1 className="text-base font-medium">任务</h1><span className="text-xs text-muted-foreground">{allSessions.filter((s) => s.running).length} 项运行中</span></div>
+				{!allSessions.length && <p className="px-2 py-10 text-center text-sm text-muted-foreground">{online ? "暂无任务，点击右上角 ＋ 创建" : "等待电脑连接…"}</p>}
+				{[...groups].map(([cwd, tasks]) => <section key={cwd} className="mb-5">
+					<div className="mb-2 flex items-center gap-2 px-2 text-xs text-muted-foreground"><FolderOpenIcon className="size-3.5" /><span className="truncate">{projectLabel(cwd)}</span></div>
+					{tasks.map((task) => <div key={task.id}>
+						{task.agentId && <div className="px-3 pt-2 text-[10px] text-muted-foreground">{acpState.agents.find((agent) => agent.id === task.agentId)?.name ?? task.agentId}</div>}
+						<SessionRow hideActions session={task} active={isActive(task)} running={!!task.running} now={Date.now()} disabled={busy || !online} renaming={false} confirmingDelete={false} onOpen={() => { task.agentId ? openAcp(task) : open(task); }} onStartRename={noop} onRename={noop} onCancelRename={noop} onStartDelete={noop} onDelete={noop} onCancelDelete={noop} />
+					</div>)}
+				</section>)}
 			</div>}
 			{view === "chat" && <main className="mobile-chat flex min-h-0 flex-1 flex-col">
+				<div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 text-xs"><span className="text-muted-foreground">工作区</span><select aria-label="选择工作区" className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5" value={workspace} onChange={(event) => { setWorkspace(event.target.value); newTask(projectId); }}><option value={NEKO_LOCAL_WORKSPACE}>NekoLocal</option>{acpState.agents.filter((agent) => agent.enabled).map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
+				{workspace === NEKO_LOCAL_WORKSPACE ? <>
 				<ChatView key={id ?? `new:${projectId}`} mobile earlierAvailable={earlier} loadingEarlier={loadingEarlier} onLoadEarlier={loadEarlier} onLoadToolOutput={loadToolOutput} loadingSession={id !== null && snapshot === null} cwd={snapshot?.session.cwd ?? project?.path ?? null} snapshot={snapshot} defaults={defaults} busy={busy || !online || (!id && !defaults)} error={error} insertion={insertion} onInsertionConsumed={() => setInsertion(null)} terminalOpen={false} browserOpen={false}
 					onPickProject={() => setProjectSheet(true)} onSend={send} onStartSession={send} onAbort={() => { const target = selected.current; if (target) void action(async () => { const next = await desktop.abort(target); if (selected.current === target) setSnapshot(next); }); }}
 					onSetModel={(modelKey) => configure({ modelKey })} onSetThinking={(thinkingLevel) => configure({ thinkingLevel })} onSetMode={(mode) => configure({ mode })} onSetWorkMode={(workMode) => configure({ workMode })} onSetFusion={(fusion) => configure({ fusion })}
@@ -276,6 +378,7 @@ export function MobileApp() {
 					onAnswerWorkflow={async (answer) => { const target = selected.current; if (!target) return; const next = await desktop.answer(target, answer); if (selected.current === target) setSnapshot(next); }}
 					onCancelWorker={async (workerId) => { const target = selected.current; if (!target) return; const next = await desktop.cancelWorker(target, workerId); if (selected.current === target) setSnapshot(next); }}
 				/>
+				</> : acpState.agents.find((agent) => agent.id === workspace) ? <AcpChatView mobile allowImages={false} disabled={busy || !online} agent={acpState.agents.find((agent) => agent.id === workspace)!} snapshot={acpSnapshot} cwd={acpSnapshot?.cwd ?? project?.path ?? null} error={error} historyError={histories[workspace]?.error ?? null} composerHeader={null} onDismissError={() => setError(null)} onPickProject={() => setProjectSheet(true)} onSend={sendAcp} onAbort={() => { if (acpSelected.current) void action(async () => { const next = await desktop.acpCancel(acpSelected.current!); setAcpSnapshot(next); }); }} onSetConfig={(configId, value) => { if (acpSelected.current) void action(async () => { const next = await desktop.acpSetConfig(acpSelected.current!, configId, value); setAcpSnapshot(next); }); }} onRespondPermission={(requestId, optionId) => { if (acpSelected.current) void action(async () => { const next = await desktop.acpPermission(acpSelected.current!, requestId, optionId); setAcpSnapshot(next); }); }} loadingSession={!!acpId && !acpSnapshot} /> : null}
 			</main>}
 			{view === "settings" && <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-5 text-sm">
 				<section><h2 className="mb-2 font-medium">已连接电脑（{transport === "relay" ? "公网连接" : "局域网"}）</h2><p className="text-muted-foreground">{desktop.binding?.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{desktop.binding?.endpoint}</p>

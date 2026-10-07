@@ -90,10 +90,19 @@ export function createWorkflowTools(host: WorkflowToolHost): ToolDefinition[] {
 		),
 		define(
 			"task",
-			"Start a background task. explore is read-only; worker edits declared non-overlapping paths. Include plan, constraints and acceptance checks. No nested workers. Completion automatically resumes the parent. In Fusion this uses the configured Sidekick (one at a time); writablePaths=[\".\"] grants exclusive workspace ownership and shell for builds/tests. Outside Fusion, at most four workers, no shell; parent verifies commands.",
+			"Start a background task. explore is read-only; worker edits declared non-overlapping paths. Include plan, constraints and acceptance checks. Fusion workers require executionPlan; Lead decides steps and acceptance, Sidekick implements and runs the specified checks. No nested workers. Completion automatically resumes the parent. In Fusion this uses the configured Sidekick (one at a time); writablePaths=[\".\"] grants exclusive workspace ownership and shell for builds/tests. Outside Fusion, at most four workers, no shell; parent verifies commands.",
 			object({
 				description: text(200),
 				prompt: text(30000),
+				executionPlan: Type.Optional(object({
+					steps: Type.Array(text(2000), { minItems: 1, maxItems: 20 }),
+					constraints: Type.Array(text(2000), { maxItems: 20 }),
+					acceptanceCriteria: Type.Array(text(2000), { minItems: 1, maxItems: 20 }),
+					verification: object({
+						mode: Type.Union([Type.Literal("run"), Type.Literal("skip")]),
+						checks: Type.Array(text(2000), { maxItems: 20 }),
+					}),
+				})),
 				designSpec: Type.Optional(Type.String({ minLength: 1, maxLength: 16000,
 					description: "For Fusion visual/UI/HTML/SVG tasks, Lead must provide the concrete visual design here before delegating: composition and dimensions, exact colors and their roles, typography/spacing, shapes and proportions, animation timings/pivots, responsive behavior, and observable acceptance criteria. For a small change specify only affected details and preserve the existing design. Sidekick implements this specification; it does not invent the art direction. Omit for nonvisual tasks." })),
 				kind: Type.Union([Type.Literal("explore"), Type.Literal("worker")]),

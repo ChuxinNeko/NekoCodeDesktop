@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import type { McpSnapshot } from "../../../../shared/mcp";
+import { desktopSources, selectDesktopSource } from "../../../../shared/mcp-desktop";
 import { keysymForKey, type DesktopAction, type DesktopState } from "../../../../shared/remote-desktop";
 import type { SshHost } from "../../../../shared/ssh";
 import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { McpDesktopViewer } from "./McpDesktopViewer";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
 /** DOM `buttons` bits (1 left, 2 right, 4 middle) as the RFB mask (1 left, 2 middle, 4 right). */
@@ -24,6 +27,8 @@ export function DesktopPanel({ visible }: { visible: boolean }) {
 	const { t } = useTranslation();
 	const [servers, setServers] = useState<SshHost[]>([]);
 	const [states, setStates] = useState<DesktopState[]>([]);
+	const [mcp, setMcp] = useState<McpSnapshot>({ servers: [] });
+	const [viewerRevision, setViewerRevision] = useState(0);
 	const [selected, setSelected] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [mark, setMark] = useState<(DesktopAction & { at: number }) | null>(null);
@@ -33,11 +38,22 @@ export function DesktopPanel({ visible }: { visible: boolean }) {
 	useEffect(() => {
 		api.sshStatus().then((status) => setServers(status.hosts)).catch((cause: unknown) => setError(errorMessage(cause)));
 		api.desktopStates().then(setStates).catch(() => {});
-		return api.onDesktopState(setStates);
+		let live = true;
+		let changed = false;
+		const offMcp = api.onMcpChanged(snapshot => { changed = true; if (live) setMcp(snapshot); });
+		void api.mcpList().then(snapshot => { if (live && !changed) setMcp(snapshot); }).catch(() => {});
+		const offDesktop = api.onDesktopState(setStates);
+		return () => { live = false; offMcp(); offDesktop(); };
 	}, []);
 
-	// Follow the agent: the host it last opened is the one worth watching.
-	const hostId = selected ?? states.find((state) => state.phase !== "closed")?.hostId ?? servers[0]?.id ?? null;
+	// An explicit source wins; otherwise follow the agent's active SSH desktop.
+	const sources = desktopSources(servers, mcp);
+	const source = selectDesktopSource(sources, selected, states.find(state => state.phase !== "closed")?.hostId);
+	const sourceId = source?.id ?? null;
+	useEffect(() => {
+		if (selected && !sources.some(entry => entry.id === selected)) setSelected(null);
+	}, [selected, sources]);
+	const hostId = source?.kind === "ssh" ? source.hostId : null;
 	const state = states.find((entry) => entry.hostId === hostId) ?? null;
 	const server = servers.find((entry) => entry.id === hostId);
 	const connected = state?.phase === "connected";
@@ -130,23 +146,26 @@ export function DesktopPanel({ visible }: { visible: boolean }) {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col text-[length:var(--app-font-size-ui,12px)]">
 			<div className="flex h-9 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-2">
-				{servers.length ? (
-					<Select value={hostId ?? ""} onValueChange={(value) => value && setSelected(String(value))}>
+				{sources.length ? (
+					<Select value={sourceId ?? ""} onValueChange={(value) => value && setSelected(String(value))}>
 						<SelectTrigger aria-label={t("desktop.server")} className="h-6 w-auto min-w-0 max-w-48" size="sm" variant="ghost">
-							<SelectValue>{server?.name ?? t("desktop.server")}</SelectValue>
+							<SelectValue>{source?.name ?? t("desktop.server")}{source?.kind === "mcp" ? " · MCP" : ""}</SelectValue>
 						</SelectTrigger>
 						<SelectPopup surface="settings">
-							{servers.map((entry) => (
+							{sources.map((entry) => (
 								<SelectItem key={entry.id} value={entry.id}>
-									{entry.name}
+									{entry.name} · {entry.kind === "mcp" ? "MCP" : "SSH"}
 								</SelectItem>
 							))}
 						</SelectPopup>
 					</Select>
 				) : null}
 				<span className="min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-					{connected ? `${state.title || server?.host} · ${state.width}×${state.height}` : ""}
+					{source?.kind === "mcp" ? t("desktop.mcpReadOnly") : connected ? `${state.title || server?.host} · ${state.width}×${state.height}` : ""}
 				</span>
+				{source?.kind === "mcp" && api.runtime === "electron" ? (
+					<Button onClick={() => setViewerRevision(value => value + 1)} size="xs" variant="ghost">{t("desktop.mcpReload")}</Button>
+				) : null}
 				{hostId && (!state || state.phase === "closed") ? (
 					<Button onClick={() => run(api.desktopConnect(hostId))} size="xs" variant="subtle">
 						{t("desktop.connect")}
@@ -159,8 +178,10 @@ export function DesktopPanel({ visible }: { visible: boolean }) {
 				) : null}
 			</div>
 
-			{!servers.length ? (
+			{!sources.length ? (
 				<p className="m-auto max-w-72 px-4 text-center text-xs leading-relaxed text-muted-foreground">{t("desktop.noServers")}</p>
+			) : source?.kind === "mcp" ? (
+				<McpDesktopViewer key={`${source.serverId}:${source.viewer.url}`} serverId={source.serverId} viewer={source.viewer} visible={visible} revision={viewerRevision} onRetry={() => setViewerRevision(value => value + 1)} />
 			) : state?.phase === "connecting" ? (
 				<p className="m-auto text-xs text-muted-foreground">{t("desktop.connecting")}</p>
 			) : !connected ? (

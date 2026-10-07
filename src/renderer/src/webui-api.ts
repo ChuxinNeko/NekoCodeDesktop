@@ -90,6 +90,7 @@ export function createWebUiApi(runtime: WebUiRuntime): AgentApi {
 		},
 		setTheme: () => Promise.resolve(),
 		setWindowMaterial: () => Promise.resolve(runtime.shell),
+		mcpOpenDesktop: unsupported("OAuth 桌面查看器仅支持 NekoCode 桌面应用"),
 		browserSetInspect: unsupported("WebUI 中不支持内置浏览器"),
 		browserBindAutomation: unsupported("WebUI 中不支持内置浏览器"),
 		pickDirectory: unsupported("WebUI 请使用宿主目录选择器"),
@@ -97,6 +98,8 @@ export function createWebUiApi(runtime: WebUiRuntime): AgentApi {
 		qqBotChooseProject: unsupported("WebUI 请使用宿主目录选择器"),
 		webUiStatus: unsupported("请在桌面应用中配置 WebUI"),
 		webUiSave: unsupported("请在桌面应用中配置 WebUI"),
+		themesChooseDirectory: unsupported("请在桌面应用中选择主题文件夹"),
+		themesInstallDirectory: unsupported("请在桌面应用中导入主题文件夹"),
 		themesOpenDir: unsupported("请在桌面应用中打开主题文件夹"),
 		// Installing replaces the host's app; that stays a decision made at the host.
 		updateInstallState: () => Promise.resolve({ phase: "unsupported" }),

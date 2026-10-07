@@ -61,6 +61,7 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 export function UsageDetails({ usage }: { usage: TurnUsage }) {
 	const { t } = useTranslation();
 	const breakdown = usage.fusion || usage.fastContext;
+	const helperModels = new Set(usage.fusion?.breakdown?.map((entry) => `${entry.usage.provider}/${entry.usage.model}`));
 	return (
 		<div className="w-full max-w-xl space-y-4 rounded-xl border border-border/60 bg-background/60 p-3">
 			<div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -77,7 +78,19 @@ export function UsageDetails({ usage }: { usage: TurnUsage }) {
 					{usage.fusion ? (
 						<>
 							<div className="border-t border-border/60" />
-							<ModelUsageGrid role="sidekick" {...usage.fusion.sidekick} />
+							<ModelUsageGrid role="sidekick" {...usage.fusion.sidekick}
+								provider={helperModels.size > 1 ? "" : usage.fusion.breakdown?.[0]?.usage.provider ?? usage.fusion.sidekick.provider}
+								model={helperModels.size > 1 ? t("fusion.multipleModels") : usage.fusion.breakdown?.[0]?.usage.model ?? usage.fusion.sidekick.model} />
+							{usage.fusion.breakdown?.length ? <details className="text-xs text-muted-foreground">
+								<summary className="cursor-pointer">{t("fusion.costBreakdown")}</summary>
+								<ul className="mt-2 space-y-2">
+									{usage.fusion.breakdown.map((entry, index) => <li key={index} className="break-all">
+										<span>{entry.usage.provider}/{entry.usage.responseModel ?? entry.usage.model}</span>
+										<span> · {t(`fusion.usage.${entry.kind}`)}{entry.taskId ? ` · ${entry.taskId.slice(0, 8)}` : ""}</span>
+										<span> · {formatTokens(entry.usage.totalTokens)} tokens · {entry.usage.costUsd === undefined ? "—" : formatCost(entry.usage.costUsd)}</span>
+									</li>)}
+								</ul>
+							</details> : null}
 						</>
 					) : null}
 					{usage.fastContext ? (

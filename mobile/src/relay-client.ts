@@ -485,6 +485,15 @@ export class RelayClient {
 	commands(id: string) {
 		return this.request<SlashCommandSummary[]>(`/api/tasks/${encodeURIComponent(id)}/commands`);
 	}
+	acpState() { return this.request<import("../../src/shared/acp").AcpState>("/api/acp/state"); }
+	acpHistory(agentId: string) { return this.request<import("../../src/shared/acp").AcpHistory>(`/api/acp/agents/${encodeURIComponent(agentId)}/history`); }
+	acpSnapshot(id: string) { return this.request<import("../../src/shared/acp").AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}`); }
+	acpCreate(agentId: string, projectId: string) { return this.request<import("../../src/shared/acp").AcpSessionSnapshot>("/api/acp/sessions", { agentId, projectId }); }
+	acpOpen(agentId: string, sessionId: string, cwd: string, title?: string) { return this.request<import("../../src/shared/acp").AcpSessionSnapshot>("/api/acp/open", { agentId, sessionId, cwd, title }); }
+	acpPrompt(id: string, text: string) { return this.submit<{ accepted: boolean }>(`/api/acp/sessions/${encodeURIComponent(id)}/prompt`, { text }); }
+	acpCancel(id: string) { return this.request<import("../../src/shared/acp").AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}/cancel`, {}); }
+	acpSetConfig(id: string, configId: string, value: string) { return this.request<import("../../src/shared/acp").AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}/config`, { configId, value }); }
+	acpPermission(id: string, requestId: string, optionId: string | null) { return this.request<import("../../src/shared/acp").AcpSessionSnapshot>(`/api/acp/sessions/${encodeURIComponent(id)}/permission`, { requestId, optionId }); }
 }
 
 export const relay = new RelayClient();

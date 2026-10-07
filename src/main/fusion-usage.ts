@@ -7,8 +7,14 @@ import { FUSION_ENTRY } from "./fusion-config";
 export const FUSION_USAGE_ENTRY = "nekocode.fusion-usage.v1";
 export const FAST_CONTEXT_USAGE_ENTRY = "nekocode.fast-context-usage.v1";
 
+export type FusionUsageKind = "inference" | "compaction" | "cache-warm";
 export interface FusionUsageRecord {
 	turnTimestamp: number;
+	/** Optional for compatibility with v1 records written before detailed attribution. */
+	taskId?: string;
+	parentEntryId?: string;
+	sourceEntryId?: string;
+	kind?: FusionUsageKind;
 	usage: TurnUsage;
 }
 
@@ -20,7 +26,20 @@ function readRecord(data: unknown): FusionUsageRecord | undefined {
 		typeof usage.provider !== "string" || typeof usage.model !== "string") return;
 	if (![usage.calls, usage.input, usage.output, usage.cacheRead, usage.cacheWrite, usage.totalTokens]
 		.every((value) => Number.isFinite(value) && value >= 0)) return;
+	if (record.kind !== undefined && !["inference", "compaction", "cache-warm"].includes(record.kind)) return;
+	if ([record.taskId, record.parentEntryId, record.sourceEntryId].some((value) => value !== undefined && typeof value !== "string")) return;
 	return record;
+}
+
+/** Provider usage for maintenance calls which do not produce assistant messages. */
+export function maintenanceUsage(provider: string, model: string, usage: {
+	input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number;
+	cost?: { total?: number };
+}): TurnUsage {
+	return { provider, model, calls: 1, input: usage.input, output: usage.output,
+		cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, totalTokens: usage.totalTokens,
+		...(Number.isFinite(usage.cost?.total) ? { costUsd: usage.cost!.total } : {}),
+	};
 }
 
 function sumUsage(parts: TurnUsage[]): TurnUsage {
@@ -39,6 +58,18 @@ function sumUsage(parts: TurnUsage[]): TurnUsage {
 	return result;
 }
 
+function fusionBreakdown(records: FusionUsageRecord[]): NonNullable<NonNullable<TurnUsage["fusion"]>["breakdown"]> {
+	const groups = new Map<string, { taskId?: string; kind: FusionUsageKind; parts: TurnUsage[] }>();
+	for (const record of records) {
+		const kind = record.kind ?? "inference";
+		const key = JSON.stringify([record.taskId, kind, record.usage.provider, record.usage.model, record.usage.responseModel]);
+		let group = groups.get(key);
+		if (!group) groups.set(key, group = { taskId: record.taskId, kind, parts: [] });
+		group.parts.push(record.usage);
+	}
+	return [...groups.values()].map(({ taskId, kind, parts }) => ({ taskId, kind, usage: sumUsage(parts) }));
+}
+
 /** Join by the originating prompt, never by the current picker or finish time. */
 export function withFusionUsage(
 	cells: AgentCell[],
@@ -49,18 +80,24 @@ export function withFusionUsage(
 	let latestTurn: number | undefined;
 	const turns = new Map<
 		number,
-		{ config?: FusionConfig; fusionParts: TurnUsage[]; fastContextParts: TurnUsage[] }
+		{ config?: FusionConfig; fusionParts: TurnUsage[]; fastContextParts: TurnUsage[]; records: FusionUsageRecord[]; userEntryId: string }
 	>();
+	const seenSources = new Set<string>();
 	for (const entry of entries) {
 		if (entry.type === "custom" && entry.customType === FUSION_ENTRY) {
 			config = isFusionConfig(entry.data) ? entry.data : undefined;
 		} else if (entry.type === "message" && entry.message.role === "user") {
 			latestTurn = entry.message.timestamp;
-			turns.set(latestTurn, { config, fusionParts: [], fastContextParts: [] });
+			turns.set(latestTurn, { config, fusionParts: [], fastContextParts: [], records: [], userEntryId: entry.id });
 		} else if (entry.type === "custom" && entry.customType === FUSION_USAGE_ENTRY) {
 			const record = readRecord(entry.data);
 			const turn = record && turns.get(record.turnTimestamp);
-			if (record && turn?.config) turn.fusionParts.push(record.usage);
+			if (record && turn?.config && (!record.parentEntryId || record.parentEntryId === turn.userEntryId)) {
+				if (record.sourceEntryId && seenSources.has(record.sourceEntryId)) continue;
+				if (record.sourceEntryId) seenSources.add(record.sourceEntryId);
+				turn.fusionParts.push(record.usage);
+				turn.records.push(record);
+			}
 		} else if (entry.type === "custom" && entry.customType === FAST_CONTEXT_USAGE_ENTRY) {
 			const record = readRecord(entry.data);
 			if (record) turns.get(record.turnTimestamp)?.fastContextParts.push(record.usage);
@@ -93,7 +130,7 @@ export function withFusionUsage(
 				model: lead.model,
 				// Lead's elapsed span already includes waiting for Sidekick.
 				durationMs: lead.durationMs,
-				...(turn.config ? { fusion: { lead, sidekick: sidekick! } } : {}),
+				...(turn.config ? { fusion: { lead, sidekick: sidekick!, breakdown: fusionBreakdown(turn.records) } } : {}),
 				...(fastContextUsage
 					? {
 							fastContext: {

@@ -4,6 +4,7 @@ import type { FusionConfig } from "../../../../shared/fusion";
 import { useTranslation } from "../../i18n";
 import { MenuItem, MenuSeparator, MenuSub, MenuSubTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { ComposerPickerMenuSubPopup, ComposerPickerSelectPopup } from "./ComposerPickerMenuPopup";
 
 interface Props {
@@ -77,6 +78,15 @@ export function FusionPicker(props: Props) {
 							</div>
 						</div>;
 					})}
+					<div className="space-y-1">
+						<div className="flex items-center justify-between gap-3">
+							<span id={`${id}-adaptive`}>{t("fusion.adaptiveRouting")}</span>
+							<Switch aria-labelledby={`${id}-adaptive`} aria-describedby={`${id}-adaptive-hint`}
+								checked={draft.adaptiveRouting ?? false}
+								onCheckedChange={(adaptiveRouting) => setDraft((value) => ({ ...value, adaptiveRouting }))} />
+						</div>
+						<p id={`${id}-adaptive-hint`} className="text-xs text-muted-foreground">{t("fusion.adaptiveRoutingHint")}</p>
+					</div>
 				</div>
 				<MenuSeparator />
 				<MenuItem disabled={!valid} onClick={() => props.onApply(draft)}>{t("fusion.apply")}</MenuItem>

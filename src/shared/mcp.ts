@@ -34,10 +34,25 @@ export interface McpToolSummary {
 /** `needs-auth`: a hosted server that answered 401 and wants the user to sign in. */
 export type McpServerState = "disabled" | "connecting" | "ready" | "error" | "needs-auth";
 
+/** Public capability only; never contains OAuth credentials or a desktop ticket. */
+export interface McpDesktopViewer {
+	url: string;
+	partition: string;
+	readOnly: true;
+}
+
+/** Ephemeral, renderer-only result. Do not log, persist, or forward to the model. */
+export interface McpDesktopConnection {
+	serverId: string;
+	viewerUrl: string;
+	partition: string;
+}
+
 export interface McpServerStatus {
 	config: McpServerConfig;
 	state: McpServerState;
 	tools: McpToolSummary[];
+	desktopViewer?: McpDesktopViewer;
 	/** Why it is not `ready`. Written for the user, not for a log. */
 	error?: string;
 	/**

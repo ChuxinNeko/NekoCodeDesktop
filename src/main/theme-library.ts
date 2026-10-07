@@ -96,23 +96,61 @@ export class ThemeLibrary {
 	/** Install a package, replacing an installed theme of the same id. */
 	install(source: string): CommunityTheme {
 		const parsed = parseThemePackage(source);
-		const { id } = parsed.theme;
+		return this.replace(parsed.theme, parsed.manifest, parsed.art ? { name: parsed.art.fileName, data: Buffer.from(parsed.art.base64, "base64") } : null);
+	}
+
+	/** Import an already-extracted theme folder containing theme.json. */
+	installDirectory(sourceDir: string): CommunityTheme {
+		let manifest: Record<string, unknown>;
+		try {
+			if (!statSync(sourceDir).isDirectory()) throw new Error("选择的路径不是主题文件夹");
+			manifest = JSON.parse(readFileSync(join(sourceDir, MANIFEST), "utf8"));
+		} catch (error) {
+			if (error instanceof Error && error.message === "选择的路径不是主题文件夹") throw error;
+			throw new Error("主题文件夹缺少有效的 theme.json");
+		}
+		const theme = readCommunityTheme(manifest, false);
+		let artwork: { name: string; data: Buffer } | null = null;
+		if (typeof manifest.art === "string" && manifest.art) {
+			const relative = manifest.art.replace(/\\/g, "/");
+			if (relative.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("主题插画路径无效");
+			const candidates = [join(sourceDir, relative), join(sourceDir, relative.split("/").pop() ?? "")];
+			for (const candidate of candidates) {
+				const extension = candidate.split(".").pop()?.toLowerCase() ?? "";
+				if (!ART_MIME_BY_EXTENSION[extension]) continue;
+				try {
+					if (statSync(candidate).isFile()) {
+						artwork = { name: `art.${extension === "jpeg" ? "jpg" : extension}`, data: readFileSync(candidate) };
+						break;
+					}
+				} catch {}
+			}
+			if (!artwork) throw new Error("主题插画文件不存在或格式不支持");
+		}
+		const normalized: Record<string, unknown> = { ...manifest, id: theme.id };
+		delete normalized.css;
+		if (artwork) normalized.art = artwork.name;
+		else delete normalized.art;
+		return this.replace({ ...theme, art: !!artwork }, normalized, artwork);
+	}
+
+	private replace(theme: CommunityTheme, manifest: Record<string, unknown>, artwork: { name: string; data: Buffer } | null): CommunityTheme {
+		const { id } = theme;
 		mkdirSync(this.dir, { recursive: true });
 		const target = join(this.dir, id);
-		// Written aside and swapped in, so a failure never leaves half a theme.
 		const staging = join(this.dir, `.${id}.installing-${process.pid}`);
 		rmSync(staging, { recursive: true, force: true });
 		mkdirSync(staging);
 		try {
-			writeFileSync(join(staging, MANIFEST), `${JSON.stringify(parsed.manifest, null, 2)}\n`);
-			if (parsed.art) writeFileSync(join(staging, parsed.art.fileName), Buffer.from(parsed.art.base64, "base64"));
+			writeFileSync(join(staging, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+			if (artwork) writeFileSync(join(staging, artwork.name), artwork.data);
 			rmSync(target, { recursive: true, force: true });
 			renameSync(staging, target);
 		} catch (error) {
 			rmSync(staging, { recursive: true, force: true });
 			throw error;
 		}
-		return parsed.theme;
+		return theme;
 	}
 
 	/** The artwork as a data URL, or null when the theme has none. */
