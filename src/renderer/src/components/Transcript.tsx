@@ -1,8 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { ThinkingOrb } from "thinking-orbs";
-import type { AgentCell } from "../../../shared/agent";
+import type { AgentCell, ModelOption } from "../../../shared/agent";
 import type { CheckpointSummary } from "../../../shared/checkpoints";
 import type { ExplorerRun, WorkflowTask } from "../../../shared/workflow";
 import {
@@ -14,6 +12,10 @@ import {
 	type WorkRow,
 } from "../../../shared/transcript";
 import { MessageActions } from "./chat/MessageActions";
+import { UsageModelsContext } from "./chat/UsagePanel";
+import { completedTurnChanges } from "../lib/turnChanges";
+import { useReducedMotion } from "../lib/motion";
+import { DisclosureRegion } from "./ui/disclosure-region";
 import { useTranslation, type TranslateFn } from "../i18n";
 import { elapsedSeconds, formatElapsed, useNow } from "../lib/elapsed";
 import { cn } from "../lib/utils";
@@ -34,22 +36,11 @@ import {
 	workUnits,
 } from "./chat/ToolCalls";
 import { lastThinkingLine, ThinkingBlock } from "./chat/Thinking";
-import { MarkdownLink, SourceList } from "./chat/WebSources";
+import { SourceList } from "./chat/WebSources";
+import { Markdown } from "./chat/Markdown";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../surfaceStyles";
-
-/** Links never navigate the window; see {@link MarkdownLink}. Stable, so memoized rows stay memoized. */
-const MARKDOWN_COMPONENTS = { a: MarkdownLink };
-
-// Parsing is the dearest thing a transcript row does, and a long session has
-// hundreds of rows: only a message whose text actually changed re-parses.
-const Markdown = memo(function Markdown({ text, user }: { text: string; user?: boolean }) {
-	return (
-		<div className={cn("chat-markdown", user && "chat-markdown--user")}>
-			<ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
-		</div>
-	);
-});
+import { CommandStopContext, type StopCommand } from "./chat/CommandStopButton";
 
 // The row components below are memoized on their props. Snapshots reach them
 // structurally shared (see `shareStructure`), so a settled cell is the same
@@ -282,7 +273,7 @@ function FileEditCell({
 		const body = bodyRef.current;
 		if (body && followRef.current && (live || wasLive.current)) body.scrollTop = body.scrollHeight;
 		wasLive.current = live;
-	}, [code, live]);
+	}, [code, live, open]);
 
 	// Colors are for reading, and only the edits on screen are being read: one
 	// scrolled out of view keeps its plain text until it is scrolled to.
@@ -295,7 +286,7 @@ function FileEditCell({
 		});
 		observer.observe(body);
 		return () => observer.disconnect();
-	}, [seen]);
+	}, [seen, open]);
 
 	useEffect(() => {
 		// Do not re-tokenize the entire growing file on every input delta.
@@ -336,7 +327,7 @@ function FileEditCell({
 				title={preview.path}
 				meta={
 					<>
-						{phaseLabel ? <span className="shimmer">{phaseLabel}</span> : null}
+						{phaseLabel ? <span>{phaseLabel}</span> : null}
 						{additions > 0 ? <span className="text-success">+{additions.toLocaleString()}</span> : null}
 						{deletions > 0 ? <span className="text-destructive">−{deletions.toLocaleString()}</span> : null}
 					</>
@@ -346,9 +337,9 @@ function FileEditCell({
 				onClick={() => setOpen((value) => !value)}
 				className={CARD_HEADER_CLASS_NAME}
 			/>
+			<DisclosureRegion open={open}>
 			<div
 				ref={bodyRef}
-				hidden={!open}
 				onScroll={(event) => {
 					const body = event.currentTarget;
 					followRef.current = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
@@ -381,6 +372,7 @@ function FileEditCell({
 					);
 				})}
 			</div>
+			</DisclosureRegion>
 		</div>
 	);
 }
@@ -467,10 +459,10 @@ const TRANSCRIPT_ROW_CLASS_NAME =
 	"flex flex-col gap-4 [content-visibility:auto] [contain-intrinsic-size:auto_160px]";
 
 function sameWorkingBlock(
-	prev: { row: WorkRow; active: boolean; waiting: boolean },
-	next: { row: WorkRow; active: boolean; waiting: boolean },
+	prev: { row: WorkRow; active: boolean; waiting: boolean; settling: boolean },
+	next: { row: WorkRow; active: boolean; waiting: boolean; settling: boolean },
 ): boolean {
-	if (prev.active !== next.active || prev.waiting !== next.waiting) return false;
+	if (prev.active !== next.active || prev.waiting !== next.waiting || prev.settling !== next.settling) return false;
 	const a = prev.row;
 	const b = next.row;
 	if (a.startedAt !== b.startedAt || a.endedAt !== b.endedAt || a.items.length !== b.items.length) return false;
@@ -492,15 +484,19 @@ const WorkingBlock = memo(function WorkingBlock({
 	row,
 	active,
 	waiting,
+	settling,
 }: {
 	row: WorkRow;
 	/** The run is still going, so the elapsed time counts against the clock. */
 	active: boolean;
 	/** The model owes a next step that has not arrived yet. */
 	waiting: boolean;
+	settling: boolean;
 }) {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(active);
+	const reducedMotion = useReducedMotion();
+	useEffect(() => { if (settling) setOpen(false); }, [settling]);
 	const now = useNow(active);
 	const end = active ? now : row.endedAt;
 	const seconds = elapsedSeconds(row.startedAt, end);
@@ -524,13 +520,9 @@ const WorkingBlock = memo(function WorkingBlock({
 					MUTED_LABEL_TEXT_CLASS_NAME,
 				)}
 			>
-				{open ? (
-					<ChevronDownIcon className="size-4" />
-				) : (
-					<ChevronRightIcon className="size-4" />
-				)}
-				{active ? <ThinkingOrb state="solving" size={20} /> : null}
-				<span className={active ? "shimmer" : undefined}>
+				<ChevronRightIcon className="workflow-chevron size-4" data-open={open} />
+				{active ? reducedMotion ? <span aria-hidden="true" className="size-3 rounded-full bg-primary/40" /> : <ThinkingOrb state="solving" size={20} /> : null}
+				<span>
 					{active
 						? `Working for ${formatElapsed(seconds)}`
 						: `Worked for ${formatElapsed(seconds)}`}
@@ -541,7 +533,7 @@ const WorkingBlock = memo(function WorkingBlock({
 					</span>
 				) : null}
 			</button>
-			{open ? (
+			<DisclosureRegion open={open}>
 				<div className="flex flex-col gap-2 border-l border-border/60 pl-3">
 					{workUnits(row.items, active).map((unit) => {
 						if (unit.kind === "computer")
@@ -559,7 +551,8 @@ const WorkingBlock = memo(function WorkingBlock({
 					})}
 					{waiting ? <PlanningLine /> : null}
 				</div>
-			) : summary ? (
+			</DisclosureRegion>
+			{!open && !settling && summary ? (
 				<div
 					className={cn(
 						"truncate border-l border-border/60 pl-3",
@@ -595,21 +588,29 @@ function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 	}
 }
 
+const EMPTY_MODELS: readonly ModelOption[] = [];
+
 const TranscriptView = function Transcript({
 	cells,
+	models,
 	streaming,
+	settling = false,
 	tasks,
 	explorers,
 	onOpenTask,
 	onOpenFile,
 	checkpoints,
+	composerCheckpointId,
 	onRestoreCheckpoint,
 	onOpenReview,
 	onLoadToolOutput,
 	onForkMessage,
+	onStopCommand,
 }: {
 	cells: AgentCell[];
+	models?: readonly ModelOption[];
 	streaming?: boolean;
+	settling?: boolean;
 	/** Background workers, so a `task` row can show the worker it started. */
 	tasks?: WorkflowTask[];
 	/** Fast Context runs, so a `code_search` row can show its search live. */
@@ -619,6 +620,8 @@ const TranscriptView = function Transcript({
 	onOpenFile?: (path: string) => void;
 	/** Restore points, so a prompt can offer the rewind of its own turn. */
 	checkpoints?: readonly CheckpointSummary[];
+	/** This checkpoint is already displayed above the composer; avoid a duplicate. */
+	composerCheckpointId?: string;
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
 	/** Open the review panel — the edit summary card's "Review" action. */
 	onOpenReview?: () => void;
@@ -629,12 +632,14 @@ const TranscriptView = function Transcript({
 	onLoadToolOutput?: (toolCallId: string, offset: number) => Promise<{ text: string; total: number }>;
 	/** Branch the conversation at a reply into a session of its own. */
 	onForkMessage?: (cellId: string) => Promise<void> | void;
+	onStopCommand?: StopCommand;
 }) {
 	// The handlers come from parents that recreate them every render. Reached
 	// through a ref, they stop being a reason for every row to re-render: the
 	// context value and the memoized rows only change with what they show.
-	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage });
-	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage };
+	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand });
+	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand };
+	const stopCommand = useCallback((id: string) => handlers.current.onStopCommand?.(id) ?? Promise.resolve(false), []);
 	const forkMessage = useCallback((cellId: string) => handlers.current.onForkMessage?.(cellId), []);
 	const openTask = useCallback((taskId: string) => handlers.current.onOpenTask?.(taskId), []);
 	const openFile = useCallback((path: string) => handlers.current.onOpenFile?.(path), []);
@@ -678,7 +683,11 @@ const TranscriptView = function Transcript({
 	// transcript. Keep this work tied to the structurally shared cell array so a
 	// scroll event does not regroup every turn in a long session.
 	const grouped = useMemo(() => groupTranscriptRows(cells), [cells]);
-	const rows = useMemo(() => foldSettledTurns(grouped, streaming === true), [grouped, streaming]);
+	const rows = useMemo(() => foldSettledTurns(grouped, streaming === true || settling), [grouped, streaming, settling]);
+	const currentTurnRowIds = useMemo(() => {
+		const start = rows.findIndex((row) => row.kind === "user" && row.cell.id === lastUserId);
+		return new Set(start < 0 ? [] : rows.slice(start + 1).map((row) => row.id));
+	}, [rows, lastUserId]);
 	// Rebuilt as cells stream, but handed on only when a title actually changed:
 	// every link in every answer reads this, and a new map per token would
 	// re-render them all.
@@ -695,23 +704,10 @@ const TranscriptView = function Transcript({
 	// where the turn ends. A following prompt settles that; at the tail nothing
 	// does, so the card waits for the run to finish rather than appearing
 	// half-written above an answer that is still arriving.
-	const cardByRowId = useMemo(() => {
-		const cards = new Map<string, CheckpointSummary>();
-		let turnCheckpoint: CheckpointSummary | undefined;
-		for (let i = 0; i < rows.length; i++) {
-			const row = rows[i];
-			if (row.kind === "user") {
-				turnCheckpoint = checkpointByCell.get(row.cell.id);
-				continue;
-			}
-			const next = rows[i + 1];
-			const turnEnded = next === undefined ? streaming !== true : next.kind === "user";
-			if (turnEnded && turnCheckpoint !== undefined && turnCheckpoint.fileCount > 0) {
-				cards.set(row.id, turnCheckpoint);
-			}
-		}
-		return cards;
-	}, [rows, checkpointByCell, streaming]);
+	const cardByRowId = useMemo(
+		() => completedTurnChanges(rows, checkpoints ?? [], streaming === true || settling, composerCheckpointId),
+		[rows, checkpoints, streaming, settling, composerCheckpointId],
+	);
 	// The reply each finished turn ends on: the next row is the next prompt, or
 	// there is none and nothing is still running.
 	const closingReplies = useMemo(() => {
@@ -729,6 +725,8 @@ const TranscriptView = function Transcript({
 	const waitingInWork = waiting && rows[rows.length - 1]?.kind === "work";
 	return (
 		<TaskLookupContext.Provider value={taskLookup}>
+			<UsageModelsContext.Provider value={models ?? EMPTY_MODELS}>
+			<CommandStopContext.Provider value={onStopCommand ? stopCommand : undefined}>
 			<ToolOutputContext.Provider value={onLoadToolOutput}>
 			<WebTitlesContext.Provider value={webTitles}>
 			<div className="flex flex-col gap-4">
@@ -761,6 +759,7 @@ const TranscriptView = function Transcript({
 									row={row}
 									active={last && streaming === true}
 									waiting={last && waitingInWork}
+									settling={settling && currentTurnRowIds.has(row.id)}
 								/>
 							)}
 							{card ? (
@@ -779,6 +778,8 @@ const TranscriptView = function Transcript({
 			</div>
 			</WebTitlesContext.Provider>
 			</ToolOutputContext.Provider>
+			</CommandStopContext.Provider>
+			</UsageModelsContext.Provider>
 		</TaskLookupContext.Provider>
 	);
 }

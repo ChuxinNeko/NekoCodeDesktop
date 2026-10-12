@@ -280,6 +280,8 @@ export interface AgentApi {
 	onAgentTasks(listener: (entries: TaskBoardEntry[]) => void): () => void;
 	/** Stop one task, whether or not it is the session on screen. */
 	agentAbortTask(sessionId: string): Promise<void>;
+	/** Stop one running shell call, then ask its reason through the workflow card. */
+	agentStopCommand(sessionId: string, toolCallId: string): Promise<boolean>;
 	/** Take finished tasks off the board; their sessions stay in the sidebar. */
 	agentDismissTasks(sessionIds: string[]): Promise<void>;
 	preferencesGet(): Promise<AppPreferences>;

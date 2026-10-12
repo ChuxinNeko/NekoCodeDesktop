@@ -1,11 +1,12 @@
 import type { ThinkingLevel } from "./agent";
 
+/** Parent decisions stay on Lead; helpers default to Sidekick and may escalate. */
 export interface FusionConfig {
 	leadModelKey: string;
 	leadThinkingLevel: ThinkingLevel;
 	sidekickModelKey: string;
 	sidekickThinkingLevel: ThinkingLevel;
-	/** Opt-in: route between configured roles at compaction, at most once per task. */
+	/** Helper routing at task start and natural compaction boundaries. Defaults to true. */
 	adaptiveRouting?: boolean;
 }
 

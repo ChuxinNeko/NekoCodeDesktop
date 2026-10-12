@@ -972,12 +972,17 @@ export default function App() {
 				onSendBackground={inPane((text: string) => startBackgroundTask(text, sessionCwd))}
 				// Stopping a run needs no selection: main can abort any live session.
 				onAbort={() => void (split && paneSnapshot ? api.agentAbortTask(paneSnapshot.session.id) : api.agentAbort())}
+				onStopCommand={paneSnapshot ? (id) => api.agentStopCommand(paneSnapshot.session.id, id) : undefined}
+				onAnswerWorkflow={async (answer) => {
+					await panes.ready(slot.key);
+					return api.agentAnswerWorkflow(answer);
+				}}
 				onSetFusion={inPane(setFusion)}
 				onSetModel={inPane(setModel)}
 				onSetThinking={inPane(setThinking)}
 				onSetMode={inPane(setMode)}
 				onSetWorkMode={inPane(setWorkMode)}
-				onOpenReview={layoutMode === "ide" ? undefined : inPane(() => setView("review"))}
+				onOpenReview={layoutMode === "ide" ? undefined : inPane(() => openDockTab("review"))}
 				onToggleTerminal={inPane(() => setTerminalOpen((open) => !open))}
 				onToggleBrowser={inPane(() => toggleDockTool("browser"))}
 				onOpenTask={layoutMode === "ide" ? undefined : inPane((taskId: string) => openDockTab(taskTabId(taskId)))}

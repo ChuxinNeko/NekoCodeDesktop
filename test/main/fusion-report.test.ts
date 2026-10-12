@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createFusionReportTool, createFusionUpgradeTool, fusionTaskResult } from "../../src/main/fusion-report-tool";
-import { fusionRouteAtCompaction } from "../../src/main/fusion-routing";
+import { FusionRoutingState } from "../../src/main/fusion-routing";
 import type { FusionTaskReport } from "../../src/shared/workflow";
 import { isFusionConfig } from "../../src/shared/fusion";
 
@@ -35,24 +35,66 @@ describe("Fusion outcome protocol", () => {
 });
 
 describe("conservative compaction routing", () => {
-	const request = { reason: "Correctness risk", evidence: "Conflicting invariants" };
-	test("old configs stay fixed and malformed routing flags are rejected", () => {
+	test("Lead stays the brain even after successful routine execution", () => {
+		const routing = new FusionRoutingState("main");
+		routing.request({ workload: "routine", risk: "low", reason: "Plan ready", evidence: "Bounded edits remain" });
+		routing.observe("edit", { path: "a.ts" }, "updated", false);
+		expect(routing.initialRole()).toBe("lead");
+		expect(routing.atCacheBoundary(config, "a/lead")).toBeUndefined();
+		expect(routing.atCacheBoundary(config, "b/side")?.role).toBe("lead");
+	});
+	test("ordinary fact gathering uses Sidekick, sensitive work retains Lead", () => {
+		expect(new FusionRoutingState("auxiliary", "Locate the theme entry point").initialRole()).toBe("sidekick");
+		expect(new FusionRoutingState("auxiliary", "Analyze authentication boundary").initialRole()).toBe("lead");
+	});
+	test("repeated correctness failures stop worker effects without waiting for compaction", () => {
+		const routing = new FusionRoutingState("auxiliary", "bounded work", true);
+		routing.observe("bash", { command: "bun test" }, "Assertion: expected 2, received 1", true);
+		expect(routing.allowsTool("edit")).toBe(true);
+		routing.observe("bash", { command: "bun test" }, "Assertion: expected 2, received 1", true);
+		expect(routing.allowsTool("edit")).toBe(false);
+		expect(routing.allowsTool("bash")).toBe(false);
+		expect(routing.allowsTool("fusion_report")).toBe(true);
+		expect(routing.snapshot()).toMatchObject({ safeToContinue: false, environmentalSignal: false });
+	});
+	test("repeated network failures do not become capability escalations", () => {
+		const routing = new FusionRoutingState("auxiliary", "bounded work", true);
+		for (let i = 0; i < 3; i++) routing.observe("bash", "fetch", "ECONNRESET", true);
+		expect(routing.snapshot().safeToContinue).toBe(true);
+		expect(routing.atCacheBoundary(config, "b/side")).toBeUndefined();
+	});
+	test("disabled routing stays fixed and malformed flags are rejected", () => {
 		expect(isFusionConfig(config)).toBe(true);
 		expect(isFusionConfig({ ...config, adaptiveRouting: "yes" })).toBe(false);
-		expect(fusionRouteAtCompaction(config, "b/side", request, 0)).toBeUndefined();
+		expect(new FusionRoutingState("main").atCacheBoundary({ ...config, adaptiveRouting: false }, "b/side")).toBeUndefined();
 	});
-	test("only explicit evidence can upgrade to the selected Lead", () => {
-		const adaptive = { ...config, adaptiveRouting: true };
-		expect(fusionRouteAtCompaction(adaptive, "b/side", undefined, 0)).toBeUndefined();
-		expect(fusionRouteAtCompaction(adaptive, "b/side", { ...request, evidence: " " }, 0)).toBeUndefined();
-		expect(fusionRouteAtCompaction(adaptive, "b/side", request, 0)).toBe("lead");
-		expect(fusionRouteAtCompaction(adaptive, "unknown/model", request, 0)).toBeUndefined();
+	test("risk evidence selects Lead only at a boundary and does not grant MCP authority", () => {
+		const routing = new FusionRoutingState("auxiliary", "bounded work", true);
+		expect(routing.atCacheBoundary(config, "b/side")).toBeUndefined();
+		expect(() => routing.request({ workload: "review", risk: "high", reason: "Correctness risk", evidence: " " }))
+			.toThrow("concrete evidence");
+		routing.request({ workload: "review", risk: "high", reason: "Correctness risk", evidence: "Conflicting invariants", safeToContinue: false });
+		expect(routing.atCacheBoundary(config, "b/side")?.role).toBe("lead");
+		expect(routing.allowsTool("mcp__demo__echo")).toBe(false);
+		expect(routing.allowsTool("read")).toBe(true);
+		expect(routing.atCacheBoundary(config, "a/lead")).toBeUndefined();
 	});
-	test("prevents oscillation and returns later routine tasks to Sidekick only at a boundary", () => {
-		const adaptive = { ...config, adaptiveRouting: true };
-		expect(fusionRouteAtCompaction(adaptive, "a/lead", request, 0)).toBeUndefined();
-		expect(fusionRouteAtCompaction(adaptive, "a/lead", undefined, 0)).toBe("sidekick");
-		expect(fusionRouteAtCompaction(adaptive, "a/lead", undefined, 1)).toBeUndefined();
-		expect(fusionRouteAtCompaction({ ...adaptive, sidekickModelKey: "a/lead" }, "a/lead", request, 0)).toBeUndefined();
+	test("routine success permits Sidekick at a boundary and failed routes do not loop", () => {
+		const routing = new FusionRoutingState("auxiliary", "bounded work", true);
+		expect(routing.atCacheBoundary(config, "a/lead")).toBeUndefined();
+		routing.observe("edit", { path: "a.ts" }, "updated", false);
+		expect(routing.atCacheBoundary(config, "a/lead")?.role).toBe("sidekick");
+		routing.recordAttempt("sidekick", false);
+		expect(routing.atCacheBoundary(config, "a/lead")).toBeUndefined();
+		expect(routing.atCacheBoundary({ ...config, sidekickModelKey: "a/lead" }, "a/lead")).toBeUndefined();
+	});
+	test("a successful edit and a low-risk hint cannot downgrade unresolved high-risk work", () => {
+		const routing = new FusionRoutingState("auxiliary", "Update authentication boundary", true);
+		expect(routing.initialRole()).toBe("lead");
+		routing.observe("edit", { path: "auth.ts" }, "updated", false);
+		routing.request({ workload: "routine", risk: "low", reason: "Edit completed",
+			evidence: "The edit tool returned successfully" });
+		expect(routing.atCacheBoundary(config, "a/lead")).toBeUndefined();
+		expect(routing.atCacheBoundary(config, "b/side")?.role).toBe("lead");
 	});
 });

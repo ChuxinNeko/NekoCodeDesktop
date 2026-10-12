@@ -76,12 +76,16 @@ export function modelLabel(
  * turn ran and are absent for history it did not watch.
  */
 export interface TurnUsage {
+	/** Per-request model attribution before totals from different models are merged. */
+	modelBreakdown?: TurnUsage[];
 	/** Role-specific totals for Fusion, captured with this turn's configuration. */
 	fusion?: {
 		lead: TurnUsage;
 		sidekick: { provider: string; model: string; usage?: TurnUsage };
+		unattributed?: TurnUsage;
+		attributionAmbiguous?: boolean;
 		/** Actual model/task/category totals, including auxiliary maintenance requests. */
-		breakdown?: Array<{ taskId?: string; kind: "inference" | "compaction" | "cache-warm"; usage: TurnUsage }>;
+		breakdown?: Array<{ taskId?: string; source?: "main" | "auxiliary" | "fast-context"; kind: "inference" | "compaction" | "cache-warm"; usage: TurnUsage }>;
 	};
 	fastContext?: {
 		primary: TurnUsage;

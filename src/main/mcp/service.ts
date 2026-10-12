@@ -22,6 +22,10 @@ import { McpStore } from "./store";
 const REQUEST_TIMEOUT_MS = 60_000;
 /** A tool may legitimately run for a while; progress notifications re-arm this. */
 const TOOL_TIMEOUT_MS = 5 * 60_000;
+/** Short observation timeout for desktop bridge screenshots/snapshots. */
+const DESKTOP_BRIDGE_SNAPSHOT_TIMEOUT_MS = 15_000;
+/** Bounded timeout for interactive browser actions on desktop bridge. */
+const DESKTOP_BRIDGE_ACTION_TIMEOUT_MS = 30_000;
 /** How much of a failed stdio server's stderr the settings row shows. */
 const STDERR_TAIL = 1_500;
 
@@ -71,6 +75,9 @@ export class McpService {
 	private readonly challenges = new Map<string, OAuthChallenge>();
 	private readonly createTransport: McpTransportFactory;
 	private toLlmContent: typeof import("@earendil-works/pi-mcp").toLlmContent | null = null;
+	private revision = 0;
+	/** Changes on reconnect too, even if tool names and schemas are unchanged. */
+	get toolRevision(): number { return this.revision; }
 
 	constructor(
 		userDataDir: string,
@@ -135,12 +142,14 @@ export class McpService {
 				}
 				const connection: Connection = { client, transport, tools, config, authProvider, closed: new AbortController() };
 				this.connections.set(config.id, connection);
+				this.revision++;
 				this.states.set(config.id, { state: "ready" });
 				// A server that crashes or drops mid-session: say so, and let the
 				// next call dial it again rather than failing forever.
 				client.onClose(() => {
 					if (this.connections.get(config.id) !== connection) return;
 					this.connections.delete(config.id);
+					this.revision++;
 					connection.closed.abort();
 					this.states.set(config.id, { state: "error", error: dropReason(transport) });
 					this.onChange();
@@ -149,7 +158,9 @@ export class McpService {
 					void client
 						.listTools()
 						.then((next) => {
+							if (this.connections.get(config.id) !== connection) return;
 							connection.tools = next;
+							this.revision++;
 							this.onChange();
 						})
 						.catch(() => undefined);
@@ -201,6 +212,7 @@ export class McpService {
 		const connection = this.connections.get(id);
 		if (!connection) return;
 		this.connections.delete(id);
+		this.revision++;
 		connection.closed.abort();
 		void connection.client.close().catch(() => undefined);
 	}
@@ -370,9 +382,17 @@ export class McpService {
 		}
 		if (!connection) throw new Error(this.states.get(id)?.error ?? `${qualified} 所在的 MCP 服务器未连接`);
 		const config = this.store.list().find((entry) => entry.id === id);
+		const isBridge = isDesktopBridge(connection.client.serverInfo?.name, connection.tools);
+		const timeoutMs = isBridge
+			? tool === "browser_snapshot" || tool === "desktop_screenshot" || tool === "desktop_snapshot" || tool === "browser_downloads"
+				? DESKTOP_BRIDGE_SNAPSHOT_TIMEOUT_MS
+				: tool === "browser_action"
+					? DESKTOP_BRIDGE_ACTION_TIMEOUT_MS
+					: TOOL_TIMEOUT_MS
+			: TOOL_TIMEOUT_MS;
 		const result = await connection.client.callTool(tool, (params ?? {}) as Record<string, unknown>, {
 			signal,
-			timeoutMs: TOOL_TIMEOUT_MS,
+			timeoutMs,
 			// Any progress at all counts as the tool being alive.
 			onProgress: () => undefined,
 		});

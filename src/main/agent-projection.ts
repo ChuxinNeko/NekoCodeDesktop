@@ -283,6 +283,7 @@ function showsAssistantCell(message: ProjectableMessage, error: string | undefin
 export function aggregateTurnUsage(
 	messages: readonly ProjectableMessage[],
 	callTiming?: CallTiming,
+	includeModels = true,
 ): TurnUsage | undefined {
 	let calls = 0;
 	let input = 0;
@@ -335,7 +336,7 @@ export function aggregateTurnUsage(
 	}
 	if (calls === 0) return undefined;
 
-	return {
+	const result: TurnUsage = {
 		provider,
 		model,
 		...(responseModel ? { responseModel } : {}),
@@ -351,6 +352,19 @@ export function aggregateTurnUsage(
 			? { durationMs: endedAt - startedAt, modelMs }
 			: {}),
 	};
+	if (includeModels) {
+		const groups = new Map<string, ProjectableMessage[]>();
+		for (const message of messages) {
+			const key = JSON.stringify([message.provider ?? "", message.model ?? ""]);
+			const group = groups.get(key) ?? [];
+			group.push(message); groups.set(key, group);
+		}
+		result.modelBreakdown = [...groups.values()].flatMap((group) => {
+			const usage = aggregateTurnUsage(group, callTiming, false);
+			return usage ? [usage] : [];
+		});
+	}
+	return result;
 }
 
 /**

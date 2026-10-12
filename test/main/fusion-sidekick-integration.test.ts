@@ -7,10 +7,58 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { ModelRuntime, SessionManager, type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WorkflowRuntime } from "../../src/main/workflow-runtime";
 import type { TaskInput } from "../../src/shared/workflow";
-import { FUSION_USAGE_ENTRY, type FusionUsageRecord } from "../../src/main/fusion-usage";
+import { FUSION_TASK_METRIC_ENTRY, FUSION_USAGE_ENTRY, type FusionTaskMetric, type FusionUsageRecord } from "../../src/main/fusion-usage";
 
 // Real SDK/tool loop and real temporary files. Only the external model response is scripted.
 describe("Fusion Sidekick task integration", () => {
+	test("short tasks hand repeated correctness failures back to Lead before further writes", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "fusion-handoff-"));
+		let workflow: WorkflowRuntime | undefined;
+		try {
+			const runtime = await ModelRuntime.create({ authPath: join(cwd, "auth.json"), modelsPath: null,
+				modelsStorePath: join(cwd, "models-store.json"), allowModelNetwork: false });
+			await runtime.setRuntimeApiKey("anthropic", "test-only");
+			const side = getModel("anthropic", "claude-sonnet-4-5")!;
+			const lead = getModel("anthropic", "claude-opus-4-5")!;
+			const manager = SessionManager.inMemory(cwd);
+			manager.appendMessage({ role: "user", content: "Implement change", timestamp: 1 });
+			let round = 0;
+			let checks = 0;
+			runtime.streamSimple = (model) => {
+				expect(model.id).toBe(side.id);
+				const stream = createAssistantMessageEventStream();
+				const n = ++round;
+				const call: ToolCall | undefined = n <= 2 ? { type: "toolCall", id: `check-${n}`,
+					name: "mcp__fixture__verify", arguments: {} } : n === 3 ? { type: "toolCall", id: "unsafe-write",
+					name: "write", arguments: { path: "must-not-exist.txt", content: "guess" } } : undefined;
+				queueMicrotask(() => stream.push({ type: "done", reason: call ? "toolUse" : "stop", message: {
+					...fauxAssistantMessage("Lead must decide"), api: model.api, provider: model.provider, model: model.id,
+					content: call ? [call] : [{ type: "text", text: "Lead must decide" }], stopReason: call ? "toolUse" : "stop",
+				} }));
+				return stream;
+			};
+			workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
+				sessionManager: manager, initialMode: "agent", getPermission: () => "auto",
+				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+					leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
+				getMcpTools: () => [{ name: "mcp__fixture__verify", label: "Verify", description: "Fixture check",
+					parameters: { type: "object", properties: {} } as never,
+					execute: async () => { checks++; return { isError: true,
+						content: [{ type: "text" as const, text: "Assertion failed: expected 2, received 1" }], details: {} }; } }],
+				onChange: () => undefined, onModeChange: () => undefined });
+			workflow.attach({ model: lead, messages: [], agent: {}, setActiveToolsByName: () => undefined,
+				sendCustomMessage: async () => undefined, subscribe: () => () => undefined } as unknown as AgentSession);
+			workflow.state.startTask({ kind: "worker", description: "Implement change", prompt: "Implement bounded change",
+				writablePaths: ["."], executionPlan: { steps: ["Implement change"], constraints: [],
+					acceptanceCriteria: ["Correct output"], verification: { mode: "run", checks: ["mcp__fixture__verify"] } } });
+			await workflow.whenSettled();
+			expect(checks).toBe(2);
+			expect(round).toBe(4);
+			expect(workflow.state.snapshot().tasks[0].outcome).toBe("needs_escalation");
+			expect(workflow.state.snapshot().tasks[0].result).toContain("expected 2");
+			await expect(readFile(join(cwd, "must-not-exist.txt"))).rejects.toThrow();
+		} finally { workflow?.dispose(); await workflow?.whenSettled(); await rm(cwd, { recursive: true, force: true }); }
+	}, 30000);
 	test("reuses history but cannot write into a previous task's scope", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "fusion-worker-"));
 		let workflow: WorkflowRuntime | undefined;
@@ -58,12 +106,18 @@ describe("Fusion Sidekick task integration", () => {
 			});
 			workflow.attach({ model: leadModel, messages: [{ role: "user", timestamp: 100 }], agent: {},
 				setActiveToolsByName: () => undefined, sendCustomMessage: async () => undefined,
+				subscribe: () => () => undefined,
 			} as unknown as AgentSession);
 			const input = (path: string): TaskInput => ({ kind: "worker", description: path, prompt: `Write ${path}.`, writablePaths: [path],
 				executionPlan: { steps: [`Write ${path}`], constraints: ["Skip validation in this test"], acceptanceCriteria: ["file exists"],
 					verification: { mode: "skip", checks: [] } } });
 			workflow.state.startTask(input("a.txt")); await workflow.whenSettled();
 			workflow.state.startTask(input("b.txt")); await workflow.whenSettled();
+			const taskMetrics = manager.getBranch().flatMap((entry) => entry.type === "custom" &&
+				entry.customType === FUSION_TASK_METRIC_ENTRY ? [entry.data as FusionTaskMetric] : []);
+			expect(taskMetrics).toHaveLength(2);
+			expect(taskMetrics.every((item) => item.kind === "worker" && item.verificationMode === "skip" &&
+				item.plannedChecks === 0 && item.acceptance?.unverified === 1)).toBe(true);
 			expect(sawOldHistory).toBe(true);
 			expect(new Set(selectedModels)).toEqual(new Set([`${model.provider}/${model.id}`]));
 			expect(new Set(sessionIds).size).toBe(1);
@@ -97,7 +151,7 @@ describe("Fusion Sidekick task integration", () => {
 		}
 	}, 30000);
 
-	test("upgrades only at a natural compaction boundary when the user enabled routing", async () => {
+	test("planned implementation stays on Sidekick across natural compaction even for sensitive work", async () => {
 		for (const adaptiveRouting of [true, false]) {
 			const cwd = await mkdtemp(join(tmpdir(), "fusion-routing-"));
 			let workflow: WorkflowRuntime | undefined;
@@ -121,8 +175,8 @@ describe("Fusion Sidekick task integration", () => {
 					if (!executionSessionId) executionSessionId = options?.sessionId;
 					if (!summary) requested.push(model.id);
 					const call: ToolCall | undefined = !summary && requested.length === 1 ? {
-						type: "toolCall" as const, id: "upgrade", name: "fusion_request_upgrade",
-						arguments: { reason: "Cannot establish invariant", evidence: "Cancellation conflicts with transaction guarantee" },
+						type: "toolCall" as const, id: "implement", name: "write",
+						arguments: { path: "invariant.txt", content: "Lead specified implementation" },
 					} : !summary && requested.length === 2 ? {
 						type: "toolCall" as const, id: "report", name: "fusion_report", arguments: { outcome: "completed",
 							summary: "Ready for Lead", acceptance: [{ criterion: "Preserve invariant", status: "unverified", evidence: "Review required" }] },
@@ -141,12 +195,14 @@ describe("Fusion Sidekick task integration", () => {
 						leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting },
 					onChange: () => undefined, onModeChange: () => undefined });
 				workflow.attach({ model: lead, messages: [{ role: "user", timestamp: 1 }], agent: {},
-					setActiveToolsByName: () => undefined, sendCustomMessage: async () => undefined } as unknown as AgentSession);
-				workflow.state.startTask({ kind: "worker", description: "Fix", prompt: "Implement", writablePaths: ["."],
+					setActiveToolsByName: () => undefined, sendCustomMessage: async () => undefined,
+					subscribe: () => () => undefined } as unknown as AgentSession);
+				workflow.state.startTask({ kind: "worker", description: "Fix", prompt: "Implement the authorization invariant specified by Lead", writablePaths: ["."],
 					executionPlan: { steps: ["Implement invariant"], constraints: ["Skip checks in fixture"], acceptanceCriteria: ["Preserve invariant"],
 						verification: { mode: "skip", checks: [] } } });
 				await workflow.whenSettled();
-				expect(requested).toEqual([side.id, adaptiveRouting ? lead.id : side.id, adaptiveRouting ? lead.id : side.id]);
+				expect(requested).toEqual([side.id, side.id, side.id]);
+				expect(await readFile(join(cwd, "invariant.txt"), "utf8")).toBe("Lead specified implementation");
 				const records = manager.getBranch().flatMap((entry) => entry.type === "custom" && entry.customType === FUSION_USAGE_ENTRY
 					? [entry.data as FusionUsageRecord] : []);
 				expect(records.some((entry) => entry.kind === "compaction")).toBe(true);

@@ -383,7 +383,7 @@ export class AgentService {
 		 * Tools from connected MCP servers. Shared across every session rather
 		 * than owned by one: a server is a process, not a conversation.
 		 */
-		private readonly mcp?: { tools(): ToolDefinition[]; toolNames(): string[] },
+		private readonly mcp?: { tools(): ToolDefinition[]; toolNames(): string[]; revision?(): number },
 	) {
 		this.sessionDir = join(app.getPath("userData"), "sessions");
 		mkdirSync(this.sessionDir, { recursive: true });
@@ -531,6 +531,11 @@ export class AgentService {
 	 */
 	refreshPrompt(): void {
 		this.workflow?.refresh();
+	}
+
+	/** MCP connects independently of session setup; update definitions in place. */
+	syncMcpTools(): void {
+		this.workflow?.syncMcpTools();
 	}
 
 	/**
@@ -1371,9 +1376,7 @@ export class AgentService {
 		}
 		if (this.workflow?.fusion) {
 			try {
-				const { config } = await resolveFusion(this.workflow.fusion, await this.getModelRuntime());
-				if (modelKeyOf(session.model) !== config.leadModelKey)
-					throw new Error("Fusion Lead 模型已变化，请重新应用 Fusion 配置");
+				await resolveFusion(this.workflow.fusion, await this.getModelRuntime());
 			}
 			catch (error) { return { accepted: false, error: String(error) }; }
 		}
@@ -1446,6 +1449,11 @@ export class AgentService {
 			return { accepted: false, error: message };
 		}
 		return { accepted: true };
+	}
+
+	/** Stop only the selected shell call; its result waits for a user reason. */
+	stopCommand(toolCallId: string): boolean {
+		return this.workflow?.commands.stop(toolCallId) ?? false;
 	}
 
 	async abort(): Promise<void> {
@@ -2001,11 +2009,12 @@ export class AgentService {
 			builtinSkills: this.builtinSkills,
 			plugins: this.pluginPolicy(),
 			sessionStartEvent: startEvent,
+			getMcpTools: () => this.mcp?.tools() ?? [],
+			getMcpToolsRevision: () => this.mcp?.revision?.() ?? 0,
 			getMemory: () => memorySection(sessionManager.getCwd()),
 			getGoal: () => goalPromptSection(this.goal),
 			customTools: [
 				...cloneTools,
-				...(this.mcp?.tools() ?? []),
 				createMemoryTool(sessionManager.getCwd(), memoryStore()),
 				createGoalTool((status, note) => {
 					if (generation !== this.generation || this.goal?.status !== "active") return "No active goal";
@@ -2046,7 +2055,9 @@ export class AgentService {
 		// a call a hook refuses is never recorded as a change.
 		hookService().attach(session, sessionManager.getCwd());
 		this.watchInstructionEdits(session, generation);
-		this.journal = new FileJournalRecorder(sessionManager.getCwd());
+		this.journal = new FileJournalRecorder(sessionManager.getCwd(), () => {
+			if (generation === this.generation) this.scheduleEmit();
+		});
 		this.journal.attach(session);
 		attachTruncationRecovery(session, (message) => {
 			if (generation === this.generation) this.projector.notice("warning", message);

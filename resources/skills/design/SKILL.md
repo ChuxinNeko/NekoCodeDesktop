@@ -49,7 +49,7 @@ After writing a standalone HTML file, let NekoCode's browser preview open it. Fo
 
 ## Review and delivery
 
-Before finishing, check desktop and mobile behavior, text overflow, hierarchy, interaction states, keyboard use, contrast, and reduced motion. Run the repository's relevant typecheck/build when available. Report:
+Default webpage QA is element-based and requires no screenshots, even when the model accepts images. Use the available browser tools to read DOM/accessibility elements, text, visibility, geometry, computed styles and overflow at desktop and mobile sizes; exercise controls and verify the resulting element state, keyboard behavior and reduced motion. Take screenshots only when the user explicitly requests screenshots or image comparison. If image inspection is unsupported or unreliable, stop screenshot attempts and report that limitation. Element checks do not prove complete visual fidelity. After a targeted correction and recheck still fails, or checks produce no new evidence, stop repeating verification and report the remaining issue. Before finishing, check desktop and mobile behavior, text overflow, hierarchy, interaction states, keyboard use, contrast, and reduced motion. Run the repository's relevant typecheck/build when available. Report:
 
 - artifact type and visual direction
 - files created or changed

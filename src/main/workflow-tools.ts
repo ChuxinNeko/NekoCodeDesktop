@@ -95,6 +95,12 @@ export function createWorkflowTools(host: WorkflowToolHost): ToolDefinition[] {
 				description: text(200),
 				prompt: text(30000),
 				executionPlan: Type.Optional(object({
+					decisionBrief: Type.Optional(object({
+						objective: text(2000),
+						decisions: Type.Array(text(2000), { minItems: 1, maxItems: 20 }),
+						evidence: Type.Array(text(2000), { maxItems: 20 }),
+						stopConditions: Type.Array(text(2000), { minItems: 1, maxItems: 20 }),
+					})),
 					steps: Type.Array(text(2000), { minItems: 1, maxItems: 20 }),
 					constraints: Type.Array(text(2000), { maxItems: 20 }),
 					acceptanceCriteria: Type.Array(text(2000), { minItems: 1, maxItems: 20 }),
@@ -141,8 +147,8 @@ export function createWorkflowTools(host: WorkflowToolHost): ToolDefinition[] {
 		),
 		define(
 			"code_search",
-			"Fast Context: launch a fresh isolated read-only explorer subagent over the repository and get back a compact Markdown report of `path:start-end` findings with evidence and key excerpts. Prefer it before broad manual exploration for complex or cross-module questions and unknown code locations; skip it for known files, exact symbols, or small tasks, and read the target lines before editing. Independent searches issued in the same response run in parallel.",
-			object({ query: text(30000) }),
+			"Fast Context is a read-only code locator, not a problem-solving agent. Give it a bounded location target (entry points, modules, symbols or call sites) and get a compact `path:start-end` map with observed facts and short source excerpts. Use it to orient in unfamiliar project structure; skip it when locations are already known. Do not forward the entire user request or ask for root causes, solutions or implementation plans. Root-cause analysis, solution design and final answers remain with the caller, who reads the relevant context after locating it. Independent location searches issued in the same response run in parallel.",
+			object({ query: Type.String({ minLength: 1, maxLength: 30000, description: "A bounded code-location target and necessary clues/scope, not the entire user task or a request for a solution." }) }),
 			(args, signal, id) => host.searchCode(args.query, signal, id),
 			// Each call is its own isolated read-only session, so several can fan
 			// out at once; one sequential tool in a batch would serialize them all.

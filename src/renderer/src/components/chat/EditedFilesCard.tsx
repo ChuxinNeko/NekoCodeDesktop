@@ -4,7 +4,7 @@
 //          review as the card's two actions.
 // Layer: Chat component
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { CheckpointSummary } from "../../../../shared/checkpoints";
 import { useTranslation } from "../../i18n";
 import { FileTypeIcon } from "../../lib/fileIcons";
@@ -18,12 +18,13 @@ import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Button } from "../ui/button";
 import { DiffStat } from "../ui/diff-stat";
+import { DisclosureRegion } from "../ui/disclosure-region";
 
 /** Rows listed before the rest fold behind a "show more" line. */
 const COLLAPSED_FILE_COUNT = 5;
 
 /**
- * What a turn changed, once — at the tail of it.
+ * Current turn changes above the composer, or a completed turn's saved summary.
  *
  * The per-call diff cards inside the work group show each edit as it happens;
  * this answers the question that is left once the turn is done: which files is
@@ -31,13 +32,13 @@ const COLLAPSED_FILE_COUNT = 5;
  * own checkpoint — the journal already sums each tool call's lines per path, so
  * the card is a render of what the transcript recorded, not a second diff.
  *
- * It appears only once the turn it belongs to is over, so the count it opens
- * with is the count it keeps. An earlier turn's card can still be on screen
- * while a later one runs, and restoring is disabled for as long as it is — a
- * rewind would race the run.
+ * Live lists have bounded height and hide undo until the run settles. Completed
+ * summaries remain in the transcript; undo stays disabled while another run
+ * is in flight.
  */
 export function EditedFilesCard({
 	checkpoint,
+	live = false,
 	disabled,
 	onRestore,
 	onReview,
@@ -45,6 +46,8 @@ export function EditedFilesCard({
 }: {
 	/** The checkpoint the turn started from; its `files` are the turn's edits. */
 	checkpoint: CheckpointSummary;
+	/** Active editing presentation; the latest summary can also remain after settling. */
+	live?: boolean;
 	/** A run is in flight, so a rewind would race it. */
 	disabled?: boolean;
 	onRestore?: (checkpoint: CheckpointSummary) => void;
@@ -54,24 +57,26 @@ export function EditedFilesCard({
 }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
+	const [listOpen, setListOpen] = useState(true);
+	const listId = useId();
 	const files = checkpoint.files;
 	const shown = expanded ? files : files.slice(0, COLLAPSED_FILE_COUNT);
 	const hidden = files.length - shown.length;
 
 	return (
-		<div className="overflow-hidden rounded-xl border border-border/60">
+		<section aria-label={t("fileEdit.changes")} data-slot="edited-files" data-live={live || undefined}
+			className={cn("overflow-hidden rounded-xl border border-border/60 bg-background", live && "mb-2 shadow-sm")}>
 			<div className="flex items-center gap-1.5 px-2.5 py-1.5">
-				<PencilIcon className="size-3.5 shrink-0 text-muted-foreground" />
-				<span className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)] font-medium">
-					{t("fileEdit.summary", { count: files.length })}
-				</span>
-				<DiffStat
-					className="shrink-0 text-[length:var(--app-font-size-ui-xs,10px)]"
-					insertions={checkpoint.additions}
-					deletions={checkpoint.deletions}
-				/>
-				<span className="flex-1" />
-				{onRestore ? (
+				<button type="button" onClick={() => setListOpen((value) => !value)} aria-expanded={listOpen} aria-controls={listId}
+					className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+					{!live ? <PencilIcon className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+					<span className="min-w-0 truncate text-[length:var(--app-font-size-ui-sm,11px)] font-medium" aria-live="polite">
+						{t(live ? "fileEdit.liveSummary" : "fileEdit.summary", { count: files.length })}
+					</span>
+					<DiffStat className="shrink-0 text-[length:var(--app-font-size-ui-xs,10px)]" insertions={checkpoint.additions} deletions={checkpoint.deletions} />
+					{listOpen ? <ChevronUpIcon className="size-3 shrink-0 text-muted-foreground" /> : <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />}
+				</button>
+				{onRestore && !live ? (
 					<Button
 						disabled={disabled}
 						onClick={() => onRestore(checkpoint)}
@@ -88,7 +93,8 @@ export function EditedFilesCard({
 					</Button>
 				) : null}
 			</div>
-			<div className="border-t border-border/60 py-0.5">
+			<DisclosureRegion id={listId} open={listOpen}>
+			<div className={cn("border-t border-border/60 py-0.5", live && "max-h-36 overflow-y-auto overscroll-contain")}>
 				{shown.map((file) => {
 					const basename = file.path.split("/").filter(Boolean).pop() ?? file.path;
 					const stat =
@@ -102,6 +108,7 @@ export function EditedFilesCard({
 					const rowClass = cn(
 						"flex w-full items-center gap-1.5 px-2.5 py-1 text-left",
 						"text-[length:var(--app-font-size-ui-sm,11px)]",
+						live && "workflow-file-enter",
 					);
 					const rowBody = (
 						<>
@@ -151,6 +158,7 @@ export function EditedFilesCard({
 					</button>
 				) : null}
 			</div>
-		</div>
+			</DisclosureRegion>
+		</section>
 	);
 }

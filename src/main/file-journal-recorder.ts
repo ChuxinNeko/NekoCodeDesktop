@@ -36,7 +36,7 @@ export class FileJournalRecorder {
 		{ record: FileMutationData; before: string | null }
 	>();
 
-	constructor(private readonly cwd: string) {}
+	constructor(private readonly cwd: string, private readonly onChange?: () => void) {}
 
 	/**
 	 * Resolve a tool's path argument, refusing anything outside the workspace.
@@ -110,7 +110,8 @@ export class FileJournalRecorder {
 			const info = await stat(absolute);
 			if (!info.isFile() || info.size > MAX_PREIMAGE_BYTES) return null;
 			return countLineChanges(before, (await readFile(absolute)).toString("utf8"));
-		} catch {
+		} catch (error) {
+			if ((error as { code?: string } | null)?.code === "ENOENT") return countLineChanges(before, "");
 			return null;
 		}
 	}
@@ -122,13 +123,14 @@ export class FileJournalRecorder {
 	 * claiming otherwise would make a restore rewrite a file with what is already
 	 * in it — harmless, but it would also report a change that never happened.
 	 */
-	async afterTool(session: AgentSession, toolCallId: string, isError: boolean): Promise<void> {
+	async afterTool(session: Pick<AgentSession, "sessionManager">, toolCallId: string, isError: boolean): Promise<void> {
 		// Reported files were written before being reported, so they changed even
 		// if the call went on to fail on a later file.
 		const committed = takeReportedPreimages(toolCallId).flatMap((file) => this.reportedRecord(file) ?? []);
 		const pending = this.pending.get(toolCallId);
 		this.pending.delete(toolCallId);
 		if (pending && !isError) committed.unshift(pending);
+		let recorded = false;
 		for (const { record, before } of committed) {
 			// Measured here, the one moment both versions are to hand. The checkpoint
 			// list is rebuilt on every streaming event, so a row that had to read files
@@ -143,11 +145,13 @@ export class FileJournalRecorder {
 			}
 			try {
 				session.sessionManager.appendCustomEntry(FILE_MUTATION_ENTRY, record);
+				recorded = true;
 			} catch {
 				// A transcript that will not take the record still ran the tool; losing
 				// the undo is better than failing the turn over it.
 			}
 		}
+		if (recorded) this.onChange?.();
 	}
 
 	/** The record for a file a multi-file tool reported, or null for one outside the workspace. */
@@ -175,9 +179,11 @@ export class FileJournalRecorder {
 	 * Chain the recorder onto a session's tool hooks.
 	 *
 	 * Called after the workflow gate has installed its own, so a tool the gate
-	 * blocks is never recorded as having changed anything.
+	 * blocks is never recorded as having changed anything. Helpers write to their
+	 * parent's journal, not their own ephemeral transcript. Detach between helper
+	 * leases so a reused session never accumulates recorders.
 	 */
-	attach(session: AgentSession): void {
+	attach(session: AgentSession, journal: Pick<AgentSession, "sessionManager"> = session): () => void {
 		const previousBefore = session.agent.beforeToolCall;
 		session.agent.beforeToolCall = async (context, signal) => {
 			const result = await previousBefore?.(context, signal);
@@ -198,11 +204,18 @@ export class FileJournalRecorder {
 		session.agent.afterToolCall = async (context, signal) => {
 			const result = await previousAfter?.(context, signal);
 			try {
-				await this.afterTool(session, context.toolCall.id, result?.isError ?? context.isError);
+				await this.afterTool(journal, context.toolCall.id, result?.isError ?? context.isError);
 			} catch (error) {
 				console.error("Could not record a file change:", error);
 			}
 			return result;
+		};
+		const installedBefore = session.agent.beforeToolCall;
+		const installedAfter = session.agent.afterToolCall;
+		return () => {
+			if (session.agent.beforeToolCall === installedBefore) session.agent.beforeToolCall = previousBefore;
+			if (session.agent.afterToolCall === installedAfter) session.agent.afterToolCall = previousAfter;
+			this.reset();
 		};
 	}
 }

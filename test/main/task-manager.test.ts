@@ -16,6 +16,10 @@ function fixture() {
 		snapshot: AgentSnapshot | null = null;
 		closed = false;
 		aborts = 0;
+		mcpSyncs = 0;
+		syncMcpTools() { this.mcpSyncs++; }
+		stoppedCommands: string[] = [];
+		stopCommand(id: string) { this.stoppedCommands.push(id); return id === "running-command"; }
 		sent: string[] = [];
 		constructor(readonly emit: (channel: string, payload?: unknown) => void, readonly owner?: AgentService) {}
 		getSnapshot() { return this.snapshot; }
@@ -71,6 +75,31 @@ function fixture() {
 }
 
 describe("parallel task execution", () => {
+	test("MCP changes reach every live session without selecting or aborting them", async () => {
+		const f = fixture();
+		const a = f.fake(await f.manager.create("/a")); a.run();
+		const b = f.fake(await f.manager.create("/b", false)); b.run();
+		const selected = f.manager.active;
+		f.manager.syncMcpTools();
+		expect(a.mcpSyncs).toBe(1);
+		expect(b.mcpSyncs).toBe(1);
+		expect(f.manager.active).toBe(selected);
+		expect(a.aborts + b.aborts).toBe(0);
+	});
+	test("stopping one command targets its session without selecting or aborting other sessions", async () => {
+		const f = fixture();
+		const active = f.fake(await f.manager.create("/a")); active.run();
+		const other = f.fake(await f.manager.create("/b", false)); other.run();
+		expect(f.manager.stopCommand(other.snapshot!.session.id, "running-command")).toBe(true);
+		expect(other.stoppedCommands).toEqual(["running-command"]);
+		expect(active.stoppedCommands).toEqual([]);
+		expect(active.aborts).toBe(0);
+		expect(other.aborts).toBe(0);
+		expect(f.manager.active).toBe(active as unknown as AgentService);
+		expect(f.manager.stopCommand("unknown-session", "running-command")).toBe(false);
+		expect(f.manager.stopCommand(other.snapshot!.session.id, "finished-command")).toBe(false);
+	});
+
 	test("phone creation preserves the desktop selection and includes unflushed tasks in the sidebar", async () => {
 		const f = fixture();
 		const desktop = f.fake(await f.manager.create("/project")); desktop.run();

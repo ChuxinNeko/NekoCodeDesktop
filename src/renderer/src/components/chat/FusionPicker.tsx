@@ -25,6 +25,7 @@ export function FusionPicker(props: Props) {
 			leadThinkingLevel: preferredLevel(lead, "high"),
 			sidekickModelKey: sidekick?.key ?? "",
 			sidekickThinkingLevel: preferredLevel(sidekick, "low"),
+			adaptiveRouting: true,
 		};
 	};
 	const [draft, setDraft] = useState(initial);
@@ -82,7 +83,7 @@ export function FusionPicker(props: Props) {
 						<div className="flex items-center justify-between gap-3">
 							<span id={`${id}-adaptive`}>{t("fusion.adaptiveRouting")}</span>
 							<Switch aria-labelledby={`${id}-adaptive`} aria-describedby={`${id}-adaptive-hint`}
-								checked={draft.adaptiveRouting ?? false}
+								checked={draft.adaptiveRouting ?? true}
 								onCheckedChange={(adaptiveRouting) => setDraft((value) => ({ ...value, adaptiveRouting }))} />
 						</div>
 						<p id={`${id}-adaptive-hint`} className="text-xs text-muted-foreground">{t("fusion.adaptiveRoutingHint")}</p>

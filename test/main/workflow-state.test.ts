@@ -16,6 +16,38 @@ function state() {
 	return { workflow, changes: () => changes };
 }
 
+describe("queued questions", () => {
+	const questions = [{ id: "reason", question: "Why stop?", options: [] }];
+	test("waits behind an existing question without replacing it", async () => {
+		const { workflow } = state();
+		const first = workflow.ask(questions, "First");
+		const queued = workflow.askQueued(questions, "Stop reason");
+		const request = workflow.snapshot().request!;
+		expect(request.title).toBe("First");
+		workflow.answer({ requestId: request.id, answers: { reason: { text: "first answer" } } });
+		await first;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const next = workflow.snapshot().request!;
+		expect(next.title).toBe("Stop reason");
+		workflow.answer({ requestId: next.id, answers: { reason: { text: "too slow" } } });
+		expect((await queued).answers.reason.text).toBe("too slow");
+		expect(workflow.snapshot().request).toBeNull();
+	});
+	test("cancelling a queued inquiry does not cancel the existing question", async () => {
+		const { workflow } = state();
+		const first = workflow.ask(questions, "First");
+		const abort = new AbortController();
+		const queued = workflow.askQueued(questions, "Stop reason", abort.signal);
+		abort.abort();
+		await expect(queued).rejects.toThrow("Question cancelled");
+		const request = workflow.snapshot().request!;
+		expect(request.title).toBe("First");
+		workflow.answer({ requestId: request.id, answers: {}, cancelled: true });
+		await first;
+		expect(workflow.snapshot().request).toBeNull();
+	});
+});
+
 describe("explorer runs", () => {
 	test("appear in the snapshot live, fold steps by id, and settle open steps when they end", () => {
 		const { workflow, changes } = state();

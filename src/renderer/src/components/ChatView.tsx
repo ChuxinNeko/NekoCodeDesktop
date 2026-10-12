@@ -25,6 +25,9 @@ import { WorktreeBar } from "./chat/WorktreeBar";
 import { Composer } from "./Composer";
 import { ProjectPicker } from "./chat/ProjectPicker";
 import { Transcript } from "./Transcript";
+import { EditedFilesCard } from "./chat/EditedFilesCard";
+import { activeTurnChanges } from "../lib/turnChanges";
+import { useRunSettlement } from "../lib/motion";
 import { WelcomeView } from "./WelcomeView";
 import {
 	CHAT_COLUMN_FRAME_CLASS_NAME,
@@ -117,6 +120,7 @@ interface ChatViewProps {
 	 */
 	onSendBackground?: (text: string) => void;
 	onAbort: () => void;
+	onStopCommand?: (toolCallId: string) => Promise<boolean>;
 	onSetFusion: (config: FusionConfig) => void;
 	onSetModel: (modelKey: string) => void;
 	onSetThinking: (level: ThinkingLevel) => void;
@@ -159,6 +163,7 @@ interface ChatViewProps {
 export function ChatView(props: ChatViewProps) {
 	const { t } = useTranslation();
 	const { cwd, snapshot, busy, error, terminalOpen } = props;
+	const settling = useRunSettlement(snapshot?.streaming === true, snapshot?.session.id);
 
 	// --- transcript auto-scroll ------------------------------------------------
 	// On send, the new turn's prompt is scrolled to ~30% from the top and the
@@ -390,6 +395,7 @@ export function ChatView(props: ChatViewProps) {
 		: null;
 	const compact = props.compactHeader === true;
 	const actionLabel = (label: string) => (compact ? { title: label, "aria-label": label } : {});
+	const liveChanges = activeTurnChanges(snapshot.cells, snapshot.checkpoints);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -491,16 +497,20 @@ export function ChatView(props: ChatViewProps) {
 							) : null}
 							<Transcript
 							cells={snapshot.cells}
+							models={snapshot.models}
 							streaming={snapshot.streaming}
+							settling={settling}
 							tasks={snapshot.workflow.tasks}
 							explorers={snapshot.workflow.explorers}
 							onOpenTask={props.onOpenTask}
 							onOpenFile={props.onOpenFile}
 							checkpoints={snapshot.checkpoints}
+							composerCheckpointId={liveChanges?.id}
 							onRestoreCheckpoint={props.onRestoreCheckpoint}
 							onOpenReview={props.onOpenReview}
 							onLoadToolOutput={props.onLoadToolOutput}
 							onForkMessage={props.onForkMessage}
+							onStopCommand={props.onStopCommand}
 						/>
 							</>
 						)}
@@ -528,7 +538,12 @@ export function ChatView(props: ChatViewProps) {
 			<WorkflowPanel workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />
 			<ExtensionPanel ui={snapshot.extensionUi} streaming={snapshot.streaming} onAnswer={answerExtensionUi} />
 			<Composer
-				header={props.composerHeader}
+				header={<>
+					{props.composerHeader}
+					{liveChanges ? <EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} live={snapshot.streaming || settling}
+						disabled={busy || snapshot.streaming || settling} onRestore={props.onRestoreCheckpoint}
+						onReview={props.onOpenReview} onOpenFile={props.onOpenFile} /> : null}
+				</>}
 				loadCommands={props.loadCommands}
 				loadMentions={props.loadMentions}
 				insertion={props.insertion ?? extensionInsertion}

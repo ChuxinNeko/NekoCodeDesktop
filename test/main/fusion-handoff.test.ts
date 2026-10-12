@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TaskInput, TaskStep } from "../../src/shared/workflow";
-import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence } from "../../src/main/fusion-handoff";
+import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence, FusionInlineHandoffState } from "../../src/main/fusion-handoff";
 
 const task = (): TaskInput => ({
 	description: "Fix retry", prompt: "Preserve cancellation and existing changes.", kind: "worker", writablePaths: ["."],
@@ -13,6 +13,58 @@ const task = (): TaskInput => ({
 });
 
 describe("Fusion handoff", () => {
+	test("restored contracts preserve scope and failure counts and reject malformed authority", () => {
+		const original = new FusionInlineHandoffState(); original.accept(original.prepare(task())); original.report();
+		const restored = new FusionInlineHandoffState(); expect(restored.restore(original.snapshot())).toBe(true);
+		expect(restored.prepare({ resume: true, instruction: "Fix the observed failure", resolution: "Use the concrete correction" }).writablePaths).toEqual(["."]);
+		restored.report(); expect(() => restored.prepare(task())).toThrow("failed twice");
+		for (const value of [null, { failed: "invalid" }, { failed: [], previous: { ...task(), writablePaths: [] } },
+			{ failed: [], previous: { ...task(), prompt: 123 } }, { failed: [["invalid-hash", 1]] }]) expect(restored.restore(value)).toBe(false);
+	});
+	test("compact edits preserve scope, criterion and explicit verification restrictions", () => {
+		const state = new FusionInlineHandoffState();
+		const compact = { instruction: "Fix the typo", path: "src/a.ts", acceptanceCriterion: "Correct spelling", skipReason: "User forbids tests" };
+		const plan = state.prepare(compact);
+		expect(fusionTaskError(plan)).toBeUndefined();
+		expect(plan.writablePaths).toEqual(["src/a.ts"]);
+		expect(plan.executionPlan?.acceptanceCriteria).toEqual([compact.acceptanceCriterion]);
+		expect(plan.executionPlan?.verification).toEqual({ mode: "skip", checks: [] });
+		expect(() => state.prepare({ ...compact, check: "bun test" })).toThrow("exactly one");
+		expect(() => state.prepare({ ...compact, skipReason: "" })).toThrow("exactly one");
+	});
+	test("resume preserves verification and scope, and cannot survive a new task reset", () => {
+		const state = new FusionInlineHandoffState();
+		const original = task(); state.accept(state.prepare(original));
+		const resumed = state.prepare({ resume: true, instruction: "Add the missing abort check", resolution: "Cancellation must be checked before scheduling" });
+		expect(resumed.writablePaths).toEqual(original.writablePaths);
+		expect(resumed.executionPlan?.verification).toEqual(original.executionPlan?.verification);
+		expect(resumed.executionPlan?.acceptanceCriteria).toEqual(original.executionPlan?.acceptanceCriteria);
+		expect(resumed.executionPlan?.steps).toEqual(["Add the missing abort check"]);
+		state.reset();
+		expect(() => state.prepare({ resume: true, instruction: "Continue", resolution: "Fixed" })).toThrow("No inline plan");
+	});
+	test("two identical unresolved attempts require a new decision instead of blind ping-pong", () => {
+		const state = new FusionInlineHandoffState();
+		for (let i = 0; i < 2; i++) { state.accept(state.prepare(task())); state.report(); }
+		expect(() => state.prepare(task())).toThrow("failed twice");
+		const correction = state.prepare({ resume: true, instruction: "Check abort before setTimeout", resolution: "Move the cancellation guard before retry scheduling" });
+		expect(correction.writablePaths).toEqual(["."]);
+		state.accept(correction); state.report();
+		state.accept(state.prepare({ resume: true, instruction: "Check abort before setTimeout", resolution: "Move the cancellation guard before retry scheduling" }));
+		state.report();
+		expect(() => state.prepare({ resume: true, instruction: "Check abort before setTimeout", resolution: "Move the cancellation guard before retry scheduling" })).toThrow("failed twice");
+		state.reset(); expect(() => state.prepare(task())).not.toThrow();
+	});
+	test("validates and preserves Lead's decision brief", () => {
+		const input = task();
+		input.executionPlan!.decisionBrief = { objective: "Keep cancellation immediate",
+			decisions: ["Check cancellation before scheduling retries"], evidence: ["retry.ts:42 abort handler"],
+			stopConditions: ["Cancellation requires an API change"] };
+		expect(fusionTaskError(input)).toBeUndefined();
+		expect(taskHandoffPrompt(input)).toContain("retry.ts:42 abort handler");
+		input.executionPlan!.decisionBrief.stopConditions = [];
+		expect(fusionTaskError(input)).toContain("stopConditions");
+	});
 	test("rejects unplanned workers but keeps exploration compatible", () => {
 		expect(fusionTaskError({ kind: "worker", prompt: "Implement it" })).toContain("requires executionPlan");
 		expect(fusionTaskError({ kind: "explore" })).toBeUndefined();
@@ -75,6 +127,8 @@ describe("Fusion execution evidence", () => {
 		expect(evidence.appendTo("Done")).toContain("No completed shell calls");
 		evidence.record(tool("powershell", "done", "3 tests failed"));
 		evidence.record(tool("edit", "error", "No exact match"));
+		evidence.record(tool("bash", "error", "Exit code 1"));
+		expect(evidence.summary()).toEqual({ observedCommands: 2, failedCommands: 1 });
 		const result = evidence.appendTo("Worker report");
 		expect(result).toStartWith("Worker report");
 		expect(result).toContain("3 tests failed");

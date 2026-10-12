@@ -685,7 +685,8 @@ export function createWebsiteCloneTools(options: {
 		name: "browser_screenshot",
 		label: "browser_screenshot",
 		description:
-			"Save a PNG screenshot of the inspected page inside the workspace and attach the image to the result for direct visual inspection. fullPage captures the whole scroll height, capped at 2560x20000.",
+			"Only when the user explicitly requests a screenshot or image comparison, save a PNG of the inspected page inside the workspace and attach it if the model accepts images. Default webpage QA uses browser_extract / browser_evaluate and element state checks, without screenshots. fullPage captures the whole scroll height, capped at 2560x20000.",
+		promptGuidelines: ["Default webpage QA verifies DOM elements, visibility, geometry, computed styles, overflow and interaction state; do not take screenshots unless the user explicitly requests them. If image inspection is unsupported or unreliable, stop screenshot attempts and report the limitation. Stop repeating unchanged checks; after a targeted correction and recheck still fails, report the remaining issue."],
 		parameters: screenshotSchema,
 		executionMode: "sequential",
 		async execute(_id, params, signal) {

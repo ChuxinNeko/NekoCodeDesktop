@@ -17,7 +17,7 @@ Read `references/workflow.md` completely before starting; it is the procedure. T
 - `browser_evaluate` — arbitrary read-only JavaScript for what the extractor does not cover (asset inventories, stylesheet rules, library detection). It must never navigate: no `location.reload()`, no assigning `location.href`, no form submits.
 - `browser_action` — click, hover, scroll, type, wait. Scroll before clicking. Never type secrets or submit forms that change anything.
 - `website_clone_compare` — diff two saved extractions: `match: "text"` for source vs clone, `match: "path"` for two states of one page.
-- `browser_screenshot` — optional second check; its result says whether the image is attached for the active model.
+- `browser_screenshot` — only when the user explicitly requests screenshots or image comparison; never part of default QA. Its result says whether the image is attached for the active model.
 - `website_clone_scaffold` — copy the bundled Next.js template into a new workspace child directory.
 - `website_clone_dev_server` — start/status/stop a project's dev server without blocking; returns the URL it actually printed.
 
@@ -42,7 +42,7 @@ Never start a dev server with `bash` or `powershell`: those wait for the command
 
 ## Evidence
 
-Structural evidence is the default and works with any model: `browser_extract` at every target viewport, saved as files, and `website_clone_compare` for every comparison. Screenshots never replace it. At QA, take one screenshot of the source: if its result says the image is attached, also compare screenshots of source and clone; if not, take no more.
+Structural evidence is the default and works with any model: `browser_extract` at every target viewport, saved as files, and `website_clone_compare` for every comparison. Screenshots never replace it and are not taken by default, even when the model accepts images. Only if the user explicitly requests screenshots or image comparison, use them as supplementary evidence. If images are unsupported or cannot be assessed reliably, stop screenshot attempts and report the limitation. After a targeted correction and recheck still fails, or checks yield no new evidence, stop repeating QA and report the remaining differences. Element checks do not prove complete visual fidelity.
 
 ## Builders
 

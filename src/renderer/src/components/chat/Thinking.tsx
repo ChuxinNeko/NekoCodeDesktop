@@ -1,8 +1,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { elapsedSeconds, formatElapsed, useNow } from "../../lib/elapsed";
-import { ChevronDownIcon, ChevronRightIcon } from "../../lib/icons";
+import { ChevronRightIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
+import { DisclosureRegion } from "../ui/disclosure-region";
 
 export function lastThinkingLine(thinking: string): string {
 	const lines = thinking
@@ -101,12 +102,13 @@ export function ThinkingBlock({
 					MUTED_LABEL_TEXT_CLASS_NAME,
 				)}
 			>
-				{open ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
+				<ChevronRightIcon className="workflow-chevron size-3.5" data-open={open} />
 				<span className={active ? "shimmer" : undefined}>{label}</span>
 			</button>
-			{open ? (
+			<DisclosureRegion open={open}>
 				<ThinkingStream text={text} />
-			) : active && preview ? (
+			</DisclosureRegion>
+			{!open && active && preview ? (
 				<div className="font-thinking truncate border-l border-border/60 pl-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70">
 					{preview}
 				</div>

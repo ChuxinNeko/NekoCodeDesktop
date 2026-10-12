@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -19,6 +19,58 @@ function fakeSession() {
 }
 
 describe("FileJournalRecorder with reported pre-images", () => {
+	test("notifies after a tool's records are committed, including reported deletions", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "nekocode-journal-"));
+		try {
+			const { session, entries } = fakeSession();
+			const notifications: number[] = [];
+			const recorder = new FileJournalRecorder(cwd, () => notifications.push(entries.length));
+			writeFileSync(join(cwd, "a.ts"), "old\n");
+			await recorder.beforeTool("write-1", "write", { path: "a.ts" });
+			writeFileSync(join(cwd, "a.ts"), "new\nextra\n");
+			await recorder.afterTool(session, "write-1", false);
+			expect(notifications).toEqual([1]);
+			expect(entries[0]).toMatchObject({ additions: 2, deletions: 1 });
+			await recorder.afterTool(session, "read-1", false);
+			expect(notifications).toEqual([1]);
+			reportPreimage("delete-1", { tool: "custom-delete", path: join(cwd, "a.ts"), before: Buffer.from("new\nextra\n") });
+			unlinkSync(join(cwd, "a.ts"));
+			await recorder.afterTool(session, "delete-1", false);
+			expect(notifications).toEqual([1, 2]);
+			expect(entries[1]).toMatchObject({ additions: 0, deletions: 2 });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	test("helper hooks preserve the gate and after hook, then detach without retaining pending calls", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "nekocode-journal-"));
+		try {
+			writeFileSync(join(cwd, "code.ts"), "original\n");
+			const { session: parent, entries } = fakeSession();
+			const before = async () => ({ block: true, reason: "denied" });
+			let afterCalls = 0;
+			const after = async () => { afterCalls++; return undefined; };
+			const child = { agent: { beforeToolCall: before, afterToolCall: after } } as unknown as AgentSession;
+			const recorder = new FileJournalRecorder(cwd);
+			const detach = recorder.attach(child, parent);
+			const context = { toolCall: { id: "blocked", name: "edit" }, args: { path: "code.ts" } };
+			expect(await child.agent.beforeToolCall!(context as never)).toEqual({ block: true, reason: "denied" });
+			await child.agent.afterToolCall!({ ...context, isError: false } as never);
+			expect(entries).toEqual([]);
+			expect(afterCalls).toBe(1);
+			// An aborted tool must not leave a pending pre-image for a later lease.
+			await recorder.beforeTool("aborted", "edit", { path: "code.ts" });
+			detach();
+			expect(child.agent.beforeToolCall).toBe(before);
+			expect(child.agent.afterToolCall).toBe(after);
+			await recorder.afterTool(parent, "aborted", false);
+			expect(entries).toEqual([]);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	test("records every file a multi-file tool reported, even when the call then failed", async () => {
 		const cwd = mkdtempSync(join(tmpdir(), "nekocode-journal-"));
 		try {

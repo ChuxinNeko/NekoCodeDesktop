@@ -28,6 +28,7 @@ import type { BrowserPreviewRequest } from "../../../../shared/browser";
 import { AgentMapPanel } from "./AgentMapPanel";
 import { FilesPanel } from "./FilesPanel";
 import { TaskDetailPanel } from "./TaskDetailPanel";
+import { CommandStopContext } from "../chat/CommandStopButton";
 import { ReviewPanel } from "../ReviewPanel";
 import { TerminalPanel } from "../TerminalPanel";
 import { DesktopPanel } from "./DesktopPanel";
@@ -265,7 +266,9 @@ export function RightDock({
 							)}
 						>
 							{taskId !== null ? (
-								<TaskDetailPanel task={taskById.get(taskId) ?? null} onCancel={onCancelTask} />
+								<CommandStopContext.Provider value={agentSnapshot ? (id) => api.agentStopCommand(agentSnapshot.session.id, id) : undefined}>
+									<TaskDetailPanel task={taskById.get(taskId) ?? null} onCancel={onCancelTask} />
+								</CommandStopContext.Provider>
 							) : tab === "agentmap" ? (
 								<AgentMapPanel snapshot={agentSnapshot} onOpenTask={onOpenTask} />
 							) : tab === "review" ? (

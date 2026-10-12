@@ -112,6 +112,7 @@ export class WorkflowState {
 	private running = new Map<string, { controller: AbortController; scopes: string[] }>();
 	private pending: {
 		request: WorkflowRequest;
+		done: Promise<void>;
 		settle: (answer: WorkflowAnswer) => void;
 		abort: () => void;
 	} | null = null;
@@ -164,6 +165,19 @@ export class WorkflowState {
 		this.options.onChange();
 		return structuredClone(this.todos);
 	}
+	/** A stopped command must still ask its reason when another dialog is open. */
+	async askQueued(questions: WorkflowQuestion[], title: string, signal?: AbortSignal): Promise<WorkflowAnswer> {
+		while (this.pending) {
+			if (this.closed || signal?.aborted) throw new Error("Question cancelled");
+			const done = this.pending.done;
+			await new Promise<void>((resolve, reject) => {
+				const abort = () => reject(new Error("Question cancelled"));
+				signal?.addEventListener("abort", abort, { once: true });
+				done.then(resolve).finally(() => signal?.removeEventListener("abort", abort));
+			});
+		}
+		return this.ask(questions, title, signal);
+	}
 	ask(
 		questions: WorkflowQuestion[],
 		title: string,
@@ -196,10 +210,13 @@ export class WorkflowState {
 			title: boundedText(title, 200, "title"),
 			questions: structuredClone(questions),
 		};
+		let finish!: () => void;
+		const done = new Promise<void>((resolve) => { finish = resolve; });
 		return new Promise((resolve, reject) => {
 			const cleanup = () => {
 				signal?.removeEventListener("abort", abort);
 				this.pending = null;
+				finish();
 				this.options.onChange();
 			};
 			const abort = () => {
@@ -208,6 +225,7 @@ export class WorkflowState {
 			};
 			this.pending = {
 				request,
+				done,
 				settle: (answer) => {
 					cleanup();
 					resolve(answer);

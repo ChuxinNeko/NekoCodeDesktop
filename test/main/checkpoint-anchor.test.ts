@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { replyEntry } from "../../src/main/checkpoint-anchor";
+import { findTurnEntry, replyEntry } from "../../src/main/checkpoint-anchor";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -11,6 +11,21 @@ afterEach(() => {
 });
 
 const user = (text: string, timestamp: number) => ({ role: "user" as const, content: text, timestamp });
+
+describe("checkpoint prompt anchor", () => {
+	test("skips system declarations and model bookkeeping before the user prompt", () => {
+		const branch = [{ id: "checkpoint", type: "custom" }, { id: "model", type: "model_change" },
+			{ id: "system", type: "message", message: { role: "system" } },
+			{ id: "prompt", type: "message", message: { role: "user" } }];
+		expect(findTurnEntry(branch, "checkpoint")?.id).toBe("prompt");
+	});
+	test("does not cross an assistant response to attach a different user's changes", () => {
+		const branch = [{ id: "checkpoint", type: "custom" }, { id: "system", type: "message", message: { role: "system" } },
+			{ id: "answer", type: "message", message: { role: "assistant" } },
+			{ id: "other", type: "message", message: { role: "user" } }];
+		expect(findTurnEntry(branch, "checkpoint")).toBeNull();
+	});
+});
 const reply = (text: string, timestamp: number) => ({
 	role: "assistant" as const,
 	content: [{ type: "text" as const, text }],

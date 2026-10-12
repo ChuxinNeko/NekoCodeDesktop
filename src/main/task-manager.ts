@@ -322,10 +322,13 @@ export class TaskManager {
 		if (changed) this.onBoardChanged?.();
 	}
 
-	/**
-	 * Stop one task, whichever is on screen. Only a session that is live here can
-	 * be running, so one that is not is already stopped.
-	 */
+	/** Address a shell call without switching the selected session. */
+	stopCommand(sessionId: string, toolCallId: string): boolean {
+		const agent = [...this.snapshots].find(([, snapshot]) => snapshot.session.id === sessionId)?.[0];
+		return agent?.stopCommand(toolCallId) ?? false;
+	}
+
+	/** Stop one live task, whichever session is on screen. */
 	async abortSession(sessionId: string): Promise<void> {
 		const agent = [...this.snapshots].find(([, snapshot]) => snapshot.session.id === sessionId)?.[0];
 		await agent?.abort();
@@ -376,6 +379,11 @@ export class TaskManager {
 	async reloadModels(): Promise<void> {
 		await this.owner.reloadConfiguredModels();
 		await Promise.all([...this.agents].filter((s) => s !== this.owner).map((s) => s.reloadConfiguredModels(false)));
+	}
+
+	/** Connected tools belong to every live session, not only the selected one. */
+	syncMcpTools(): void {
+		for (const agent of this.agents) agent.syncMcpTools();
 	}
 
 	/** Every open session rebuilds its system prompt from the prompts now in settings. */

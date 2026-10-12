@@ -65,83 +65,106 @@ describe("fast context prompts", () => {
 		expect(prompt).toContain(FAST_CONTEXT_PROMPT);
 	});
 
+	test("the explorer locates facts without solving a forwarded user problem", () => {
+		const prompt = buildModePrompt({ mode: "subagent", permission: "read-only", child: true, fastContext: true });
+		expect(prompt).toContain("只做项目结构摸底、代码定位和事实摘录");
+		expect(prompt).toContain("即使请求包含完整用户问题");
+		expect(prompt).toContain("不输出根因结论、修复方案或实施计划");
+		expect(prompt).toContain("找到足够的入口和关键位置后立即返回");
+	});
+
 	test("parents are told when to prefer code_search", () => {
 		const prompt = buildModePrompt({ mode: "agent", permission: "auto", interactive: true });
 		expect(prompt).toContain("code_search");
 	});
 
-	test("a Fusion Lead hands code finding to the Sidekick in every phase", () => {
+	test("a Fusion parent uses Fast Context for location rather than delegating its decisions", () => {
 		for (const phase of AGENT_PHASES) {
-			const prompt = buildModePrompt({ ...base, mode: "agent", phase, fusionRole: "lead" });
-			expect(prompt, phase).toContain("### 查找代码交给 Sidekick");
-			expect(prompt, phase).toContain("code_search 由 Sidekick 执行");
-			expect(prompt, phase).not.toContain("已知文件、确切符号或小任务直接 read/grep");
+			const prompt = buildModePrompt({ ...base, mode: "agent", phase, fusionAgent: "main" });
+			expect(prompt, phase).toContain("### Fast Context 只做代码定位");
+			expect(prompt, phase).toContain("不能原样转发用户问题");
+			expect(prompt, phase).toContain("根因判断、方案设计和最终回答由主代理负责");
+			expect(prompt, phase).toContain("代码查找固定由 Sidekick 完成");
+			expect(prompt, phase).toContain("固定使用 Sidekick");
 		}
-		expect(buildModePrompt({ ...base, mode: "agent" })).not.toContain("查找代码交给 Sidekick");
 	});
 });
 
-describe("Fusion responsibility split", () => {
-	test("Lead cannot execute edits, commands or arbitrary plugin tools in any phase", () => {
-		for (const phase of AGENT_PHASES) {
-			const tools = toolsForMode({ ...base, mode: "agent", phase, fusionRole: "lead",
-				shellTools: ["powershell"], sshTools: true, pluginTools: ["browser_action", "custom_write", "edit"] });
-			for (const name of ["edit", "write", "ast_edit", "bash", "powershell", "ssh", "remote_desktop", "browser_action", "custom_write"])
-				expect(tools, `${phase}: ${name}`).not.toContain(name);
-			expect(tools).toContain("read");
-			expect(tools).toContain("code_search");
-			if (!["answer", "plan"].includes(phase)) expect(tools).toContain("task");
+describe("Fusion identity and permission boundaries", () => {
+	test("inline handoff cannot enter read-only phases and review survives revoked write permission", () => {
+		for (const mode of ["ask", "plan"] as const) {
+			expect(toolsForMode({ ...base, mode, fusionAgent: "main", fusionModelRole: "lead" })).not.toContain("fusion_implement");
 		}
-		for (const mode of WORK_MODES) {
-			const tools = toolsForMode({ ...base, mode, fusionRole: "lead" });
-			expect(tools, mode).not.toContain("edit");
-			expect(tools, mode).not.toContain("bash");
+		for (const fusionModelRole of ["lead", "sidekick"] as const) {
+			const tools = toolsForMode({ ...base, mode: "agent", phase: "execute", permission: "read-only", fusionAgent: "main", fusionModelRole });
+			for (const name of ["write", "edit", "ast_edit", "bash", "powershell", "fusion_implement"]) expect(tools).not.toContain(name);
+			if (fusionModelRole === "sidekick") expect(tools).toContain("fusion_review");
 		}
 	});
-	test("only Sidekick gets investigation tools; Lead keeps evidence review and delegation", () => {
+	test("Lead cannot edit; Sidekick keeps phase and permission gates", () => {
+		for (const phase of AGENT_PHASES) for (const fusionModelRole of ["lead", "sidekick"] as const) {
+			const context: PromptContext = { ...base, mode: "agent", phase, fusionAgent: "main", fusionModelRole,
+				shellTools: ["powershell"], pluginTools: ["mcp__demo__echo"] };
+			const tools = toolsForMode(context);
+			const ordinary = toolsForMode({ ...context, fusionAgent: undefined, fusionModelRole: undefined });
+			for (const name of ["write", "edit", "ast_edit", "powershell", "mcp__demo__echo"])
+				expect(tools.includes(name), `${phase}/${fusionModelRole}: ${name}`).toBe(fusionModelRole === "sidekick" && ordinary.includes(name));
+			expect(tools).toContain("read");
+		}
+	});
+	test("Lead delegates code location while Sidekick explorers retain investigation tools", () => {
 		const investigation = ["grep", "find", "ls", "stat", "ast_grep", "semantic_search", "github", "web_search", "web_fetch"];
 		for (const phase of AGENT_PHASES) {
-			const lead = toolsForMode({ ...base, mode: "agent", phase, fusionRole: "lead", webTools: true, semanticSearch: true });
-			for (const name of investigation) expect(lead, `${phase}: ${name}`).not.toContain(name);
-			expect(lead).toContain("read");
-			expect(lead).toContain("code_search");
+			const tools = toolsForMode({ ...base, mode: "agent", phase, fusionAgent: "main", webTools: true, semanticSearch: true });
+			for (const name of investigation.slice(0, 6)) expect(tools, `${phase}: ${name}`).not.toContain(name);
+			for (const name of ["code_search", "read", ...investigation.slice(6)]) expect(tools, `${phase}: ${name}`).toContain(name);
+			const sidekickTools = toolsForMode({ ...base, mode: "agent", phase, fusionAgent: "main", fusionModelRole: "sidekick", semanticSearch: true });
+			for (const name of investigation.slice(0, 6)) expect(sidekickTools, `${phase}: ${name}`).toContain(name);
 		}
-		const side = toolsForMode({ ...base, mode: "subagent", child: true, fusionRole: "sidekick",
+		const tools = toolsForMode({ mode: "subagent", child: true, fusionAgent: "auxiliary",
 			permission: "read-only", webTools: true, semanticSearch: true });
-		for (const name of investigation) expect(side, name).toContain(name);
-		expect(side).not.toContain("write");
+		for (const name of investigation) expect(tools).toContain(name);
+		expect(tools).not.toContain("write");
 	});
-	test("ordinary sessions keep execution tools and Sidekick retains permission boundaries", () => {
-		expect(toolsForMode({ ...base, mode: "agent" })).toContain("edit");
-		const tools = toolsForMode({ ...base, mode: "agent", child: true, fusionRole: "sidekick",
-			allowWorkerShell: true, permission: "read-only" });
-		expect(tools).not.toContain("edit");
-		expect(tools).not.toContain("bash");
+	test("read-only workers never receive arbitrary MCP tools even with a model or shell override", () => {
+		const tools = toolsForMode({ mode: "agent", permission: "read-only", child: true,
+			fusionAgent: "auxiliary", fusionModelRole: "lead", allowWorkerShell: true, mcpTools: ["mcp__demo__echo"] });
+		for (const name of ["edit", "bash", "powershell", "mcp__demo__echo"]) expect(tools).not.toContain(name);
 	});
-	test("Sidekick owns investigation while Lead decides from evidence and delegates execution", () => {
-		const prompt = buildModePrompt({ ...base, mode: "agent", fusionRole: "lead" });
-		expect(prompt).toContain("调查由 Sidekick 执行，决策由 Lead 完成");
-		expect(prompt).not.toContain("根因调查、假设取舍、架构设计、安全边界和正确性判断由你负责");
-		expect(prompt).toContain("编写代码、文件编辑、构建、测试和改动验证必须交给 Sidekick 实际执行");
-		expect(prompt).toContain("微小改动也不例外");
-		expect(prompt).not.toContain("微小改动，以及必须由你处理的高正确性工作可直接完成");
-		expect(prompt).toContain("必须填写 task.executionPlan");
-		expect(prompt).toContain("不再亲自重复构建/测试");
+	test("Fusion parent gives specific instructions for every edit", () => {
+		const prompt = buildModePrompt({ ...base, mode: "agent", fusionAgent: "main" });
+		expect(prompt).toContain("所有文件编辑都交给 Sidekick");
+		expect(prompt).toContain("机械实施、耗时命令和验证交给 task(kind=worker)");
+		expect(prompt).toContain("常规连贯修改优先在同一主会话交接");
+		expect(prompt).toContain("即使只改一行，也必须通过 fusion_implement");
+		expect(prompt).toContain("高风险改动先由 Lead 决定算法");
+		expect(prompt).toContain("worker 运行时不要对其任务范围重复搜索或逐文件预审");
+		expect(prompt).toContain("不轮询 task_status");
 		expect(prompt).toContain("不能保证固定降本比例");
 	});
-	test("Sidekick executes decisions and reports acceptance coverage and failures", () => {
-		const prompt = buildModePrompt({ ...base, mode: "agent", child: true, fusionRole: "sidekick" });
-		expect(prompt).toContain("按 Lead 给出的 executionPlan");
+	test("workers follow parent specifications and cannot recursively delegate", () => {
+		const context: PromptContext = { ...base, mode: "agent", child: true, fusionAgent: "auxiliary", allowWorkerShell: true };
+		const prompt = buildModePrompt(context);
+		expect(prompt).toContain("executionPlan");
 		expect(prompt).toContain("每项 acceptanceCriteria 的满足情况");
 		expect(prompt).toContain("verification.mode=skip 时禁止测试、构建和浏览器验证");
-		expect(prompt).toContain("返回错误证据和已完成部分");
-	});
-	test("planning remains read-only and the Sidekick cannot recursively delegate", () => {
-		expect(toolsForMode({ ...base, mode: "agent", phase: "plan", fusionRole: "lead" })).not.toContain("task");
-		const tools = toolsForMode({ ...base, mode: "agent", child: true, fusionRole: "sidekick", allowWorkerShell: true });
+		const tools = toolsForMode(context);
 		expect(tools).not.toContain("task");
 		expect(tools).toContain("edit");
-		expect(tools.some((name) => ["bash", "powershell"].includes(name))).toBe(true);
+		expect(tools).toContain("bash");
+	});
+	test("MCP is discoverable and executable only in phases and permissions that allow arbitrary tools", () => {
+		const mcpTools = [{ name: "mcp__demo__echo", description: "Echo parameters" }];
+		for (const phase of AGENT_PHASES) {
+			const context: PromptContext = { ...base, mode: "agent", phase, fusionAgent: "main",
+				pluginTools: mcpTools.map((tool) => tool.name), delegatedMcpTools: mcpTools };
+			const prompt = buildModePrompt(context);
+			expect(prompt).toContain("mcp__demo__echo（Echo parameters）");
+			expect(prompt).toContain("主会话中的 Sidekick 可在当前阶段与权限允许时调用");
+			expect(toolsForMode(context)).not.toContain("mcp__demo__echo");
+			expect(toolsForMode({ ...context, fusionModelRole: "sidekick" }).includes("mcp__demo__echo")).toBe(!["answer", "plan"].includes(phase));
+			expect(toolsForMode({ ...context, permission: "read-only" })).not.toContain("mcp__demo__echo");
+		}
 	});
 });
 
@@ -172,11 +195,11 @@ describe("custom prompts", () => {
 	test("helpers keep their default prompts", () => {
 		configureCustomPrompt(() => "MINE");
 		expect(buildModePrompt({ mode: "subagent", permission: "read-only", child: true, fastContext: true })).toContain(FAST_CONTEXT_PROMPT);
-		expect(buildModePrompt({ mode: "agent", permission: "auto", child: true, fusionRole: "sidekick" })).not.toContain("MINE");
-		const lead = buildModePrompt({ ...base, mode: "agent", fusionRole: "lead", pluginTools: ["custom_write"] });
-		expect(lead).toContain("## Fusion · Lead");
-		expect(lead).toContain("必须交给 Sidekick 实际执行");
-		expect(toolsForMode({ ...base, mode: "agent", fusionRole: "lead", pluginTools: ["custom_write"] })).not.toContain("custom_write");
+		expect(buildModePrompt({ mode: "agent", permission: "auto", child: true, fusionAgent: "auxiliary" })).not.toContain("MINE");
+		const lead = buildModePrompt({ ...base, mode: "agent", fusionAgent: "main", pluginTools: ["custom_write"] });
+		expect(lead).toContain("## Fusion · 主代理");
+		expect(lead).toContain("主会话委派与自动模型路由");
+		expect(toolsForMode({ ...base, mode: "agent", fusionAgent: "main", pluginTools: ["custom_write"] })).not.toContain("custom_write");
 		expect(buildModePrompt({ ...base, mode: "commit" })).not.toContain("MINE");
 	});
 
@@ -185,20 +208,36 @@ describe("custom prompts", () => {
 	});
 });
 
-describe("browser_screenshot policy", () => {
-	test("a writable parent with the tool is told the image comes back attached", () => {
+describe("webpage element verification policy", () => {
+	afterEach(() => configureCustomPrompt(() => null));
+	test("default element checks and stopping rules reach parents, custom prompts and workers", () => {
+		configureCustomPrompt(() => "CUSTOM");
+		for (const context of [
+			{ mode: "agent" as const, permission: "auto" as const },
+			{ mode: "agent" as const, permission: "auto" as const, fusionAgent: "main" as const },
+			{ mode: "subagent" as const, permission: "auto" as const, child: true },
+			{ mode: "agent" as const, permission: "auto" as const, child: true, fusionAgent: "auxiliary" as const, allowWorkerShell: true },
+		]) {
+			const prompt = buildModePrompt(context);
+			expect(prompt).toContain("默认验收是元素验证，不截图");
+			expect(prompt).toContain("模型支持图片也不改变这个默认");
+			expect(prompt).toContain("停止重复验证");
+			expect(prompt).toContain("元素验证不等于完整视觉验收");
+		}
+	});
+	test("screenshots remain available only on explicit user requests", () => {
 		const prompt = buildModePrompt({
 			mode: "agent",
 			permission: "auto",
 			interactive: true,
 			pluginTools: ["browser_screenshot"],
 		});
-		expect(prompt).toContain("browser_screenshot 既保存 PNG");
+		expect(prompt).toContain("browser_screenshot 仅在用户明确要求截图或图片对比时使用");
 	});
 
 	test("the policy is absent without the tool", () => {
 		const prompt = buildModePrompt({ mode: "agent", permission: "auto", interactive: true });
-		expect(prompt).not.toContain("browser_screenshot 既保存 PNG");
+		expect(prompt).not.toContain("browser_screenshot 仅在用户明确要求截图或图片对比时使用");
 	});
 });
 

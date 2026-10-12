@@ -96,6 +96,14 @@ export interface TaskRunResult {
 }
 
 export interface TaskExecutionPlan {
+	/** Compact Lead decisions and decisive source locations, not full conversation history. */
+	decisionBrief?: {
+		objective: string;
+		decisions: string[];
+		evidence: string[];
+		/** Conditions that require returning to Lead instead of guessing or redesigning. */
+		stopConditions: string[];
+	};
 	/** Ordered implementation steps decided by Lead. */
 	steps: string[];
 	/** User restrictions and decisions that the isolated worker must preserve. */

@@ -7,16 +7,16 @@ import {
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { elapsedSeconds, formatElapsed, useNow } from "../../lib/elapsed";
 import {
-	BotIcon,
-	ChevronDownIcon,
 	ChevronRightIcon,
 	HammerIcon,
 	TriangleAlertIcon,
 } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { lastThinkingLine } from "./Thinking";
+import { Markdown } from "./Markdown";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { DisclosureRegion } from "../ui/disclosure-region";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 
 const STATUS_KEYS: Record<WorkflowTask["status"], TranslationKey> = {
@@ -30,6 +30,55 @@ const KIND_KEYS: Record<WorkflowTask["kind"], TranslationKey> = {
 	explore: "workflow.taskKind.explore",
 	worker: "workflow.taskKind.worker",
 };
+
+/**
+ * Determine the status dot color for a task row.
+ * Completed runs with abnormal outcomes (blocked/needs_decision/needs_escalation)
+ * are styled amber rather than green success.
+ */
+export function getStatusDotClassName(
+	status: WorkflowTask["status"],
+	outcome?: WorkflowTask["outcome"],
+): string {
+	if (status === "running") {
+		return "bg-sky-500";
+	}
+	if (status === "failed") {
+		return "bg-destructive";
+	}
+	if (status === "cancelled") {
+		return "bg-amber-500";
+	}
+	// status === "completed"
+	if (outcome === "blocked" || outcome === "needs_decision" || outcome === "needs_escalation") {
+		return "bg-amber-500";
+	}
+	return "bg-emerald-500";
+}
+
+/**
+ * Extract a single line summarizing the latest activity of a running worker.
+ */
+function renderRunningSummary(task: WorkflowTask, t: (key: TranslationKey) => string) {
+	if (task.steps.length === 0) {
+		return <span className="shimmer">{t("workflow.taskStarting")}</span>;
+	}
+	const latest = task.steps[task.steps.length - 1];
+	if (latest.kind === "tool") {
+		const text = latest.args ? `${latest.toolName} ${latest.args}` : latest.toolName;
+		return <span>{text}</span>;
+	}
+	if (latest.kind === "thinking") {
+		const line = lastThinkingLine(latest.text);
+		return <span>{line || latest.text || t("workflow.taskStarting")}</span>;
+	}
+	if (latest.kind === "message") {
+		const lines = latest.text.split("\n").map((l) => l.trim()).filter(Boolean);
+		const lastLine = lines[lines.length - 1] ?? latest.text;
+		return <span>{lastLine || t("workflow.taskStarting")}</span>;
+	}
+	return null;
+}
 
 /**
  * How much of the worker pool is in use, as the pool itself.
@@ -101,14 +150,13 @@ export function StepRow({ step }: { step: Extract<TaskStep, { kind: "tool" }> })
  * workflow panel that tracks it, because they are the same worker — two
  * different-looking renderings of one delegation would read as two things.
  *
- * Open while it runs: a worker is the one part of a turn the user cannot see
- * from the transcript, so watching it is the default and folding it away is
- * the choice.
+ * Folded by default: watching or opening the detail dock is user-driven.
  */
 export function TaskCard({
 	task,
 	onCancel,
 	onOpen,
+	defaultOpen = false,
 }: {
 	task: WorkflowTask;
 	/** Omitted where cancelling does not belong, e.g. the transcript. */
@@ -118,9 +166,11 @@ export function TaskCard({
 	 * where the header goes back to being a plain disclosure.
 	 */
 	onOpen?: (id: string) => void;
+	/** For testing or forced disclosure. Defaults to false. */
+	defaultOpen?: boolean;
 }) {
 	const { t } = useTranslation();
-	const [open, setOpen] = useState(task.status === "running");
+	const [open, setOpen] = useState(defaultOpen);
 	const running = task.status === "running";
 	const now = useNow(running);
 	const seconds = elapsedSeconds(task.startedAt, task.endedAt ?? now);
@@ -134,130 +184,124 @@ export function TaskCard({
 		newest?.kind === "thinking" && newest.endedAt === undefined ? newest : undefined;
 
 	return (
-		<div className="flex flex-col gap-1.5">
-			<div className="flex items-center gap-1.5">
-				{/* The chevron owns folding; the label opens the worker's own panel,
-				    because the card is a summary and the run is the thing. */}
-				<button
-					type="button"
-					aria-expanded={open}
-					aria-label={t(open ? "workflow.taskCollapse" : "workflow.taskExpand")}
-					onClick={() => setOpen((value) => !value)}
-					className="shrink-0"
-				>
-					{open ? (
-						<ChevronDownIcon className={cn("size-3.5", MUTED_LABEL_TEXT_CLASS_NAME)} />
-					) : (
-						<ChevronRightIcon className={cn("size-3.5", MUTED_LABEL_TEXT_CLASS_NAME)} />
+		<div className="@container/task min-w-0 flex flex-col gap-1">
+			<div
+				className={cn(
+					"group/task flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-150 motion-reduce:transition-none",
+					"hover:bg-[var(--color-background-elevated-secondary)]",
+				)}
+			>
+				<span
+					className={cn(
+						"size-1.5 shrink-0 rounded-full",
+						getStatusDotClassName(task.status, task.outcome),
 					)}
-				</button>
+					aria-hidden="true"
+				/>
 				<button
 					type="button"
 					title={onOpen ? t("workflow.taskOpenPanel") : undefined}
-					onClick={() => (onOpen ? onOpen(task.id) : setOpen((value) => !value))}
-					className={cn(
-						"flex min-w-0 flex-1 items-center gap-1.5 rounded text-left",
-						onOpen && "hover:bg-[var(--color-background-elevated-secondary)]",
-					)}
+					onClick={() => {
+						if (onOpen) {
+							onOpen(task.id);
+						} else {
+							setOpen((value) => !value);
+						}
+					}}
+					className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				>
-					<BotIcon
-						className={cn(
-							"size-3.5 shrink-0",
-							task.status === "failed" ? "text-destructive" : MUTED_LABEL_TEXT_CLASS_NAME,
-						)}
-					/>
-					<span className="min-w-0 truncate text-[length:var(--app-font-size-chat,12px)] font-medium">
+					<span className="min-w-0 truncate text-[length:var(--app-font-size-chat,12px)] font-medium text-foreground">
 						{task.description}
 					</span>
-					<span
-						className={cn(
-							"shrink-0 rounded-full border border-border/60 px-1.5",
-							"text-[length:var(--app-font-size-ui-sm,11px)]",
-							MUTED_LABEL_TEXT_CLASS_NAME,
-						)}
-					>
+					<span className="hidden shrink-0 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground @[440px]/task:inline">
 						{t(KIND_KEYS[task.kind])}
 					</span>
-					<span className="flex-1" />
-					{running ? <Spinner className="size-3 shrink-0 text-muted-foreground" /> : null}
+				</button>
+				<div className="flex min-w-0 max-w-[45%] shrink-0 items-center gap-1.5 text-[length:var(--app-font-size-ui-sm,11px)] tabular-nums">
 					<span
 						className={cn(
-							"shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]",
-							task.status === "failed" ? "text-destructive" : MUTED_LABEL_TEXT_CLASS_NAME,
+							"min-w-0 break-words text-right",
+							task.status === "failed" ? "text-destructive" : "text-muted-foreground",
 						)}
 					>
-						{t(task.status === "completed" && task.outcome ? `fusion.outcome.${task.outcome}` : STATUS_KEYS[task.status])} · {formatElapsed(seconds)}
+						{t(
+							task.status === "completed" && task.outcome
+								? `fusion.outcome.${task.outcome}`
+								: STATUS_KEYS[task.status],
+						)}
 					</span>
-				</button>
+					<span className="shrink-0 text-muted-foreground/40">·</span>
+					<span className="shrink-0 text-muted-foreground">{formatElapsed(seconds)}</span>
+				</div>
 				{running && onCancel ? (
 					<Button
 						type="button"
 						size="xs"
-						variant="outline"
-						className="shrink-0"
-						onClick={() => onCancel(task.id)}
+						variant="ghost"
+						className="h-6 shrink-0 px-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground hover:text-foreground"
+						aria-label={t("workflow.cancelTask")}
+						onClick={(e) => {
+							e.stopPropagation();
+							onCancel(task.id);
+						}}
 					>
 						{t("workflow.cancelTask")}
 					</Button>
 				) : null}
+				<button
+					type="button"
+					aria-expanded={open}
+					aria-label={t(open ? "workflow.taskCollapse" : "workflow.taskExpand")}
+					onClick={(e) => {
+						e.stopPropagation();
+						setOpen((value) => !value);
+					}}
+					className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				>
+					<ChevronRightIcon className="workflow-chevron size-3.5" data-open={open} />
+				</button>
 			</div>
-			{open ? (
-				<div className="flex flex-col gap-1.5 border-l border-border/60 pl-3">
+			{running && !open ? (
+				<div className="ml-4 min-w-0 truncate px-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+					{renderRunningSummary(task, t)}
+				</div>
+			) : null}
+			<DisclosureRegion open={open}>
+				<div className="mt-1 ml-4 min-w-0 flex flex-col gap-2 rounded-md border border-border/40 bg-foreground/2 px-2.5 py-2">
 					{task.writablePaths.length ? (
-						<p
-							className={cn(
-								"break-all text-[length:var(--app-font-size-ui-sm,11px)]",
-								MUTED_LABEL_TEXT_CLASS_NAME,
-							)}
-						>
+						<p className="break-all text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 							{t("workflow.taskScope")}: {task.writablePaths.join(", ")}
 						</p>
 					) : null}
-					{tools.map((step) => (
-						<StepRow key={step.id} step={step} />
-					))}
-					{/* The card stays a summary: reasoning is a line of it here, and the
-					    whole stream is a click away in the dock. */}
+					{tools.length > 0 ? (
+						<div className="flex max-h-56 flex-col gap-2 overflow-y-auto overscroll-contain">
+							{tools.map((step) => (
+								<StepRow key={step.id} step={step} />
+							))}
+						</div>
+					) : null}
 					{running && reasoning ? (
-						<div className="truncate border-l border-border/60 pl-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70">
+						<div className="truncate text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 							{lastThinkingLine(reasoning.text)}
 						</div>
 					) : null}
 					{running && task.steps.length === 0 ? (
-						<p
-							className={cn(
-								"text-[length:var(--app-font-size-ui-sm,11px)]",
-								MUTED_LABEL_TEXT_CLASS_NAME,
-							)}
-						>
+						<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 							<span className="shimmer">{t("workflow.taskStarting")}</span>
 						</p>
 					) : null}
-					{/* Steps are live-only, so a reopened session has a result and no
-					    trace of how it got there. Say so rather than look empty. */}
 					{!running && task.steps.length === 0 && task.result ? (
-						<p
-							className={cn(
-								"text-[length:var(--app-font-size-ui-sm,11px)]",
-								MUTED_LABEL_TEXT_CLASS_NAME,
-							)}
-						>
+						<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
 							{t("workflow.taskStepsGone")}
 						</p>
 					) : null}
 					{task.result ? (
-						<pre
-							className={cn(
-								"max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg",
-								"border border-border/60 bg-[var(--color-token-text-code-block-background)] p-2.5",
-								"font-mono text-[length:var(--app-font-size-chat-code,11px)]",
-							)}
-						>
-							{task.result}
-						</pre>
+						<div className="max-h-64 min-w-0 overflow-y-auto break-words text-[length:var(--app-font-size-chat,12px)]">
+							<Markdown text={task.result} />
+						</div>
 					) : null}
 				</div>
-			) : null}
+			</DisclosureRegion>
 		</div>
 	);
 }

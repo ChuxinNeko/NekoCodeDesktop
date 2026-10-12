@@ -1500,6 +1500,18 @@ export class AgentSession {
 	}
 
 	/**
+	 * Replace SDK tools without reloading extensions or interrupting a running call.
+	 * The current loadout is preserved: callers must explicitly activate new tools
+	 * under their own permission policy. An in-flight batch keeps its captured tools;
+	 * updated declarations and executors are used by subsequent model requests.
+	 */
+	setCustomTools(tools: ToolDefinition[]): void {
+		const activeToolNames = this.getActiveToolNames();
+		this._customTools = [...tools];
+		this._refreshToolRegistry({ activeToolNames, preserveLoadout: true });
+	}
+
+	/**
 	 * Set active tools by name.
 	 * Only tools in the registry can be enabled. Unknown and hidden tool names are ignored.
 	 * Also rebuilds the system prompt to reflect the new tool set.
@@ -1517,7 +1529,14 @@ export class AgentSession {
 	private _setActiveTools(toolNames: string[]): void {
 		const tools = this._applyToolLoadout(toolNames);
 		for (const tool of tools) this._pendingToolNames.delete(tool.name);
+		const previousPrompt = this._baseSystemPromptOptions?.customPrompt;
 		this._rebuildSystemPrompt(tools.map((tool) => tool.name));
+		// A dynamic resource loader may change the role with the loadout during a run.
+		// Carry that change into next-turn options instead of replaying the old role.
+		// Keep explicit before_agent_start prompt overrides owned by extensions.
+		if (this._runSystemPromptOptions && this._runSystemPromptOptions.customPrompt === previousPrompt) {
+			this._runSystemPromptOptions.customPrompt = this._baseSystemPromptOptions.customPrompt;
+		}
 	}
 
 	private _isAllowedTool(name: string): boolean {
@@ -3477,7 +3496,7 @@ export class AgentSession {
 		);
 	}
 
-	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
+	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean; preserveLoadout?: boolean }): void {
 		// Tools that were already activated on registration. A tool whose exposure changes to
 		// `direct` or `model-only` (for example from `hidden`) is activated like a new tool.
 		const previousActivatedOnRegistration = new Set(
@@ -3552,7 +3571,7 @@ export class AgentSession {
 			options?.activeToolNames ? [...options.activeToolNames] : [...previousActiveToolNames]
 		).filter((name) => this._isAllowedTool(name));
 
-		if (allowedToolNames) {
+		if (allowedToolNames && !options?.preserveLoadout) {
 			for (const toolName of this._toolRegistry.keys()) {
 				// Naming a tool activates it even when it is not active by default.
 				if (allowedToolNames.has(toolName) && this._isDeclarable(toolName)) {

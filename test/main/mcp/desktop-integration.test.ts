@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +44,15 @@ function fakeDesktopBridgeServer(server: InMemoryTransport): void {
 				tools: [
 					{ name: "session_status", description: "status", inputSchema: { type: "object" } },
 					{ name: "desktop_screenshot", description: "shot", inputSchema: { type: "object" } },
+					{ name: "desktop_snapshot", description: "native controls", inputSchema: { type: "object" } },
+					{ name: "browser_snapshot", description: "snapshot", inputSchema: { type: "object" } },
+					{ name: "browser_downloads", description: "downloads", inputSchema: { type: "object" } },
+					{ name: "browser_action", description: "action", inputSchema: { type: "object" } },
 				],
+			});
+		} else if (request.method === "tools/call") {
+			reply(request.id, {
+				content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
 			});
 		}
 	});
@@ -150,5 +158,65 @@ describe("MCP desktop integration in McpService", () => {
 		const serverId = snapshot.servers[0].config.id;
 		// Not signed in -> rejected
 		expect(service.openDesktop(serverId)).rejects.toThrow("MCP 桌面不可用");
+	});
+
+	test("assigns short timeouts to desktop-bridge browser tools and keeps 300s for others", async () => {
+		const piMcpModule = await import("@earendil-works/pi-mcp");
+		const callToolSpy = spyOn(piMcpModule.McpClient.prototype, "callTool");
+
+		try {
+			const auth = new McpAuthStore(userData(), encryption);
+			const service = new McpService(userData(), () => process.cwd(), () => undefined, {
+				auth,
+				createTransport: async () => {
+					const { client, server } = createInMemoryTransportPair();
+					fakeDesktopBridgeServer(server);
+					return client;
+				},
+			});
+			services.push(service);
+
+			await service.save({
+				name: "bridge",
+				transport: "http",
+				url: "http://localhost:8080/mcp",
+				enabled: true,
+			});
+
+			const tools = service.tools();
+			const snapshotTool = tools.find((t) => t.name.endsWith("__browser_snapshot"))!;
+			const shotTool = tools.find((t) => t.name.endsWith("__desktop_screenshot"))!;
+			const desktopSnapshotTool = tools.find((t) => t.name.endsWith("__desktop_snapshot"))!;
+			const downloadsTool = tools.find((t) => t.name.endsWith("__browser_downloads"))!;
+			const actionTool = tools.find((t) => t.name.endsWith("__browser_action"))!;
+			const otherTool = tools.find((t) => t.name.endsWith("__session_status"))!;
+
+			expect(snapshotTool).toBeDefined();
+			expect(shotTool).toBeDefined();
+			expect(desktopSnapshotTool).toBeDefined();
+			expect(downloadsTool).toBeDefined();
+			expect(actionTool).toBeDefined();
+			expect(otherTool).toBeDefined();
+
+			await (snapshotTool.execute as any)("1", {});
+			expect(callToolSpy).toHaveBeenLastCalledWith("browser_snapshot", {}, expect.objectContaining({ timeoutMs: 15_000 }));
+
+			await (shotTool.execute as any)("2", {});
+			expect(callToolSpy).toHaveBeenLastCalledWith("desktop_screenshot", {}, expect.objectContaining({ timeoutMs: 15_000 }));
+
+			await (desktopSnapshotTool.execute as any)("native", {});
+			expect(callToolSpy).toHaveBeenLastCalledWith("desktop_snapshot", {}, expect.objectContaining({ timeoutMs: 15_000 }));
+
+			await (downloadsTool.execute as any)("downloads", {});
+			expect(callToolSpy).toHaveBeenLastCalledWith("browser_downloads", {}, expect.objectContaining({ timeoutMs: 15_000 }));
+
+			await (actionTool.execute as any)("action", {});
+			expect(callToolSpy).toHaveBeenLastCalledWith("browser_action", {}, expect.objectContaining({ timeoutMs: 30_000 }));
+
+			await (otherTool.execute as any)("4", {});
+			expect(callToolSpy).toHaveBeenLastCalledWith("session_status", {}, expect.objectContaining({ timeoutMs: 300_000 }));
+		} finally {
+			callToolSpy.mockRestore();
+		}
 	});
 });

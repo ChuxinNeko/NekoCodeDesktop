@@ -17,10 +17,11 @@ import {
 	type Turn,
 } from "../../lib/fastContext";
 import { FileTypeIcon } from "../../lib/fileIcons";
-import { ChevronDownIcon, ChevronRightIcon, FolderIcon, SearchIcon, TriangleAlertIcon, ZapIcon } from "../../lib/icons";
+import { ChevronRightIcon, FolderIcon, SearchIcon, TriangleAlertIcon, ZapIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME, SOFT_SURFACE_FILL_CLASS_NAME } from "../../surfaceStyles";
 import { lastThinkingLine } from "./Thinking";
+import { DisclosureRegion } from "../ui/disclosure-region";
 import { MarkdownLink } from "./WebSources";
 
 /** Turns kept on screen while the search runs; older ones fold into a count. */
@@ -255,7 +256,6 @@ export const FastContextCard = memo(function FastContextCard({
 					className={cn(
 						"min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui-sm,11px)]",
 						MUTED_LABEL_TEXT_CLASS_NAME,
-						running && "shimmer",
 					)}
 				>
 					{query}
@@ -263,14 +263,10 @@ export const FastContextCard = memo(function FastContextCard({
 				<span className={cn("shrink-0 tabular-nums text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
 					{meta}
 				</span>
-				{open ? (
-					<ChevronDownIcon className={cn("size-3.5 shrink-0", MUTED_LABEL_TEXT_CLASS_NAME)} />
-				) : (
-					<ChevronRightIcon className={cn("size-3.5 shrink-0", MUTED_LABEL_TEXT_CLASS_NAME)} />
-				)}
+				<ChevronRightIcon data-open={open} className={cn("workflow-chevron size-3.5 shrink-0", MUTED_LABEL_TEXT_CLASS_NAME)} />
 			</button>
 
-			{open ? (
+			<DisclosureRegion open={open}>
 				<div className="flex flex-col gap-1.5 border-t border-border/40 px-2.5 py-2">
 					{/* The search: live while it runs, on request once it is over. */}
 					{running || details ? (
@@ -343,7 +339,7 @@ export const FastContextCard = memo(function FastContextCard({
 						</button>
 					) : null}
 				</div>
-			) : null}
+			</DisclosureRegion>
 		</div>
 	);
 });

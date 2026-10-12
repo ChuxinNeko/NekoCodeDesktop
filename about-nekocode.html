@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NekoCode · 自我介绍</title>
+<meta name="description" content="NekoCode 桌面编程助手：PI Agent Core + Fusion 双核协同，务实可靠的编码伙伴。" />
+<style>
+  :root{
+    --bg:#080c14;
+    --card:rgba(15,23,42,.72);
+    --border:rgba(255,255,255,.08);
+    --border-hi:rgba(167,139,250,.45);
+    --fg:#f8fafc;
+    --fg-mid:#94a3b8;
+    --fg-dim:#64748b;
+    --brand:linear-gradient(135deg,#a78bfa 0%,#38bdf8 50%,#34d399 100%);
+    --term:#0d1117;
+    --term-border:#30363d;
+    --term-green:#7ee787;
+    --term-blue:#79c0ff;
+    --term-purple:#d2a8ff;
+    --term-orange:#ffa657;
+    --sans:"Inter","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    --mono:"Cascadia Code","Fira Code",Consolas,"SFMono-Regular",monospace;
+  }
+  *,*::before,*::after{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--fg);
+    font-family:var(--sans);
+    line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  a{color:inherit;text-decoration:none;}
+  .glow{position:fixed;border-radius:50%;filter:blur(80px);pointer-events:none;z-index:0;}
+  .glow-1{width:520px;height:520px;top:-180px;left:-120px;background:radial-gradient(circle,rgba(109,40,217,.55),transparent 70%);}
+  .glow-2{width:460px;height:460px;top:80px;right:-140px;background:radial-gradient(circle,rgba(6,182,212,.42),transparent 70%);}
+  .glow-3{width:420px;height:420px;bottom:-160px;left:35%;background:radial-gradient(circle,rgba(236,72,153,.3),transparent 70%);}
+  .wrap{width:100%;max-width:1180px;margin:0 auto;padding:0 32px;position:relative;z-index:1;}
+  @media(max-width:640px){.wrap{padding:0 24px;}}
+
+  /* ---------- nav ---------- */
+  .nav{
+    position:sticky;top:0;z-index:50;height:70px;
+    background:rgba(8,12,20,.72);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+  }
+  .nav-in{height:70px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.2px;}
+  .brand-logo{width:30px;height:30px;display:block;}
+  .brand em{font-style:normal;background:var(--brand);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .nav-links{display:flex;align-items:center;gap:26px;font-size:14px;color:var(--fg-mid);}
+  .nav-links a:hover{color:var(--fg);}
+  .pill{
+    font-family:var(--mono);font-size:12px;color:var(--term-green);
+    border:1px solid var(--border);border-radius:999px;padding:5px 12px;
+    background:rgba(126,231,135,.07);
+  }
+  @media(max-width:860px){.nav-links a{display:none;}}
+
+  /* ---------- hero ---------- */
+  .hero{min-height:520px;display:flex;flex-direction:column;justify-content:center;padding:72px 0 40px;}
+  .badge{
+    display:inline-flex;align-items:center;gap:9px;align-self:flex-start;
+    font-family:var(--mono);font-size:12.5px;color:var(--term-blue);
+    border:1px solid rgba(121,192,255,.28);border-radius:999px;
+    padding:7px 15px;background:rgba(121,192,255,.07);
+  }
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--term-green);box-shadow:0 0 10px var(--term-green);animation:blink 1.8s ease-in-out infinite;}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .hero h1{
+    font-size:clamp(38px,6.4vw,68px);line-height:1.08;font-weight:800;
+    letter-spacing:-1.4px;margin:26px 0 18px;max-width:24ch;
+  }
+  .hero h1 span{background:var(--brand);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .hero p.lead{font-size:clamp(15.5px,1.5vw,18.5px);color:var(--fg-mid);max-width:64ch;margin:0 0 34px;}
+  .cta{display:flex;flex-wrap:wrap;gap:14px;}
+  .btn{
+    border:none;cursor:pointer;font-family:inherit;font-size:15px;font-weight:600;
+    border-radius:10px;padding:13px 24px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+  }
+  .btn-primary{background:var(--brand);color:#06121c;box-shadow:0 10px 30px rgba(56,189,248,.22);}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 38px rgba(56,189,248,.32);}
+  .btn-ghost{background:rgba(255,255,255,.03);color:var(--fg);border:1px solid var(--border);}
+  .btn-ghost:hover{transform:translateY(-2px);border-color:var(--border-hi);}
+  .mascot{position:relative;animation:glow-pulse 4.6s ease-in-out infinite;}
+  .hero-logo{width:86px;height:86px;display:block;margin-bottom:26px;}
+  @media(max-width:640px){.hero-logo{width:70px;height:70px;margin-bottom:20px;}}
+  @keyframes glow-pulse{
+    0%,100%{filter:drop-shadow(0 0 14px rgba(167,139,250,.35));}
+    50%{filter:drop-shadow(0 0 30px rgba(56,189,248,.55));}
+  }
+
+  /* ---------- sections ---------- */
+  section.block{padding:64px 0;}
+  .sec-head{margin-bottom:34px;}
+  .sec-tag{font-family:var(--mono);font-size:12.5px;color:var(--term-purple);letter-spacing:.6px;text-transform:uppercase;}
+  .sec-head h2{font-size:clamp(25px,3.2vw,36px);font-weight:800;letter-spacing:-.8px;margin:10px 0 12px;}
+  .sec-head p{color:var(--fg-mid);margin:0;max-width:66ch;font-size:15.5px;}
+
+  /* ---------- pillar cards ---------- */
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}
+  @media(max-width:980px){.grid-3{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:640px){.grid-3{grid-template-columns:1fr;}}
+  .card{
+    background:var(--card);border:1px solid var(--border);border-radius:20px;
+    padding:26px 24px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;
+  }
+  .card:hover{transform:translateY(-4px);border-color:var(--border-hi);box-shadow:0 18px 40px rgba(8,12,20,.55);}
+  .card .ico{
+    width:42px;height:42px;border-radius:12px;display:grid;place-items:center;
+    font-size:20px;margin-bottom:16px;background:rgba(167,139,250,.1);border:1px solid var(--border);
+  }
+  .card h3{font-size:17.5px;font-weight:700;margin:0 0 10px;letter-spacing:-.2px;}
+  .card p{margin:0;color:var(--fg-mid);font-size:14.5px;}
+  .card ul{margin:12px 0 0;padding-left:18px;color:var(--fg-mid);font-size:14px;}
+  .card li{margin:5px 0;}
+  .card li code{font-family:var(--mono);font-size:12.5px;color:var(--term-blue);}
+
+  /* ---------- console ---------- */
+  .tabs{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;}
+  .tab{
+    font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;color:var(--fg-mid);
+    background:rgba(255,255,255,.03);border:1px solid var(--border);
+    border-radius:999px;padding:9px 18px;transition:all .18s ease;
+  }
+  .tab:hover{color:var(--fg);border-color:var(--border-hi);}
+  .tab.on{color:#06121c;background:var(--brand);border-color:transparent;}
+  .terminal{
+    background:var(--term);border:1px solid var(--term-border);border-radius:16px;overflow:hidden;
+    box-shadow:0 26px 60px rgba(0,0,0,.5);
+  }
+  .term-bar{
+    display:flex;align-items:center;gap:8px;padding:12px 16px;
+    background:rgba(255,255,255,.025);border-bottom:1px solid var(--term-border);
+  }
+  .light{width:12px;height:12px;border-radius:50%;}
+  .light.r{background:#ff5f57;} .light.y{background:#febc2e;} .light.g{background:#28c840;}
+  .term-title{margin-left:10px;font-family:var(--mono);font-size:12.5px;color:var(--fg-dim);}
+  .term-body{padding:22px 20px;font-family:var(--mono);font-size:13.3px;line-height:1.85;min-height:322px;}
+  .panel{display:none;} .panel.on{display:block;animation:fade .3s ease both;}
+  @keyframes fade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+  .ln{white-space:pre-wrap;word-break:break-word;}
+  .c-dim{color:var(--fg-dim);} .c-grn{color:var(--term-green);} .c-blu{color:var(--term-blue);}
+  .c-pur{color:var(--term-purple);} .c-org{color:var(--term-orange);} .c-fg{color:var(--fg);}
+
+  /* ---------- rules ---------- */
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;}
+  @media(max-width:980px){.grid-4{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:520px){.grid-4{grid-template-columns:1fr;}}
+  .mini{background:rgba(15,23,42,.6);border:1px solid var(--border);border-radius:16px;padding:20px;
+    transition:transform .2s ease,border-color .2s ease;}
+  .mini:hover{transform:translateY(-4px);border-color:var(--border-hi);}
+  .mini b{display:block;font-size:15px;margin-bottom:8px;}
+  .mini small{color:var(--fg-mid);font-size:13.5px;line-height:1.6;display:block;}
+  .num{font-family:var(--mono);font-size:12px;color:var(--term-purple);display:block;margin-bottom:10px;}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--border);margin-top:40px;padding:34px 0 46px;}
+  .foot{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;
+    color:var(--fg-dim);font-size:13.2px;}
+  .foot .mono{font-family:var(--mono);}
+</style>
+</head>
+<body>
+  <div class="glow glow-1"></div>
+  <div class="glow glow-2"></div>
+  <div class="glow glow-3"></div>
+
+  <header class="nav">
+    <div class="wrap nav-in">
+      <a class="brand" href="#top">
+        <svg class="brand-logo mascot" viewBox="0 0 48 48" aria-hidden="true"><use href="#cat" /></svg>
+        <span>Neko<em>Code</em></span>
+      </a>
+      <nav class="nav-links">
+        <a href="#pillars">核心能力</a>
+        <a href="#console">演练台</a>
+        <a href="#rules">工程守则</a>
+        <span class="pill">v0.1.4</span>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="wrap hero">
+      <svg class="hero-logo mascot" viewBox="0 0 48 48" aria-label="NekoCode 徽标" role="img"><use href="#cat" /></svg>
+      <span class="badge"><i class="dot"></i>PI Agent Core · Fusion 双核协同已就绪</span>
+      <h1>你好，我是 <span>NekoCode</span>，你的桌面编程伙伴</h1>
+      <p class="lead">
+        我常驻在你的工作区里，直接把需求推进到可交付结果：先读代码、再定位证据，做最小而完整的改动，
+        然后运行与改动对应的检查，如实告诉你验证了什么、还有什么没覆盖。
+      </p>
+      <div class="cta">
+        <button class="btn btn-primary" id="simulate">发起一次模拟对话</button>
+        <a class="btn btn-ghost" href="#pillars">查看核心能力</a>
+      </div>
+    </section>
+
+    <section class="block wrap" id="pillars">
+      <div class="sec-head">
+        <div class="sec-tag">// capabilities</div>
+        <h2>我把自己拆成三块，每块都要能单独验收</h2>
+        <p>不是一个会聊天的对话框，而是一套能读代码、能改代码、能验证结果的执行体：计划、实现、取证三步都得站得住。</p>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="ico">🧠</div>
+          <h3>PI Agent Core 驱动</h3>
+          <p>底层跑在 PI Agent Core 上，模型只是执行者，真正决定质量的是上下文、工具与阶段约束。</p>
+          <ul>
+            <li>阶段式工作流：<code>plan → execute → debug</code></li>
+            <li>工具优先：读、搜、跑命令、验证结果</li>
+            <li>长任务用清单跟踪，状态不谎报</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="ico">🛰️</div>
+          <h3>Fusion 双核协同</h3>
+          <p>Lead 负责判断与决策，Sidekick 负责落地执行。同一份上下文里交接，不重复规划、不丢失细节。</p>
+          <ul>
+            <li>Lead 定方向：需求、约束、验收标准</li>
+            <li>Sidekick 动手：写代码、跑检查、回报告</li>
+            <li>审查有据：每条验收标准都要给证据</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="ico">🧪</div>
+          <h3>根因诊断，不猜</h3>
+          <p>现象不明时先取证：复现问题、缩小范围、验证假设，找到真正原因再动手改。</p>
+          <ul>
+            <li>先复现原始触发条件与预期结果</li>
+            <li>失败边界比理想路径更值得测</li>
+            <li>改完回到同一场景复验一遍</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="block wrap" id="console">
+      <div class="sec-head">
+        <div class="sec-tag">// live console</div>
+        <h2>来看看我实际怎么工作</h2>
+        <p>下面三个页签是我最常进入的三种状态。点击「发起一次模拟对话」，还能看到我实时回话。</p>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab on" data-panel="p1" role="tab" aria-selected="true">双核协同模式</button>
+        <button class="tab" data-panel="p2" role="tab" aria-selected="false">代码根因诊断</button>
+        <button class="tab" data-panel="p3" role="tab" aria-selected="false">全能工具箱</button>
+      </div>
+      <div class="terminal">
+        <div class="term-bar">
+          <span class="light r"></span><span class="light y"></span><span class="light g"></span>
+          <span class="term-title" id="termTitle">nekocode — fusion / dual-core</span>
+        </div>
+        <div class="term-body">
+          <div class="panel on" id="p1">
+            <div class="ln c-dim">$ nekocode fusion --task "给设置页加上导出功能"</div>
+            <div class="ln c-pur">[lead]  先读代码：设置页入口、状态存储、既有导出逻辑在哪</div>
+            <div class="ln c-blu">[lead]  决策：复用现有 dialog 组件，不新增依赖</div>
+            <div class="ln c-org">[side]  执行：改 3 个文件，最小改动，不动其他模块</div>
+            <div class="ln c-grn">[check] typecheck ✓  单测 42 passed ✓  主链路手动过一遍 ✓</div>
+            <div class="ln c-dim">[report] 已做 / 已验证 / 未覆盖，逐条列给 Lead 审查</div>
+            <div class="ln c-fg">→ 结果：可交付，剩余限制如实标注</div>
+          </div>
+          <div class="panel" id="p2">
+            <div class="ln c-dim">$ nekocode debug --issue "打包后白屏"</div>
+            <div class="ln c-org">[step1] 复现：本地 dev 正常，packaged 构建白屏</div>
+            <div class="ln c-org">[step2] 缩范围：主进程日志有报错，渲染层没加载</div>
+            <div class="ln c-blu">[step3] 假设：预加载脚本路径在打包后失效</div>
+            <div class="ln c-grn">[step4] 验证：查产物路径 → 假设成立</div>
+            <div class="ln c-pur">[fix ] 修根因，不把报错注释掉绕过去</div>
+            <div class="ln c-fg">→ 同一场景复验通过，才算修好了</div>
+          </div>
+          <div class="panel" id="p3">
+            <div class="ln c-dim">$ nekocode tools --list</div>
+            <div class="ln c-grn">read / edit / write       读写代码，改前必先看</div>
+            <div class="ln c-grn">grep / find / ast-grep    按文本与语法结构定位</div>
+            <div class="ln c-blu">bash / powershell         跑命令、测试、构建</div>
+            <div class="ln c-blu">browser_*                 在真实渲染里验证 DOM 与交互</div>
+            <div class="ln c-pur">ssh / remote_desktop      部署与图形界面操作</div>
+            <div class="ln c-pur">github / web_search       查 PR、CI 与公开资料</div>
+            <div class="ln c-org">todo / task / memory      长任务跟踪与跨会话偏好</div>
+            <div class="ln c-fg">→ 工具是手段，验收才是目的</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block wrap" id="rules">
+      <div class="sec-head">
+        <div class="sec-tag">// discipline</div>
+        <h2>四条让我值得被信任的守则</h2>
+        <p>能力决定我能做多少，纪律决定你敢让我做多少。</p>
+      </div>
+      <div class="grid-4">
+        <div class="mini"><span class="num">01</span><b>先读后改</b><small>任何编辑之前先读完整上下文，精确替换，不凭印象重写整个文件。</small></div>
+        <div class="mini"><span class="num">02</span><b>最小完整</b><small>跟着现有架构和代码风格走，只动必要的部分，不借机做大重构。</small></div>
+        <div class="mini"><span class="num">03</span><b>验证有据</b><small>改动对应什么检查就跑什么，跑不了就说明原因，绝不虚构结果。</small></div>
+        <div class="mini"><span class="num">04</span><b>保护现场</b><small>不回退、不提交、不覆盖你的未完成修改；危险操作先要授权。</small></div>
+      </div>
+    </section>
+  </main>
+
+<footer>
+  <div class="wrap foot">
+    <div>NekoCode Desktop · <span class="mono">v0.1.4</span> · Electron + React 桌面编码助手</div>
+    <div class="mono">PI Agent Core · Fusion Dual-Core</div>
+  </div>
+</footer>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="cat" viewBox="0 0 48 48">
+    <path d="M14 16 L11 4 L21 10 M34 16 L37 4 L27 10" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M9 26c0-8 6-13 15-13s15 5 15 13-6 14-15 14S9 34 9 26z" fill="none" stroke="#38bdf8" stroke-width="3"/>
+    <circle cx="18" cy="25" r="2.6" fill="#34d399"/>
+    <circle cx="30" cy="25" r="2.6" fill="#34d399"/>
+    <path d="M24 30l-3 2.5h6z" fill="#ec4899"/>
+    <path d="M12 30h-7M12 34h-7M36 30h7M36 34h7" stroke="#64748b" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
+<script>
+(function () {
+  var titles = { p1: 'nekocode — fusion / dual-core', p2: 'nekocode — debug / root-cause', p3: 'nekocode — tools / inventory' };
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var termTitle = document.getElementById('termTitle');
+  var consoleBox = document.getElementById('console');
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      tabs.forEach(function (t) { t.classList.remove('on'); t.setAttribute('aria-selected', 'false'); });
+      var all = consoleBox.querySelectorAll('.panel');
+      Array.prototype.forEach.call(all, function (p) { p.classList.remove('on'); });
+      tab.classList.add('on');
+      tab.setAttribute('aria-selected', 'true');
+      document.getElementById(tab.dataset.panel).classList.add('on');
+      termTitle.textContent = titles[tab.dataset.panel] || titles.p1;
+    });
+  });
+
+  var lines = [
+    ['c-dim', '$ nekocode chat --user "你能帮我做什么？"'],
+    ['c-grn', '[nekocode] 读代码、定位问题、写实现、跑测试、看真实界面，都行。'],
+    ['c-blu', '[nekocode] 给我一个具体的目标，我会先看清代码再动手。'],
+    ['c-org', '[nekocode] 完成后我会告诉你：改了什么、验证了什么、哪里没覆盖。'],
+    ['c-pur', '[nekocode] 走吧，第一个任务想做什么？']
+  ];
+  var simBtn = document.getElementById('simulate');
+  var box = consoleBox;
+  var simPanel, target;
+  var simTimer = null;
+  var simToken = 0;
+  simBtn.addEventListener('click', function () {
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    tabs.forEach(function (t) { t.classList.remove('on'); t.setAttribute('aria-selected', 'false'); });
+    termTitle.textContent = 'nekocode — interactive session';
+    if (!simPanel) {
+      simToken++;
+      simPanel = document.createElement('div');
+      simPanel.className = 'panel on';
+      simPanel.style.marginTop = '22px';
+      simPanel.innerHTML = '<div class="ln c-dim">$ nekocode chat --user "你能帮我做什么？"</div>';
+      box.querySelector('.term-body').appendChild(simPanel);
+      var allPanels = box.querySelectorAll('.panel');
+      Array.prototype.forEach.call(allPanels, function (p) { if (p !== simPanel) { p.classList.remove('on'); } });
+      target = simPanel;
+      runLines(0);
+    } else {
+      var existing = box.querySelectorAll('.panel');
+      Array.prototype.forEach.call(existing, function (p) { p.classList.remove('on'); });
+      simPanel.innerHTML = '<div class="ln c-dim">$ nekocode chat --user "你能帮我做什么？"</div>';
+      simPanel.classList.add('on');
+      if (simTimer) { clearInterval(simTimer); simTimer = null; }
+      simToken++;
+      runLines(0);
+    }
+  });
+
+  function runLines(i) {
+    var token = simToken;
+    if (i >= lines.length) {
+      var done = document.createElement('div');
+      done.className = 'ln c-grn';
+      done.textContent = '[session] 模拟结束 —— 真实会话由 PI Agent Core 驱动。';
+      target.appendChild(done);
+      return;
+    }
+    var el = document.createElement('div');
+    el.className = 'ln ' + lines[i][0];
+    target.appendChild(el);
+    var text = lines[i][1];
+    var pos = 0;
+    simTimer = setInterval(function () {
+      if (token !== simToken) { clearInterval(simTimer); return; }
+      pos += 3;
+      el.textContent = text.slice(0, pos);
+      if (pos >= text.length) {
+        clearInterval(simTimer);
+        simTimer = null;
+        el.textContent = text;
+        setTimeout(function () { if (token === simToken) { runLines(i + 1); } }, 260);
+      }
+    }, 22);
+  }
+})();
+</script>
+</body>
+</html>

@@ -55,6 +55,10 @@ describe("workUnits", () => {
 });
 
 describe("commandResult", () => {
+	test("manual command stops show as stopped and retain the user's reason", () => {
+		const output = "Command stopped by user.\nUser's reason: too slow\nDo not rerun without approval.";
+		expect(commandResult(output, false, "error")).toEqual({ body: output, exitCode: null, stopped: "aborted" });
+	});
 	test("takes the local shell's exit status off the output", () => {
 		expect(commandResult("boom\n\nCommand exited with code 2", false, "error")).toEqual({ body: "boom", exitCode: 2, stopped: null });
 		expect(commandResult("ok\n", false, "done")).toEqual({ body: "ok", exitCode: 0, stopped: null });

@@ -1,10 +1,14 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { TaskStep, WorkflowTask } from "../../../../shared/workflow";
+import type { ToolCellData } from "../../../../shared/transcript";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { elapsedSeconds, formatElapsed, useNow } from "../../lib/elapsed";
-import { BotIcon, HammerIcon, TriangleAlertIcon } from "../../lib/icons";
+import { ArrowDownIcon, BotIcon, HammerIcon, TerminalIcon, TriangleAlertIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { ThinkingBlock } from "../chat/Thinking";
+import { Markdown } from "../chat/Markdown";
+import { isShellTool, ToolCall, ToolLine, toolPhase } from "../chat/ToolCalls";
+import { CommandStopButton } from "../chat/CommandStopButton";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
@@ -21,80 +25,53 @@ const KIND_KEYS: Record<WorkflowTask["kind"], TranslationKey> = {
 	worker: "workflow.taskKind.worker",
 };
 
-const BLOCK_CLASS_NAME = cn(
-	"max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg",
-	"border border-border/60 bg-[var(--color-token-text-code-block-background)] p-2.5",
-	"font-mono text-[length:var(--app-font-size-chat-code,11px)]",
-);
+/** Adapt bounded worker previews to the main transcript's presentation contract. */
+function toolCell(step: Extract<TaskStep, { kind: "tool" }>): ToolCellData {
+	let args: unknown = step.args;
+	try { args = JSON.parse(step.args); } catch { /* A retained preview can be truncated JSON. */ }
+	if (isShellTool(step.toolName) && typeof args === "string" && !args.trimStart().startsWith("{"))
+		args = { command: args };
+	return { id: step.id, type: "tool", toolCallId: step.id, toolName: step.toolName,
+		args, output: step.output ?? "", status: step.status, startedAt: step.startedAt,
+		timestamp: step.endedAt ?? step.startedAt };
+}
 
-/** A tool call with everything it returned — the transcript row, unfolded. */
-function ToolStep({ step }: { step: Extract<TaskStep, { kind: "tool" }> }) {
-	const { t } = useTranslation();
-	const now = useNow(step.status === "running");
-	const seconds = elapsedSeconds(step.startedAt, step.endedAt ?? now);
+/** Keep truncated JSON as a preview, never pretend it is a complete shell command. */
+function PreviewTool({ cell, step, active }: { cell: ToolCellData; step: Extract<TaskStep, { kind: "tool" }>; active: boolean }) {
+	const [manual, setManual] = useState<boolean | null>(null);
+	const open = manual ?? step.status === "error";
+	const now = useNow(active && step.status === "running");
+	const seconds = elapsedSeconds(step.startedAt, step.endedAt ?? (active ? now : step.startedAt));
 	return (
-		<div className="flex flex-col gap-1">
-			<div className="flex items-center gap-1.5">
-				{step.status === "running" ? (
-					<Spinner className="size-3.5 shrink-0 text-muted-foreground" />
-				) : step.status === "error" ? (
-					<TriangleAlertIcon className="size-3.5 shrink-0 text-destructive" />
-				) : (
-					<HammerIcon className={cn("size-3.5 shrink-0", MUTED_LABEL_TEXT_CLASS_NAME)} />
-				)}
-				<span className="shrink-0 text-[length:var(--app-font-size-chat,12px)] font-medium">
-					{step.toolName}
-				</span>
-				<span className="flex-1" />
-				{seconds > 0 ? (
-					<span
-						className={cn(
-							"shrink-0 tabular-nums text-[length:var(--app-font-size-ui-sm,11px)]",
-							MUTED_LABEL_TEXT_CLASS_NAME,
-						)}
-					>
-						{formatElapsed(seconds)}
-					</span>
-				) : null}
+		<div className="flex min-w-0 flex-col gap-1">
+			<div className="flex min-w-0 items-center">
+			<ToolLine phase={toolPhase(cell, active)} icon={isShellTool(step.toolName) ? TerminalIcon : HammerIcon}
+				label={step.toolName} subject={step.args} title={step.args}
+				meta={seconds > 0 ? formatElapsed(seconds) : undefined}
+				expandable={!!step.output} open={open}
+				onClick={step.output ? () => setManual(!open) : undefined} className="flex-1 py-0.5" />
+			{isShellTool(step.toolName) ? <CommandStopButton toolCallId={cell.toolCallId} running={active && step.status === "running"} /> : null}
 			</div>
-			{step.args ? (
-				<pre className={cn(BLOCK_CLASS_NAME, "max-h-24")}>{step.args}</pre>
-			) : null}
-			{step.output ? (
-				<>
-					<span
-						className={cn(
-							"text-[length:var(--app-font-size-ui-sm,11px)]",
-							MUTED_LABEL_TEXT_CLASS_NAME,
-						)}
-					>
-						{t("workflow.taskOutput")}
-					</span>
-					<pre className={BLOCK_CLASS_NAME}>{step.output}</pre>
-				</>
+			{open && step.output ? (
+				<pre className={cn("tool-expand ml-5.5 max-h-80 overflow-auto overscroll-contain rounded-lg border border-border/50",
+					"bg-[var(--color-token-text-code-block-background)] px-2.5 py-2 font-mono text-[length:var(--app-font-size-chat-code,11px)]",
+					"whitespace-pre-wrap break-words [overflow-wrap:anywhere]", step.status === "error" && "text-destructive")}>
+					{step.output}
+				</pre>
 			) : null}
 		</div>
 	);
 }
 
-/** What the worker said between calls, which is what ties them together. */
+function ToolStep({ step, active }: { step: Extract<TaskStep, { kind: "tool" }>; active: boolean }) {
+	const cell = useMemo(() => toolCell(step), [step]);
+	return typeof cell.args === "string" && cell.args.trimStart().startsWith("{")
+		? <PreviewTool cell={cell} step={step} active={active} />
+		: <ToolCall cell={cell} active={active} />;
+}
+
 function MessageStep({ step }: { step: Extract<TaskStep, { kind: "message" }> }) {
-	const { t } = useTranslation();
-	return (
-		<div className="flex flex-col gap-1 border-l-2 border-border pl-2">
-			<span
-				className={cn(
-					"text-[length:var(--app-font-size-ui-sm,11px)]",
-					MUTED_LABEL_TEXT_CLASS_NAME,
-				)}
-			>
-				{t("workflow.taskSaid")}
-			</span>
-			<p className="whitespace-pre-wrap break-words text-[length:var(--app-font-size-chat,12px)]">
-				{step.text}
-			</p>
-		</div>
-	);
+	return <div className="min-w-0 py-1"><Markdown text={step.text} /></div>;
 }
 
 /**
@@ -116,6 +93,7 @@ export function TaskDetailPanel({
 	const { t } = useTranslation();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const followRef = useRef(true);
+	const [following, setFollowing] = useState(true);
 	const running = task?.status === "running";
 	const now = useNow(running);
 	const stepCount = task?.steps.length ?? 0;
@@ -125,10 +103,15 @@ export function TaskDetailPanel({
 	const tailSize = tail ? (tail.kind === "tool" ? (tail.output?.length ?? 0) : tail.text.length) : 0;
 
 	useLayoutEffect(() => {
+		followRef.current = true;
+		setFollowing(true);
+	}, [task?.id]);
+
+	useLayoutEffect(() => {
 		const el = scrollRef.current;
 		if (!el || !followRef.current) return;
 		el.scrollTop = el.scrollHeight;
-	}, [stepCount, tailSize, task?.status]);
+	}, [stepCount, tailSize, task?.status, task?.id, task?.result]);
 
 	if (!task) {
 		return (
@@ -139,54 +122,53 @@ export function TaskDetailPanel({
 	}
 
 	const seconds = elapsedSeconds(task.startedAt, task.endedAt ?? now);
+	const tools = task.steps.filter((step) => step.kind === "tool");
+	const errors = tools.filter((step) => step.status === "error").length;
+	const lastMessage = [...task.steps].reverse().find((step) => step.kind === "message");
+	const result = task.result ?? "";
+	const showResult = !running && !!result.trim() &&
+		!(lastMessage?.kind === "message" && lastMessage.text.trim() === result.trim());
+	const attention = task.status === "failed" || (task.outcome && !["completed"].includes(task.outcome));
 
 	return (
-		<div className="flex h-full min-h-0 flex-col">
-			<div className="shrink-0 border-b border-[color:var(--app-surface-divider)] p-3">
-				<div className="flex items-center gap-1.5">
+		<div className="relative flex h-full min-h-0 min-w-0 flex-col">
+			<div className={cn("relative shrink-0 border-b border-[color:var(--app-surface-divider)] px-4 py-3", running && "tool-scan")}>
+				<div className="flex items-start gap-2">
 					<BotIcon
 						className={cn(
-							"size-4 shrink-0",
+							"mt-0.5 size-4 shrink-0",
 							task.status === "failed" ? "text-destructive" : MUTED_LABEL_TEXT_CLASS_NAME,
 						)}
 					/>
-					<span className="min-w-0 flex-1 truncate font-medium">{task.description}</span>
-					{running ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+					<span className="min-w-0 flex-1 break-words text-[length:var(--app-font-size-ui,12px)] font-medium leading-relaxed [overflow-wrap:anywhere] line-clamp-2" title={task.description}>{task.description}</span>
+					{running && onCancel ? (
+						<Button type="button" size="xs" variant="ghost" className="shrink-0" onClick={() => onCancel(task.id)}>
+							{t("workflow.cancelTask")}
+						</Button>
+					) : null}
 				</div>
 				<div
 					className={cn(
-						"mt-1 flex flex-wrap items-center gap-x-2 text-[length:var(--app-font-size-ui-sm,11px)]",
+						"mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[length:var(--app-font-size-ui-sm,11px)]",
 						MUTED_LABEL_TEXT_CLASS_NAME,
 					)}
 				>
-					<span>{t(KIND_KEYS[task.kind])}</span>
-					<span>·</span>
-					<span className={task.status === "failed" ? "text-destructive" : undefined}>
+					<span className={cn("inline-flex items-center gap-1.5", attention && "text-[var(--warning)]", task.status === "failed" && "text-destructive")}>
+						{running ? <Spinner className="size-3 shrink-0" /> : attention ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
 						{t(task.status === "completed" && task.outcome ? `fusion.outcome.${task.outcome}` : STATUS_KEYS[task.status])}
 					</span>
-					<span>·</span>
-					<span className="tabular-nums">{formatElapsed(seconds)}</span>
+					<span aria-hidden="true">·</span>
+					<span>{t(KIND_KEYS[task.kind])}</span>
+					<span className="ml-auto tabular-nums">{formatElapsed(seconds)}</span>
+					{errors ? <span className="text-destructive">{t("agentMap.errors", { count: errors })}</span> : null}
 				</div>
 				{task.writablePaths.length ? (
-					<p
-						className={cn(
-							"mt-1 break-all text-[length:var(--app-font-size-ui-sm,11px)]",
-							MUTED_LABEL_TEXT_CLASS_NAME,
-						)}
-					>
-						{t("workflow.taskScope")}: {task.writablePaths.join(", ")}
-					</p>
-				) : null}
-				{running && onCancel ? (
-					<Button
-						type="button"
-						size="xs"
-						variant="outline"
-						className="mt-2"
-						onClick={() => onCancel(task.id)}
-					>
-						{t("workflow.cancelTask")}
-					</Button>
+					<details className={cn("mt-2 min-w-0 text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
+						<summary className="cursor-pointer rounded-sm hover:text-foreground focus-visible:outline focus-visible:outline-1 focus-visible:outline-ring">{t("workflow.taskScope")}</summary>
+						<div className="mt-1.5 flex flex-col gap-1 border-l border-border/60 pl-3 font-mono [overflow-wrap:anywhere]">
+							{task.writablePaths.map((path, index) => <span key={`${path}-${index}`}>{path}</span>)}
+						</div>
+					</details>
 				) : null}
 			</div>
 			<div
@@ -194,40 +176,63 @@ export function TaskDetailPanel({
 				onScroll={() => {
 					const el = scrollRef.current;
 					if (!el) return;
-					followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+					const next = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+					if (next !== followRef.current) { followRef.current = next; setFollowing(next); }
 				}}
-				className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+				className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-16"
 			>
+				{/* Keep the step flow at its natural height. A bounded flex column
+				    shrinks overflow-hidden command cards instead of scrolling them. */}
+				<div className="flex min-w-0 flex-col gap-4">
 				{task.steps.length === 0 ? (
 					<p
 						className={cn(
-							"text-[length:var(--app-font-size-ui-sm,11px)]",
+							"border-l border-border/60 pl-3 text-[length:var(--app-font-size-chat,12px)]",
 							MUTED_LABEL_TEXT_CLASS_NAME,
 						)}
 					>
 						{running ? (
 							<span className="shimmer">{t("workflow.taskStarting")}</span>
 						) : (
-							t("workflow.taskNoSteps")
+							t(result ? "workflow.taskStepsGone" : "workflow.taskNoSteps")
 						)}
 					</p>
 				) : null}
 				{task.steps.map((step) =>
 					step.kind === "tool" ? (
-						<ToolStep key={step.id} step={step} />
+						<ToolStep key={step.id} step={step} active={running} />
 					) : step.kind === "message" ? (
 						<MessageStep key={step.id} step={step} />
 					) : (
 						<ThinkingBlock
 							key={step.id}
 							text={step.text}
-							active={step.endedAt === undefined}
+							active={running && step.endedAt === undefined}
 							startedAt={step.startedAt}
-							endedAt={step.endedAt}
+							endedAt={step.endedAt ?? (!running ? task.endedAt : undefined)}
 						/>
 					),
 				)}
+				{showResult ? (
+					<section className="flex min-w-0 flex-col gap-2 border-t border-border/50 pt-4">
+						<h3 className={cn("text-[length:var(--app-font-size-ui-sm,11px)] font-medium", MUTED_LABEL_TEXT_CLASS_NAME)}>{t("workflow.taskResult")}</h3>
+						<Markdown text={result} />
+					</section>
+				) : null}
+				</div>
 			</div>
+			{!following ? (
+				<Button type="button" size="xs" variant="outline"
+					className="absolute bottom-3 right-4 bg-[var(--color-background-elevated-primary-opaque)]"
+					onClick={() => {
+						followRef.current = true;
+						setFollowing(true);
+						const el = scrollRef.current;
+						if (el) el.scrollTop = el.scrollHeight;
+					}}>
+					<ArrowDownIcon className="size-3.5" />{t("chat.jumpToLatest")}
+				</Button>
+			) : null}
 		</div>
 	);
 }

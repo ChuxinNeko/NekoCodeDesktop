@@ -35,7 +35,9 @@ import {
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Spinner } from "../ui/spinner";
+import { DisclosureRegion } from "../ui/disclosure-region";
 import { lastThinkingLine } from "./Thinking";
+import { CommandStopButton } from "./CommandStopButton";
 
 /**
  * Tool calls in the transcript, as one family.
@@ -215,7 +217,6 @@ function ToolLine({
 	onClick?: () => void;
 	className?: string;
 }) {
-	const live = isLive(phase);
 	return (
 		<button
 			type="button"
@@ -229,7 +230,6 @@ function ToolLine({
 			<span
 				className={cn(
 					"shrink-0 text-[length:var(--app-font-size-chat,12px)] font-medium text-foreground/80 transition-colors group-hover:text-foreground",
-					live && "shimmer",
 				)}
 			>
 				{label}
@@ -387,6 +387,8 @@ interface ToolPresentation {
 	/** The read row's glyph comes from the file's extension, not a fixed icon. */
 	fileIconName?: string;
 	meta?: string;
+	title?: string;
+	showArguments?: boolean;
 }
 
 function lineCount(text: string): number {
@@ -394,6 +396,14 @@ function lineCount(text: string): number {
 }
 
 function toolPresentation(cell: ToolCellData, t: TranslateFn): ToolPresentation {
+	const mcp = /^mcp__(.+?)__(.+)$/.exec(cell.toolName);
+	if (mcp) {
+		const details = typeof cell.details === "object" && cell.details !== null ? cell.details as Record<string, unknown> : {};
+		const server = typeof details.server === "string" && details.server.trim() ? details.server : mcp[1];
+		const tool = typeof details.tool === "string" && details.tool.trim() ? details.tool : mcp[2];
+		return { label: t("tool.mcpCalled"), subject: `${server} / ${tool}`, icon: ServerIcon,
+			prose: true, title: cell.toolName, showArguments: true };
+	}
 	const settledOk = cell.status === "done";
 	switch (cell.toolName) {
 		case "read": {
@@ -557,6 +567,17 @@ export function toolSummary(cell: ToolCellData, t: TranslateFn): string {
 
 // --- rows -----------------------------------------------------------------------
 
+function formattedArguments(args: unknown): string | null {
+	if (args === null || args === undefined) return null;
+	if (typeof args === "string") return args.trim() ? args : null;
+	if (typeof args === "object" && Object.keys(args).length === 0) return null;
+	try {
+		return JSON.stringify(args, null, 2) ?? null;
+	} catch {
+		return null;
+	}
+}
+
 /** A call worth one line: the line, and its output underneath once unfolded. */
 const ToolRow = memo(function ToolRow({
 	cell,
@@ -572,8 +593,9 @@ const ToolRow = memo(function ToolRow({
 	const output = useToolOutput(cell);
 	const phase = toolPhase(cell, active);
 	const presentation = toolPresentation(cell, t);
+	const argumentsText = presentation.showArguments ? formattedArguments(cell.args) : null;
 	const opensFile = presentation.openPath !== undefined && onOpenFile !== undefined;
-	const expandable = !opensFile && output.shown !== "";
+	const expandable = !opensFile && (output.shown !== "" || argumentsText !== null);
 
 	return (
 		<div className={cn("flex flex-col gap-1", active && "tool-enter")}>
@@ -587,7 +609,7 @@ const ToolRow = memo(function ToolRow({
 				meta={presentation.meta}
 				expandable={expandable}
 				open={open}
-				title={presentation.openPath ?? presentation.subject ?? undefined}
+				title={presentation.title ?? presentation.openPath ?? presentation.subject ?? undefined}
 				onClick={
 					opensFile
 						? () => onOpenFile?.(presentation.openPath as string)
@@ -597,19 +619,24 @@ const ToolRow = memo(function ToolRow({
 				}
 				className="py-0.5"
 			/>
-			{open && expandable ? (
-				<div className={cn("tool-expand ml-5.5 overflow-hidden rounded-lg border border-border/50", OUTPUT_SURFACE_CLASS_NAME)}>
-					<pre
+			<DisclosureRegion open={open && expandable}>
+				<div className={cn("ml-5.5 overflow-hidden rounded-lg border border-border/50", OUTPUT_SURFACE_CLASS_NAME)}>
+					{argumentsText !== null ? <div className="border-b border-border/40 px-2.5 py-2">
+						<div className="mb-1 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{t("toolCall.arguments")}</div>
+						<pre className="max-h-48 overflow-auto overscroll-contain whitespace-pre-wrap break-words font-mono text-[length:var(--app-font-size-chat-code,11px)] text-foreground/85 [overflow-wrap:anywhere]">{argumentsText}</pre>
+					</div> : null}
+					{presentation.showArguments && (output.shown || output.missing > 0) ? <div className="px-2.5 pt-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{t("toolCall.result")}</div> : null}
+					{output.shown ? <pre
 						className={cn(
 							"max-h-80 overflow-auto overscroll-contain whitespace-pre-wrap break-words px-2.5 py-2 [overflow-wrap:anywhere]",
 							phase === "error" ? "text-destructive" : "text-foreground/85",
 						)}
 					>
 						{output.shown}
-					</pre>
+					</pre> : null}
 					<MoreOutput output={output} />
 				</div>
-			) : null}
+			</DisclosureRegion>
 		</div>
 	);
 });
@@ -650,6 +677,7 @@ export function commandResult(output: string, ssh: boolean, status: ToolCellData
 		}
 		body = body.replace(/^--- stdout ---\n/, "").replace(/^\(no output\)$/m, "");
 	} else {
+		if (body.startsWith("Command stopped by user.")) stopped = "aborted";
 		const trailing = /\n*(Command exited with code (\d+)|Command timed out after \d+ seconds|Command aborted|Command terminated without an exit code)\s*$/.exec(body);
 		if (trailing) {
 			body = body.slice(0, trailing.index);
@@ -701,6 +729,7 @@ const TerminalCard = memo(function TerminalCard({ cell, active }: { cell: ToolCe
 
 	return (
 		<div className={cn(CARD_CLASS_NAME, live && "tool-scan", active && "tool-enter")}>
+			<div className="flex min-w-0 items-center">
 			<ToolLine
 				phase={failed && !live ? "error" : phase}
 				icon={ssh ? ServerIcon : TerminalIcon}
@@ -711,10 +740,12 @@ const TerminalCard = memo(function TerminalCard({ cell, active }: { cell: ToolCe
 				open={open}
 				title={command}
 				onClick={() => setManual(!open)}
-				className={CARD_HEADER_CLASS_NAME}
+				className={cn(CARD_HEADER_CLASS_NAME, "flex-1")}
 			/>
-			{open ? (
-				<div className={cn("tool-expand border-t border-border/40", OUTPUT_SURFACE_CLASS_NAME)}>
+			{!ssh ? <CommandStopButton toolCallId={cell.toolCallId} running={phase === "running"} /> : null}
+			</div>
+			<DisclosureRegion open={open}>
+				<div className={cn("border-t border-border/40", OUTPUT_SURFACE_CLASS_NAME)}>
 					<div className="flex min-w-0 gap-2 px-2.5 pt-2 pb-1">
 						<span className="shrink-0 select-none text-muted-foreground">
 							{ssh ? `${host ?? "ssh"} $` : SHELL_NAMES[cell.toolName] === "PowerShell" ? "PS>" : cell.toolName === "cmd" ? ">" : "$"}
@@ -743,7 +774,7 @@ const TerminalCard = memo(function TerminalCard({ cell, active }: { cell: ToolCe
 					)}
 					<MoreOutput output={output} />
 				</div>
-			) : null}
+			</DisclosureRegion>
 		</div>
 	);
 });
@@ -929,8 +960,8 @@ export const ComputerUseCard = memo(function ComputerUseCard({
 				onClick={() => setOpen((value) => !value)}
 				className={CARD_HEADER_CLASS_NAME}
 			/>
-			{open ? (
-				<div className="tool-expand flex flex-col gap-1.5 border-t border-border/40 px-2.5 py-2">
+			<DisclosureRegion open={open}>
+				<div className="flex flex-col gap-1.5 border-t border-border/40 px-2.5 py-2">
 					<div className="flex min-w-0 flex-wrap gap-1">
 						{steps.map((step) => (
 							<ComputerChip
@@ -949,7 +980,7 @@ export const ComputerUseCard = memo(function ComputerUseCard({
 					) : null}
 					{selected ? <ComputerStepDetail step={selected} /> : null}
 				</div>
-			) : null}
+			</DisclosureRegion>
 		</div>
 	);
 });

@@ -1,5 +1,82 @@
 import type { TaskInput, TaskStep } from "../shared/workflow";
 import { isShellTool } from "../shared/hooks";
+import { createHash } from "node:crypto";
+import { Type } from "typebox";
+import type { FusionTaskReport } from "../shared/workflow";
+
+const shortText = () => Type.String({ minLength: 1, maxLength: 2000 });
+export const FUSION_COMPACT_HANDOFF_SCHEMA = Type.Object({
+	instruction: shortText(),
+	path: Type.String({ minLength: 1, maxLength: 1000 }),
+	acceptanceCriterion: shortText(),
+	check: Type.Optional(shortText()),
+	skipReason: Type.Optional(shortText()),
+}, { additionalProperties: false });
+export const FUSION_RESUME_HANDOFF_SCHEMA = Type.Object({
+	resume: Type.Literal(true),
+	instruction: shortText(),
+	resolution: shortText(),
+}, { additionalProperties: false });
+
+/** Small inline edits and corrections reuse runtime plans instead of regenerating them. */
+export class FusionInlineHandoffState {
+	private previous?: TaskInput;
+	private failed = new Map<string, number>();
+	private signature(input: TaskInput): string {
+		return createHash("sha256").update(JSON.stringify({ prompt: input.prompt, paths: input.writablePaths,
+			plan: input.executionPlan, design: input.designSpec })).digest("hex");
+	}
+	prepare(args: unknown): TaskInput {
+		if (!args || typeof args !== "object") throw new Error("Fusion handoff requires an object");
+		const value = args as Record<string, unknown>;
+		let input: TaskInput;
+		if (value.resume === true) {
+			if (!this.previous) throw new Error("No inline plan to resume in this user task; provide a new handoff");
+			if (typeof value.instruction !== "string" || !value.instruction.trim() || typeof value.resolution !== "string" || !value.resolution.trim())
+				throw new Error("Resume needs a concrete correction and resolution of the previous blocker");
+			input = { ...this.previous, prompt: value.instruction + "\nLead resolution: " + value.resolution,
+				executionPlan: { ...this.previous.executionPlan!, steps: [value.instruction] } };
+		} else if (typeof value.instruction === "string") {
+			if (!value.instruction.trim() || typeof value.path !== "string" || !value.path.trim() ||
+				typeof value.acceptanceCriterion !== "string" || !value.acceptanceCriterion.trim())
+				throw new Error("Compact handoff requires instruction, path and acceptanceCriterion");
+			const check = typeof value.check === "string" && !!value.check.trim();
+			const skip = typeof value.skipReason === "string" && !!value.skipReason.trim();
+			if (check === skip) throw new Error("Provide exactly one concrete check or explicit skipReason");
+			input = { kind: "worker", description: value.instruction.slice(0, 200), prompt: value.instruction,
+				writablePaths: [value.path], executionPlan: { steps: [value.instruction],
+					constraints: ["Preserve user changes and all shared user restrictions.", ...(skip ? [String(value.skipReason)] : [])],
+					acceptanceCriteria: [value.acceptanceCriterion], verification: check ? { mode: "run", checks: [String(value.check)] } : { mode: "skip", checks: [] } } };
+		} else input = args as TaskInput;
+		const error = fusionTaskError(input);
+		if (error) throw new Error(error);
+		if (input.kind !== "worker" || !input.writablePaths?.length) throw new Error("Implementation needs worker and writablePaths");
+		if ((this.failed.get(this.signature(input)) ?? 0) >= 2)
+			throw new Error("This unchanged Fusion plan failed twice. Do not repeat it: collect missing evidence and supply a new concrete decision/resolution, or report the blocker to the user.");
+		return input;
+	}
+	accept(input: TaskInput): void { this.previous = structuredClone(input); }
+	snapshot() { return { previous: this.previous, failed: [...this.failed] }; }
+	restore(value: unknown): boolean {
+		const v = value as ReturnType<FusionInlineHandoffState["snapshot"]>;
+		if (!v || (v.previous && (fusionTaskError(v.previous) || v.previous.kind !== "worker" ||
+			typeof v.previous.prompt !== "string" || !v.previous.prompt.trim() || v.previous.prompt.length > 20000 ||
+			typeof v.previous.description !== "string" || v.previous.description.length > 2000 ||
+			(v.previous.designSpec !== undefined && (typeof v.previous.designSpec !== "string" || v.previous.designSpec.length > 20000)) ||
+			!Array.isArray(v.previous.writablePaths) || !v.previous.writablePaths.length || v.previous.writablePaths.length > 20 ||
+			!v.previous.writablePaths.every((path) => typeof path === "string" && path.length > 0 && path.length <= 1000))) ||
+			!Array.isArray(v.failed) || v.failed.length > 100 || !v.failed.every((entry) => Array.isArray(entry) && entry.length === 2 &&
+				typeof entry[0] === "string" && /^[a-f0-9]{64}$/.test(entry[0]) && Number.isSafeInteger(entry[1]) && entry[1] >= 0 && entry[1] <= 10000)) return false;
+		this.previous = v.previous ? structuredClone(v.previous) : undefined; this.failed = new Map(v.failed); return true;
+	}
+	report(report?: FusionTaskReport): void {
+		if (!this.previous) return;
+		const signature = this.signature(this.previous);
+		if (report?.outcome === "completed") { this.failed.delete(signature); return; }
+		this.failed.set(signature, (this.failed.get(signature) ?? 0) + 1);
+	}
+	reset(): void { this.previous = undefined; this.failed.clear(); }
+}
 
 /** Checked before creating a worker so a bad handoff never acquires write ownership. */
 export function fusionTaskError(input: unknown): string | undefined {
@@ -16,6 +93,10 @@ export function fusionTaskError(input: unknown): string | undefined {
 	}
 	if (plan.verification.mode === "run" && !plan.verification.checks.length)
 		return "Fusion verification=run requires concrete checks; use skip with a constraint explaining why verification is excluded.";
+	if (plan.decisionBrief && (typeof plan.decisionBrief.objective !== "string" ||
+		!plan.decisionBrief.objective.trim() || plan.decisionBrief.objective.length > 2000 ||
+		!list(plan.decisionBrief.decisions, true) || !list(plan.decisionBrief.evidence) || !list(plan.decisionBrief.stopConditions, true)))
+		return "Fusion decisionBrief needs an objective, concrete decisions, evidence locations and stopConditions for returning to Lead.";
 	if (plan.verification.mode === "skip" && (plan.verification.checks.length || !plan.constraints.length))
 		return "Fusion verification=skip requires empty checks and a constraint explaining the verification restriction.";
 }
@@ -35,14 +116,23 @@ export function taskHandoffPrompt(input: TaskInput): string {
 /** Bounded, runtime-observed evidence, not the model's claim of passing checks. */
 export class FusionExecutionEvidence {
 	private records: string[] = [];
+	private commands = 0;
+	private failedCommands = 0;
 	record(step: TaskStep): void {
 		if (step.kind !== "tool" || step.status === "running" ||
 			(!isShellTool(step.toolName) && step.status !== "error")) return;
+		if (isShellTool(step.toolName)) {
+			this.commands++;
+			if (step.status === "error") this.failedCommands++;
+		}
 		this.records.push(JSON.stringify({
 			tool: step.toolName, args: step.args.slice(0, 160), status: step.status,
 			output: step.output?.slice(-500),
 		}));
 		if (this.records.length > 8) this.records.shift();
+	}
+	summary(): { observedCommands: number; failedCommands: number } {
+		return { observedCommands: this.commands, failedCommands: this.failedCommands };
 	}
 	appendTo(result: string): string {
 		return result + "\n\n## Runtime execution evidence (last 8 command/error results; tool success is not acceptance)\n" +

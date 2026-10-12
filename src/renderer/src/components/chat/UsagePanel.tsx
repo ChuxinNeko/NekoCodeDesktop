@@ -1,7 +1,18 @@
-import type { TurnUsage } from "../../../../shared/agent";
+import { createContext, useContext } from "react";
+import type { ModelOption, TurnUsage } from "../../../../shared/agent";
 import { formatCost, formatDuration, formatPercent, formatRate, formatTokens, usageStats } from "../../../../shared/usage";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
+
+export const UsageModelsContext = createContext<readonly ModelOption[]>([]);
+
+function useUsageModelLabel() {
+	const models = useContext(UsageModelsContext);
+	return (provider: string, model: string) => {
+		const providerName = models.find((option) => option.provider === provider)?.providerName.trim() || provider;
+		return providerName ? `${providerName}/${model}` : model;
+	};
+}
 
 function ModelUsageGrid({ usage, provider, model, role }: {
 	usage?: TurnUsage;
@@ -10,6 +21,7 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 	role?: "lead" | "sidekick" | "fastContext";
 }) {
 	const { t } = useTranslation();
+	const modelLabel = useUsageModelLabel();
 	const stats = usage ? usageStats(usage) : undefined;
 	const tokens = (value?: number) => value === undefined ? "—" : formatTokens(value);
 	const metrics = [
@@ -33,7 +45,7 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 		<section className="min-w-0 space-y-2" aria-label={roleLabel}>
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{badge ? <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">{badge}</span> : null}
-				<span className="min-w-0 break-all text-xs font-medium text-foreground">{provider ? `${provider}/${model}` : model}</span>
+				<span className="min-w-0 break-all text-xs font-medium text-foreground">{modelLabel(provider, model)}</span>
 			</div>
 			{usage?.responseModel ? <p className="break-all text-xs text-muted-foreground">{t("usage.servedBy")}: {usage.responseModel}</p> : null}
 			{!usage ? <p className="text-xs text-muted-foreground">{t("usage.unrecorded")}</p> : null}
@@ -60,8 +72,8 @@ function ModelUsageGrid({ usage, provider, model, role }: {
 
 export function UsageDetails({ usage }: { usage: TurnUsage }) {
 	const { t } = useTranslation();
+	const modelLabel = useUsageModelLabel();
 	const breakdown = usage.fusion || usage.fastContext;
-	const helperModels = new Set(usage.fusion?.breakdown?.map((entry) => `${entry.usage.provider}/${entry.usage.model}`));
 	return (
 		<div className="w-full max-w-xl space-y-4 rounded-xl border border-border/60 bg-background/60 p-3">
 			<div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -71,22 +83,23 @@ export function UsageDetails({ usage }: { usage: TurnUsage }) {
 			{breakdown ? (
 				<>
 					{usage.fusion ? (
-						<ModelUsageGrid role="lead" usage={usage.fusion.lead} provider={usage.fusion.lead.provider} model={usage.fusion.lead.model} />
+						<ModelUsageGrid role="lead" usage={usage.fusion.lead.calls ? usage.fusion.lead : undefined} provider={usage.fusion.lead.provider} model={usage.fusion.lead.model} />
 					) : usage.fastContext ? (
 						<ModelUsageGrid usage={usage.fastContext.primary} provider={usage.fastContext.primary.provider} model={usage.fastContext.primary.model} />
 					) : null}
 					{usage.fusion ? (
 						<>
 							<div className="border-t border-border/60" />
-							<ModelUsageGrid role="sidekick" {...usage.fusion.sidekick}
-								provider={helperModels.size > 1 ? "" : usage.fusion.breakdown?.[0]?.usage.provider ?? usage.fusion.sidekick.provider}
-								model={helperModels.size > 1 ? t("fusion.multipleModels") : usage.fusion.breakdown?.[0]?.usage.model ?? usage.fusion.sidekick.model} />
+							<ModelUsageGrid role="sidekick" {...usage.fusion.sidekick} />
+							{usage.fusion.attributionAmbiguous ? <p className="text-xs text-muted-foreground">{t("fusion.attributionAmbiguous")}</p> : null}
+							{usage.fusion.unattributed ? <ModelUsageGrid usage={usage.fusion.unattributed} provider="" model={t("fusion.unattributed")} /> : null}
 							{usage.fusion.breakdown?.length ? <details className="text-xs text-muted-foreground">
 								<summary className="cursor-pointer">{t("fusion.costBreakdown")}</summary>
 								<ul className="mt-2 space-y-2">
 									{usage.fusion.breakdown.map((entry, index) => <li key={index} className="break-all">
-										<span>{entry.usage.provider}/{entry.usage.responseModel ?? entry.usage.model}</span>
+										<span>{modelLabel(entry.usage.provider, entry.usage.responseModel ?? entry.usage.model)}</span>
 										<span> · {t(`fusion.usage.${entry.kind}`)}{entry.taskId ? ` · ${entry.taskId.slice(0, 8)}` : ""}</span>
+										{entry.source ? <span> · {t(`fusion.source.${entry.source}`)}</span> : null}
 										<span> · {formatTokens(entry.usage.totalTokens)} tokens · {entry.usage.costUsd === undefined ? "—" : formatCost(entry.usage.costUsd)}</span>
 									</li>)}
 								</ul>
@@ -97,6 +110,7 @@ export function UsageDetails({ usage }: { usage: TurnUsage }) {
 						<>
 							<div className="border-t border-border/60" />
 							<ModelUsageGrid role="fastContext" {...usage.fastContext.search} />
+							{usage.fusion ? <p className="text-xs text-muted-foreground">{t("fusion.searchIncluded")}</p> : null}
 						</>
 					) : null}
 				</>

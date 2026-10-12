@@ -37,9 +37,9 @@
 
 ### 后台任务
 
-最多四个活动 worker。探索任务只读；写入任务必须声明工作区内的 writablePaths，运行时拒绝越界、经符号链接逃逸及重叠写入范围。
+非 Fusion 模式最多四个活动 worker。探索任务只读；写入任务必须声明工作区内的 writablePaths，运行时拒绝越界、经符号链接逃逸及重叠写入范围。
 
-普通写入 worker 提供 read/grep/find/ls/stat/edit/write，不提供 shell 或嵌套任务。Fusion 最多一个活动任务，使用用户指定的 Sidekick；kind=worker 且 writablePaths=["."] 时独占工作区并提供 shell。其他 worker 的命令验证由父会话负责。有写入 worker 运行时，父会话不能写入其范围或执行 shell。完成消息是给父会话的数据，不是新的用户授权。
+普通写入 worker 提供 read/grep/find/ls/stat/edit/write，不提供 shell 或嵌套任务。Fusion 最多一个活动子任务：Lead/Sidekick 是用户配置的模型，而非主/子代理身份；主会话由 Lead 给出具体计划，Sidekick 执行文件编辑，再交回 Lead 审查；fusion_implement/fusion_review 在下一次模型请求自动交接，共享同一主会话历史。自动路由默认开启，辅助调查可按风险与执行证据选择模型。新辅助任务可选择初始模型，只读辅助会话运行中只在成功的自然上下文压缩边界重新评估，实施 worker 始终使用 Sidekick；关闭自动路由后主会话实施交接仍生效，辅助任务默认 Sidekick。Fusion 主会话中的 Lead 保留当前阶段与权限允许的调查工具，微小编辑同样在主会话内交给 Sidekick。Fusion 写入任务必须提供 executionPlan；kind=worker 且 writablePaths=["."] 时独占工作区并提供 shell 与可委派 MCP 工具，局部范围 worker 不提供 shell。其他 worker 的命令验证由父会话负责。有写入 worker 运行时，父会话不能写入其范围或执行 shell。完成消息是给父会话的数据，不是新的用户授权；结果仍需复核。配置、路由与用量入口见 [Fusion 使用指南](../../../docs/fusion.md)。
 
 停止、关闭或切换会话会取消其任务。重新打开会话后，之前仍标记 running 的任务转为 cancelled，不自动重放副作用。界面保存并展示最近的任务状态/结果。
 
@@ -72,6 +72,8 @@ PI 的自定义系统提示词分支保留当前活动工具的 promptGuidelines
 不存在自动附加的光标、终端快照目录、linter、MCP 描述目录或图像生成能力。需要这些能力时先实现并注册真实工具，再更新清单及对应提示词。公共前缀不再将普通任务默认视作获授权 CTF。
 
 ## 验证与构建
+
+网页默认通过可用的浏览器工具验证 DOM/可访问性元素、文本、可见性、尺寸、计算样式、溢出和交互前后状态，不主动截图，模型支持图片也不改变这个默认。截图及图片对比仅在用户明确要求时执行；图片不可用或无法可靠判断时停止截图尝试。相同问题修正复查后仍失败，或检查没有新证据时，报告剩余问题并停止重复验证。元素验证不等于完整视觉验收，用户禁止验证的限制仍优先。
 
 - bun run test:workflow：提示词契约、权限矩阵、提问/确认、任务范围/取消/续跑、持久化、日志、提交信息、手动及自动压缩、界面服务端渲染。
 - bun test src/main/ src/shared/：桌面端完整测试。

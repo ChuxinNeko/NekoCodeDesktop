@@ -154,9 +154,9 @@ Wire the page at its planned route: import the sections, implement page-level la
    - Source: `browser_navigate`, `browser_viewport`, `browser_extract` with one target per section (`name` = section name, `selector` = the source selector from `PAGE_TOPOLOGY.md`) → `qa/source-<width>.json`.
    - Clone: the same, with the **same names** and `[data-section="<name>"]` selectors → `qa/clone-<width>.json`.
    - `website_clone_compare` (`match: "text"`) → `qa/diff-<width>.md`.
-3. For each issue: check the spec against the extraction. Spec wrong → re-extract, fix the spec, fix the component. Spec right → fix the component. `browser_navigate` to the clone URL again to load the rebuilt page, re-extract, re-compare. Repeat until the only remaining differences are ones you can explain (for example, font rasterization within a pixel, an asset that could not be downloaded).
+3. For each issue: check the spec against the extraction. Spec wrong → re-extract, fix the spec, fix the component. Spec right → fix the component. `browser_navigate` to the clone URL again to load the rebuilt page, re-extract, re-compare. After a targeted correction and recheck, stop repeating a still-failing comparison or one that yields no new evidence; report the remaining differences and the blocker rather than looping until an ideal result.
 4. Behaviors: for each entry in `BEHAVIORS.md`, run the same before/after `match: "path"` comparison on the clone and check it changes the same properties to the same values with the same transition.
-5. Screenshots are a second check, not the gate. Take one `browser_screenshot` of the source at 1440; if its result says the image is attached, compare viewport screenshots of source and clone section by section at 1440 and 390 as well. If it says images are not attached, the structural comparison is the whole of QA.
+5. Default QA uses structural and element-state comparisons, without screenshots. Only when the user explicitly requests screenshots or image comparison, take `browser_screenshot` as supplementary evidence. If images are not attached or cannot be assessed reliably, stop screenshot attempts, retain the structural results and report that image comparison was not completed. Do not claim complete visual fidelity from element checks.
 6. `website_clone_dev_server` `stop` when done.
 
 ## Common failures

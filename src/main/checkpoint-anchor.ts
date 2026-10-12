@@ -50,6 +50,9 @@ export function findTurnEntry(
 		const entry = branch[i];
 		if (entry.type === "custom_message") return entry;
 		if (entry.type !== "message") continue;
+		// Prompt/tool declarations can be persisted between the checkpoint and user
+		// message, including when Fusion changes the active model's system prompt.
+		if (entry.message?.role === "system") continue;
 		if (entry.message?.role !== "user") return null;
 		return entry;
 	}

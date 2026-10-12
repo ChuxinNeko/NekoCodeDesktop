@@ -17,12 +17,20 @@ import type { FusionConfig } from "../shared/fusion";
 import { FUSION_ENTRY, resolveFusion, savedFusion } from "./fusion-config";
 import {
 	FAST_CONTEXT_USAGE_ENTRY,
+	FUSION_TASK_METRIC_ENTRY,
 	FUSION_USAGE_ENTRY,
 	maintenanceUsage,
+	type FusionTaskMetric,
 	type FusionUsageKind,
 	type FusionUsageRecord,
 } from "./fusion-usage";
 import { completeHelper } from "./helper-completion";
+import { FusionLeadContextProjection } from "./fusion-context";
+import { FusionDocumentBudget, FusionDocumentReviewBudget, FUSION_DOCUMENT_RETURN } from "./fusion-document-budget";
+import { FUSION_RUN_ENTRY, FusionProgressGuard, FusionRequestDeadline, fusionFileFingerprint, isFusionContinuation } from "./fusion-resilience";
+import { Type } from "typebox";
+import { FileJournalRecorder } from "./file-journal-recorder";
+import { CommandExecutionControl } from "./command-execution-control";
 import {
 	aggregateTurnUsage,
 	hasNonThinkingContent,
@@ -51,6 +59,7 @@ import {
 	buildModePrompt,
 	COMPACTION_INSTRUCTIONS,
 	toolsForMode,
+	type DelegatedMcpToolSummary,
 	type PromptContext,
 } from "./prompt-library";
 import { createStatTool, STAT_TOOL_NAME } from "./file-tools";
@@ -68,11 +77,12 @@ import { createGithubTool, GITHUB_TOOL_NAME } from "./github-tool";
 import { createSshTool, sshToolAvailable } from "./ssh-tool";
 import { createRemoteDesktopTool } from "./remote-desktop/tool";
 import { isShellTool } from "../shared/hooks";
-import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence } from "./fusion-handoff";
+import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence, FusionInlineHandoffState,
+	FUSION_COMPACT_HANDOFF_SCHEMA, FUSION_RESUME_HANDOFF_SCHEMA } from "./fusion-handoff";
 import { FusionSidekickSession } from "./fusion-sidekick-session";
-import { createFusionReportTool, createFusionUpgradeTool, FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, fusionTaskResult,
-	type FusionUpgradeRequest } from "./fusion-report-tool";
-import { fusionRouteAtCompaction } from "./fusion-routing";
+import { createFusionReportTool, createFusionUpgradeTool, createFusionModelRouteTool, FUSION_MODEL_ROUTE_TOOL, FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, fusionTaskResult,
+} from "./fusion-report-tool";
+import { FusionRoutingState } from "./fusion-routing";
 import { currentCommandShell, type CommandShellSetup } from "./command-shell";
 import { containsPath, resolveWorkspacePath } from "./workflow-paths";
 import { readSavedWorkflow, WorkflowState } from "./workflow-state";
@@ -305,6 +315,13 @@ interface WorkflowRuntimeOptions {
 	getMemory?: () => string;
 	/** The active `/goal` section, or "" when there is none. */
 	getGoal?: () => string;
+	/**
+	 * Returns active MCP tools for delegation. Only exposed to Fusion workers
+	 * when exclusively owning the entire workspace and not read-only.
+	 */
+	getMcpTools?: () => ToolDefinition[];
+	/** Source generation, including reconnects that leave the tool schema unchanged. */
+	getMcpToolsRevision?: () => number;
 }
 interface HelperRunOptions {
 	model?: Model<Api>;
@@ -314,8 +331,10 @@ interface HelperRunOptions {
 	reuseFusionWorker?: boolean;
 	taskId?: string;
 	onReport?: (report: FusionTaskReport) => void;
+	routing?: FusionRoutingState;
 }
 interface HelperUsageOrigin {
+	objective?: string;
 	turnTimestamp: number;
 	parentEntryId?: string;
 	taskId?: string;
@@ -323,8 +342,7 @@ interface HelperUsageOrigin {
 }
 interface SidekickLease {
 	context: PromptContext;
-	upgrade?: FusionUpgradeRequest;
-	routeChanges: number;
+	routing: FusionRoutingState;
 	onStep?: (step: TaskStep) => void;
 	origin?: HelperUsageOrigin;
 	scopes: string[];
@@ -333,23 +351,27 @@ interface SidekickLease {
 }
 
 /**
- * Fast Context explores with the Fusion Sidekick when Fusion is on, otherwise
- * with the session's own model and thinking level.
+ * Fast Context always uses Sidekick in Fusion; Lead interprets the returned facts.
+ * Without Fusion it follows the parent model and thinking level.
  */
 export function selectFastContextModel(
 	parent: Model<Api>,
 	parentThinkingLevel: ThinkingLevel,
 	fusion: Awaited<ReturnType<typeof resolveFusion>> | null,
+	_brief = "",
 ): { model: Model<Api>; requestedThinkingLevel: ThinkingLevel } {
-	if (fusion) return { model: fusion.sidekick, requestedThinkingLevel: fusion.config.sidekickThinkingLevel };
+	if (fusion) {
+		return { model: fusion.sidekick, requestedThinkingLevel: fusion.config.sidekickThinkingLevel };
+	}
 	return { model: parent, requestedThinkingLevel: parentThinkingLevel };
 }
 export class WorkflowRuntime {
 	private fusionConfig: FusionConfig | null;
 	get fusion(): FusionConfig | null { return this.fusionConfig ? { ...this.fusionConfig } : null; }
-	async setFusion(config: FusionConfig | null): Promise<void> {
+	async setFusion(config: FusionConfig | null, preserveRun = false): Promise<void> {
 		if (this.session?.isStreaming || this.state.hasRunningTasks)
 			throw new Error("请先停止当前运行及后台任务，再配置 Fusion");
+		const previousKey = this.fusionStateKey();
 		if (config) {
 			const resolved = await resolveFusion(config, this.options.modelRuntime);
 			if (this.session) {
@@ -358,20 +380,70 @@ export class WorkflowRuntime {
 			}
 			this.fusionConfig = resolved.config;
 		} else this.fusionConfig = null;
-		this.resetHelpers();
+		if (!preserveRun || previousKey !== this.fusionStateKey()) this.resetHelpers();
 		this.options.sessionManager.appendCustomEntry(FUSION_ENTRY, this.fusionConfig);
 		this.refresh();
 		this.options.onChange();
 	}
 	readonly state: WorkflowState;
+	readonly commands = new CommandExecutionControl(async ({ toolName, command }, signal) => {
+		const options = [
+			{ id: "slow", label: "运行时间过长" },
+			{ id: "wrong", label: "命令不符合预期" },
+			{ id: "risk", label: "担心命令有风险" },
+			{ id: "unneeded", label: "不需要执行此命令" },
+		];
+		const answer = await this.state.askQueued([{ id: "reason",
+			question: `已停止 ${toolName} 命令。你为什么停止它？可选择原因或直接填写说明。\n\n${command.slice(0, 5000)}`,
+			options }], "停止命令的原因", signal);
+		if (answer.cancelled) return "用户取消了原因询问，未提供原因。";
+		const reason = answer.answers.reason;
+		return [options.find((option) => option.id === reason?.optionId)?.label, reason?.text].filter(Boolean).join("；");
+	});
+	/** Override pi's shell definitions so both parent and worker calls are individually cancellable. */
+	commandTools(module: Awaited<ReturnType<typeof pi>>): ToolDefinition[] {
+		return [
+			...(this.shell.shellTools.includes("bash") ? [module.createBashToolDefinition(this.options.cwd, this.shell.toolOptions.bash)] : []),
+			...(this.shell.shellTools.includes("powershell") ? [module.createPowerShellToolDefinition(this.options.cwd, this.shell.toolOptions.powershell)] : []),
+			...this.shell.customTools(this.options.cwd, module.createBashToolDefinition),
+		].map((tool) => this.commands.wrap(tool as ToolDefinition));
+	}
 	private session: AgentSession | null = null;
+	/** Stable SDK tools; connected MCP definitions are replaced alongside these. */
+	private parentCustomTools?: ToolDefinition[];
+	private mainRouting = new FusionRoutingState("main");
+	private mainRoutingTurn?: string;
+	private mainModelRole: "lead" | "sidekick" = "lead";
+	private mainHandoff?: TaskInput;
+	private readonly documentBudget = new FusionDocumentBudget();
+	private readonly documentReviewBudget = new FusionDocumentReviewBudget();
+	private progressGuard = new FusionProgressGuard();
+	private fusionObjective?: string;
+	private fusionBlocker?: string;
+	private progressObservations = new Set<Promise<void>>();
+	private writePreimages = new Map<string, { path: string; hash: string; objective?: string }>();
+	private requestDeadline?: FusionRequestDeadline;
+	private pendingDocumentNotice?: string;
+	private mainPlanSourceCall?: string;
+	private readonly inlineHandoffs = new FusionInlineHandoffState();
+	private readonly leadContextProjection = new FusionLeadContextProjection();
+	private pendingMainRole?: "lead" | "sidekick";
+	private detachRoutingEvents?: () => void;
 	private readonly sidekick = new FusionSidekickSession<AgentSession, SidekickLease>();
 	private sidekickParentAnchor?: string;
 	private readonly helperUsageSources = new Set<string>();
+	private readonly fusionTaskMetrics = new Map<string, {
+		parentEntryId?: string;
+		verificationMode?: "run" | "skip";
+		plannedChecks: number;
+		evidence?: FusionExecutionEvidence;
+		report?: FusionTaskReport;
+	}>();
 	private helperCallSequence = 0;
 	private mode: WorkMode;
 	private phase: AgentPhase;
 	private closed = false;
+	private stopped = false;
 	private noticeGeneration = 0;
 	private notices: WorkflowTask[] = [];
 	private delivering = false;
@@ -399,6 +471,32 @@ export class WorkflowRuntime {
 			onChange: () => this.changed(),
 			runTask: (input, signal, onStep, taskId) => this.runTask(input, signal, onStep, taskId),
 			onTaskComplete: async (task) => {
+				const metric = this.fusionTaskMetrics.get(task.id);
+				this.fusionTaskMetrics.delete(task.id);
+				if (metric && task.endedAt !== undefined && task.status !== "running") {
+					const branch = this.options.sessionManager.getBranch();
+					if (!metric.parentEntryId || branch.some((entry) => entry.id === metric.parentEntryId)) {
+						const acceptance = metric.report?.acceptance;
+						try {
+							this.options.sessionManager.appendCustomEntry(FUSION_TASK_METRIC_ENTRY, {
+								taskId: task.id, parentEntryId: metric.parentEntryId, kind: task.kind,
+								status: task.status, outcome: task.outcome, startedAt: task.startedAt, endedAt: task.endedAt,
+								verificationMode: metric.verificationMode, plannedChecks: metric.plannedChecks,
+								...metric.evidence?.summary() ?? { observedCommands: 0, failedCommands: 0 },
+								...(acceptance ? { acceptance: {
+									met: acceptance.filter((item) => item.status === "met").length,
+									unverified: acceptance.filter((item) => item.status === "unverified").length,
+									notMet: acceptance.filter((item) => item.status === "not_met").length,
+								} } : {}),
+							} satisfies FusionTaskMetric);
+						} catch (error) { this.options.onError?.("Fusion 任务指标未能保存：" + String(error)); }
+					}
+				}
+				if (this.fusionConfig) {
+					this.syncMainRouting();
+					this.mainRouting.request({ workload: "review", risk: task.outcome === "needs_escalation" ? "high" : "unknown",
+						reason: "Auxiliary work requires parent review", evidence: task.result?.slice(0, 1200) || task.description });
+				}
 				this.notices.push(task);
 				await this.deliverNotices();
 			},
@@ -413,8 +511,18 @@ export class WorkflowRuntime {
 	}
 	context(): PromptContext {
 		const { todos, tasks } = this.state.snapshot();
+		this.syncMainRouting();
 		return {
-			fusionRole: this.fusionConfig ? "lead" : undefined,
+			fusionAgent: this.fusionConfig ? "main" : undefined,
+			fusionModelRole: this.fusionConfig ? this.mainModelRole : undefined,
+			fusionDocumentAssembly: this.mainModelRole === "sidekick" && this.documentBudget.document,
+			fusionDocumentReview: this.documentReviewBudget.document,
+			fusionDocumentPolicy: this.documentReviewBudget.policy,
+			fusionImplementationBlocked: !!this.fusionBlocker,
+			fusionDocumentCanSearch: this.documentReviewBudget.canSearch,
+			fusionDocumentCanRead: this.documentReviewBudget.canRead,
+			fusionRoutingState: this.fusionConfig ? JSON.stringify(this.mainRouting.snapshot()) : undefined,
+			fusionModelRouting: !!this.fusionConfig && this.fusionConfig.adaptiveRouting !== false,
 			mode: this.mode,
 			phase: this.phase,
 			permission: this.options.getPermission(),
@@ -427,6 +535,7 @@ export class WorkflowRuntime {
 				? this.session.model.provider + "/" + this.session.model.id
 				: undefined,
 			interactive: true,
+			delegatedMcpTools: this.delegatedMcpSummaries(),
 			...(this.options.getMemory ? { memory: this.options.getMemory(), memoryTool: true } : {}),
 			...(this.options.getGoal?.() ? { goal: this.options.getGoal() } : {}),
 			workflowContext: JSON.stringify({
@@ -446,31 +555,245 @@ export class WorkflowRuntime {
 		return this.shell.id === "auto" ? {} : { shellTools: this.shell.shellTools, shellNote: this.shell.promptNote };
 	}
 	tools() {
-		return createWorkflowTools(this);
+		const workflowTools = createWorkflowTools(this);
+		const implement: ToolDefinition = {
+			...workflowTools.find((tool) => tool.name === "task")!,
+			parameters: Type.Union([FUSION_COMPACT_HANDOFF_SCHEMA, FUSION_RESUME_HANDOFF_SCHEMA,
+				workflowTools.find((tool) => tool.name === "task")!.parameters]),
+			name: "fusion_implement", label: "Fusion implementation",
+			description: "Hand implementation to Sidekick in this same conversation. Short known edits: instruction, path, acceptanceCriterion and exactly one check or skipReason; runtime builds the plan. Corrections: resume=true, instruction and resolution; reuse previous scope, acceptance and verification without repeating the plan. Complex/new scope: full worker executionPlan and writablePaths. Bundle related changes and decisions into one handoff. Do not repeat an unchanged failing plan. Shared history contains requirements and files. End this step; Sidekick executes next and returns via fusion_review.",
+		};
+		implement.execute = async (_id, args, signal) => {
+			if (!this.fusionConfig || this.mainModelRole !== "lead" || this.pendingMainRole || this.closed || signal?.aborted)
+				throw new Error("Fusion implementation handoff unavailable");
+			if (!toolsForMode(this.context()).includes("fusion_implement")) throw new Error("Implementation is read-only in the current mode or permission");
+			const input = this.inlineHandoffs.prepare(args);
+			const onlyDocument = this.documentReviewBudget.explicitDocumentPath;
+			if (onlyDocument && input.writablePaths.some((path) => resolveWorkspacePath(this.options.cwd, path) !== resolveWorkspacePath(this.options.cwd, onlyDocument)))
+				throw new Error("The user authorized only " + onlyDocument + "; do not broaden the implementation scope or request whole-workspace shell access.");
+			if (this.state.hasRunningTasks) throw new Error("Wait for background tasks before inline implementation");
+			for (const path of input.writablePaths) {
+				resolveWorkspacePath(this.options.cwd, path);
+				this.state.assertParentWrite(path);
+			}
+			const stalled = this.progressGuard.handoff();
+			if (stalled) throw new Error(stalled);
+			this.mainHandoff = input;
+			this.documentBudget.start(input.writablePaths);
+			this.documentReviewBudget.handoff();
+			const resume = (args as { resume?: boolean }).resume === true;
+			const sourceInContext = this.mainPlanSourceCall && this.session?.messages.some((message) =>
+				message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.id === this.mainPlanSourceCall));
+			if (!resume || !sourceInContext) this.mainPlanSourceCall = _id;
+			this.inlineHandoffs.accept(input);
+			this.pendingMainRole = "sidekick";
+			this.saveFusionRun();
+			return { content: [{ type: "text", text: "Handoff accepted. Execute the instruction/plan above in this same conversation. Compact: path is the write scope, acceptanceCriterion is the single criterion; check runs the named check, skipReason forbids verification. Resume: inherit previous scope, acceptance and verification, apply only the new correction/resolution. Return via fusion_review; do not redesign or give the final answer." +
+				(resume && !sourceInContext ? "\nOriginal plan was compacted; restored execution contract:\n" + taskHandoffPrompt(input) : "") }], details: input };
+		};
+		const review = createFusionReportTool((report) => {
+			if (!this.fusionConfig || this.mainModelRole !== "sidekick" || this.pendingMainRole)
+				throw new Error("No active inline Sidekick implementation");
+			if (report.acceptance.length !== this.mainHandoff?.executionPlan?.acceptanceCriteria.length ||
+				report.acceptance.some((item, index) => item.criterion !== this.mainHandoff?.executionPlan?.acceptanceCriteria[index]))
+				throw new Error("Report the original Lead acceptance criteria in order");
+			this.inlineHandoffs.report(report);
+			if (report.outcome !== "completed" && report.decision?.trim() && report.acceptance.some((item) => item.status !== "met"))
+				this.documentReviewBudget.supplement();
+			this.pendingMainRole = "lead";
+			this.saveFusionRun();
+		});
+		review.name = "fusion_review";
+		review.executionMode = "sequential";
+		review.label = "Fusion review";
+		review.description = "Sidekick returns implementation results, evidence, unverified acceptance or a specific design question to Lead in this same conversation. Stop editing after calling. Lead reviews on the next model request and owns the final answer.";
+		return [...workflowTools, implement, review, createFusionModelRouteTool(async (value, signal) => {
+			if (!this.fusionConfig || this.fusionConfig.adaptiveRouting === false || this.closed || signal?.aborted)
+				throw new Error("Fusion routing is unavailable or cancelled");
+			this.syncMainRouting();
+			this.mainRouting.request(value);
+			return { status: "pending_cache_boundary", ...this.mainRouting.snapshot() };
+		})];
 	}
 	/** Refuse a write into a scope a running worker owns — for tools that find their files as they go. */
 	assertParentWrite(path: string): void {
+		this.syncMainRouting();
+		if (this.fusionConfig) {
+			if (this.mainModelRole !== "sidekick" || this.pendingMainRole) throw new Error("Lead must hand file edits to Sidekick via fusion_implement");
+			const onlyDocument = this.documentReviewBudget.explicitDocumentPath;
+			if (onlyDocument && resolveWorkspacePath(this.options.cwd, path) !== resolveWorkspacePath(this.options.cwd, onlyDocument))
+				throw new Error("The user authorized writes only to " + onlyDocument);
+			if (!this.mainHandoff?.writablePaths.some((scope) => containsPath(
+				resolveWorkspacePath(this.options.cwd, scope), resolveWorkspacePath(this.options.cwd, path))))
+				throw new Error("Write is outside the Lead implementation scope");
+		}
+		if (this.fusionConfig && !this.mainRouting.allowsTool("write")) throw new Error("Unsafe Fusion work is paused");
 		this.state.assertParentWrite(path);
 	}
-	attach(session: AgentSession): void {
+	attach(session: AgentSession, customTools?: ToolDefinition[]): void {
 		if (this.session && this.session !== session) this.resetHelpers();
 		this.session = session;
+		this.requestDeadline?.clear();
+		this.requestDeadline = new FusionRequestDeadline(() => {
+			this.stopped = true; this.saveFusionRun();
+			this.options.onError?.("Fusion 模型请求等待超过 4 分钟，已中断；已写入文件和任务状态保留，验收仍未完成。");
+			void session.abort().catch((error) => this.options.onError?.(String(error)));
+		});
+		const transformContext = session.agent.transformContext;
+		session.agent.transformContext = async (messages, signal) => {
+			const transformed = await transformContext?.(messages, signal) ?? messages;
+			return this.fusionConfig && this.mainModelRole === "lead" ? this.leadContextProjection.project(transformed) : transformed;
+		};
+		const prepareNext = session.agent.prepareNextTurnWithContext;
+		session.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			await this.applyMainHandoff(signal);
+			const update = await prepareNext?.(turn, signal);
+			const notice = this.pendingDocumentNotice;
+			this.pendingDocumentNotice = undefined;
+			return { ...update, model: session.model, thinkingLevel: session.thinkingLevel,
+				...(notice ? { messages: [...update?.messages ?? [], { role: "custom" as const,
+					customType: FUSION_DOCUMENT_RETURN, content: notice, display: false, timestamp: Date.now() }] } : {}) };
+		};
+		const prepareRequest = session.agent.prepareRequest;
+		session.agent.prepareRequest = async (request, signal) => {
+			await this.applyMainHandoff(signal);
+			if (this.fusionConfig && !signal?.aborted) {
+				const limit = this.progressGuard.request(); this.saveFusionRun();
+				if (limit) throw new Error(limit);
+				this.requestDeadline?.start();
+			}
+			return await prepareRequest?.({ ...request, model: session.model!, thinkingLevel: session.thinkingLevel }, signal) ??
+				{ model: session.model, thinkingLevel: session.thinkingLevel };
+		};
+		const finishTurn = session.agent.finishTurn;
+		session.agent.finishTurn = async (turn, signal) => {
+			this.requestDeadline?.clear();
+			await Promise.all([...this.progressObservations]);
+			const result = await finishTurn?.(turn, signal);
+			if (this.stopped) { this.saveFusionRun(); return { action: "end" }; }
+			if (this.fusionConfig) {
+				const halt = this.progressGuard.finish(turn);
+				if (halt && !signal?.aborted) {
+					this.fusionBlocker = halt; this.options.onError?.(halt);
+					if (this.mainModelRole === "sidekick" && !this.pendingMainRole) {
+						this.inlineHandoffs.report(); this.pendingMainRole = "lead";
+						this.pendingDocumentNotice = `Runtime halted Sidekick: ${halt} Lead must inspect the actual state and report the blocker; do not repeat implementation until the user supplies new direction.`;
+						this.saveFusionRun(); return { action: "continue" };
+					}
+					this.saveFusionRun(); return { action: "end" };
+				}
+				this.saveFusionRun();
+			}
+			// Exhausted discovery tools disappear on the next Lead request as well as being gated.
+			if (this.fusionConfig && this.mainModelRole === "lead" && this.documentReviewBudget.document) {
+				const wanted = toolsForMode(this.context());
+				const current = session.getActiveToolNames();
+				if (wanted.length !== current.length || wanted.some((name) => !current.includes(name))) this.refresh();
+			}
+			if (this.fusionConfig && !signal?.aborted && this.mainModelRole === "sidekick" &&
+				!this.pendingMainRole && this.documentBudget.exhausted &&
+				!["error", "aborted"].includes(turn.message.stopReason)) {
+				this.inlineHandoffs.report();
+				this.pendingMainRole = "lead";
+				this.pendingDocumentNotice = "Runtime returned document assembly to Lead: investigation budget exhausted (12 attempts without observed file progress, or 36 cumulative attempts). " +
+					"No successful structured report; acceptance is unverified. Check the document's actual state. " +
+					"Supply the missing conclusions, outline and concrete evidence locations in one correction, or report the blocker. " +
+					"Do not restart the same audit or claim completion from the handoff description.";
+				this.saveFusionRun();
+				return { action: "continue" };
+			}
+			if (this.fusionConfig && !signal?.aborted && this.mainModelRole === "sidekick" &&
+				!turn.message.content.some((item) => item.type === "toolCall") &&
+				!["error", "aborted"].includes(turn.message.stopReason)) {
+				// A missing report still needs Lead review; Sidekick cannot end the user turn.
+				this.inlineHandoffs.report();
+				this.pendingMainRole = "lead";
+				this.saveFusionRun();
+				return { action: "continue" };
+			}
+			return result ?? undefined;
+		};
+		this.parentCustomTools = customTools;
+		this.detachRoutingEvents?.();
+		const calls = new Map<string, { name: string; args: unknown }>();
+		this.detachRoutingEvents = session.subscribe((event) => {
+			if (event.type === "agent_start") this.stopped = false;
+			if (!this.fusionConfig || this.closed) return;
+			if (event.type === "message_end" && event.message.role === "assistant") {
+				this.requestDeadline?.clear(); this.progressGuard.usage(event.message.usage.totalTokens);
+			}
+			if (event.type === "tool_execution_start") calls.set(event.toolCallId, { name: event.toolName, args: event.args });
+			if (event.type === "tool_execution_end") {
+				const call = calls.get(event.toolCallId);
+				calls.delete(event.toolCallId);
+				if (call) {
+					this.syncMainRouting();
+					const preimage = this.writePreimages.get(event.toolCallId); this.writePreimages.delete(event.toolCallId);
+					if (preimage && !event.isError) {
+						const observation = (async () => {
+							try {
+								const after = await fusionFileFingerprint(preimage.path);
+								if (preimage.objective !== this.fusionObjective) return;
+								const changed = this.progressGuard.write(preimage.path, preimage.hash, after);
+								this.documentBudget.observe(call.name, false, changed);
+							} catch (error) { this.options.onError?.("Fusion 文件进展未能核实：" + String(error)); }
+						})();
+						this.progressObservations.add(observation);
+						void observation.finally(() => this.progressObservations.delete(observation));
+					} else if (this.mainModelRole === "sidekick") this.documentBudget.observe(call.name, event.isError);
+					if (!event.isError) {
+						const args = call.args as { path?: string; command?: string };
+						this.progressGuard.evidence(call.name, String(args?.path ?? args?.command ?? ""), toolOutputText(event.result));
+					}
+					if (call.name === AST_EDIT_TOOL_NAME && !event.isError) {
+						const details = (event.result as { details?: { replacements?: number; dryRun?: boolean; paths?: string[] } }).details;
+						if (details && !details.dryRun && Number(details.replacements) > 0 && Array.isArray(details.paths)) {
+							const changed = this.progressGuard.mutationEvidence(details.paths.join("\n"), toolOutputText(event.result));
+							this.documentBudget.observe(call.name, false, changed);
+						}
+					}
+					this.mainRouting.observe(call.name, call.args, toolOutputText(event.result), event.isError);
+				}
+			}
+			if (event.type === "agent_end") { calls.clear(); this.writePreimages.clear(); this.requestDeadline?.clear(); this.saveFusionRun(); }
+		});
 		const before = session.agent.beforeToolCall;
 		session.agent.beforeToolCall = async (context, signal) => {
 			const result = await before?.(context, signal);
 			if (result?.block) return result;
+			this.syncMainRouting();
+			// Snapshot authority before reserving a budget slot: the last allowed slot
+			// must not deactivate its own tool midway through this gate.
+			const allowedTools = toolsForMode(this.context());
+			if (this.fusionConfig && this.mainModelRole === "lead" && !this.pendingMainRole) {
+				const reason = this.documentReviewBudget.before(context.toolCall.name);
+				if (reason) return { block: true, reason };
+			}
+			if (this.fusionConfig && this.mainModelRole === "sidekick" && !this.pendingMainRole) {
+				const reason = this.documentBudget.before(context.toolCall.name);
+				if (reason) return { block: true, reason };
+			}
 			if (
 				this.closed ||
+				this.stopped ||
 				signal?.aborted ||
-				!toolsForMode(this.context()).includes(context.toolCall.name)
+				!allowedTools.includes(context.toolCall.name)
 			)
 				return {
 					block: true,
-					reason: this.fusionConfig
-						? "Fusion Lead cannot execute this tool. Delegate investigation to Sidekick via code_search or task(kind=explore), and edits or commands via a concrete task.executionPlan. Lead decides from evidence; do not bypass the current mode or permission."
-						: "Tool is not allowed in the current work mode and execution permission",
+					reason: "Tool is not allowed in the current work mode and execution permission",
 				};
 			const name = context.toolCall.name;
+			if (this.fusionConfig && this.pendingMainRole)
+				return { block: true, reason: "Fusion handoff takes effect on the next model request; end this tool batch" };
+			if (this.fusionConfig && this.mainModelRole === "sidekick" &&
+				(isShellTool(name) || (this.options.getPluginTools?.() ?? []).includes(name) ||
+					(this.options.getMcpTools?.() ?? []).some((tool) => tool.name === name) ||
+					["ssh", "remote_desktop"].includes(name)) &&
+				!this.mainHandoff?.writablePaths.includes("."))
+				return { block: true, reason: "Inline shell/plugin execution requires Lead's explicit writablePaths=[\".\"]" };
+			if (this.fusionConfig && !this.mainRouting.allowsTool(name))
+				return { block: true, reason: "Unsafe Fusion work is paused; return the risk evidence instead of waiting for or forcing a model switch" };
 			if (name === "task" && this.fusionConfig) {
 				const reason = fusionTaskError(context.args);
 				if (reason) return { block: true, reason };
@@ -481,25 +804,59 @@ export class WorkflowRuntime {
 					reason:
 						"Shell is blocked while a write worker owns project files; wait or cancel the worker first",
 				};
-			const guarded = await guardToolCall(name, context.args, this.options.cwd, toolsForMode(this.context()));
+			const guarded = await guardToolCall(name, context.args, this.options.cwd, allowedTools);
 			if (guarded) return guarded;
 			if (["write", "edit"].includes(name)) {
 				const args = context.args as { path?: unknown };
 				if (typeof args.path !== "string") throw new Error("Missing write path");
-				this.state.assertParentWrite(args.path);
+				this.assertParentWrite(args.path);
+				if (this.fusionConfig) {
+					const path = resolveWorkspacePath(this.options.cwd, args.path);
+					const objective = this.fusionObjective; const hash = await fusionFileFingerprint(path);
+					if (this.closed || this.stopped || signal?.aborted || objective !== this.fusionObjective || !toolsForMode(this.context()).includes(name))
+						return { block: true, reason: "Fusion write authority changed while checking file state" };
+					this.assertParentWrite(args.path);
+					this.writePreimages.set(context.toolCall.id, { path, hash, objective });
+				}
 			}
 			return result;
 		};
 		this.refresh();
 		this.changed();
 	}
+	/** Refresh definitions, not just names: activating an unregistered name does nothing in PI. */
+	syncMcpTools(): void {
+		if (this.closed) return;
+		if (this.session && this.parentCustomTools) {
+			this.session.setCustomTools([...this.parentCustomTools, ...(this.options.getMcpTools?.() ?? [])]);
+		}
+		this.refresh();
+	}
+	private delegatedMcpSummaries(): DelegatedMcpToolSummary[] | undefined {
+		if (!this.fusionConfig) return undefined;
+		const tools = this.options.getMcpTools?.() ?? [];
+		if (!tools.length) return undefined;
+		return tools.map((tool) => ({
+			name: tool.name,
+			description: (tool.description || "").slice(0, 120),
+		}));
+	}
 	refresh(): void {
 		if (this.closed) return;
 		this.session?.setActiveToolsByName(toolsForMode(this.context()));
 		const lease = this.sidekick.current;
-		if (lease) this.sidekick.session?.setActiveToolsByName(toolsForMode({
-			...lease.context, permission: this.options.getPermission(),
-		}));
+		if (lease) {
+			const mcpAllowed = !lease.signal?.aborted && !!this.fusionConfig &&
+				lease.context.mode === "agent" && !lease.context.fastContext &&
+				lease.scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, ".")) &&
+				this.options.getPermission() !== "read-only";
+			const mcpNames = mcpAllowed ? (this.options.getMcpTools?.() ?? []).map((t) => t.name) : [];
+			this.sidekick.session?.setActiveToolsByName(toolsForMode({
+				...lease.context,
+				permission: this.options.getPermission(),
+				mcpTools: mcpNames,
+			}));
+		}
 	}
 	private changed(): void {
 		if (this.closed) return;
@@ -549,6 +906,132 @@ export class WorkflowRuntime {
 		this.changed();
 	}
 
+	private fusionStateKey(): string {
+		const config = this.fusionConfig;
+		return JSON.stringify(config ? [config.leadModelKey, config.sidekickModelKey, config.leadThinkingLevel,
+			config.sidekickThinkingLevel, config.adaptiveRouting !== false] : null);
+	}
+	private saveFusionRun(): void {
+		if (!this.fusionConfig || !this.fusionObjective || !this.mainRoutingTurn) return;
+		try {
+			this.options.sessionManager.appendCustomEntry(FUSION_RUN_ENTRY, {
+				version: 1, config: this.fusionStateKey(), objective: this.fusionObjective, user: this.mainRoutingTurn,
+				role: this.mainModelRole, pending: this.pendingMainRole, activePlan: !!this.mainHandoff,
+				source: this.mainPlanSourceCall, notice: this.pendingDocumentNotice, blocker: this.fusionBlocker,
+				inline: this.inlineHandoffs.snapshot(), document: this.documentBudget.snapshot(),
+				review: this.documentReviewBudget.snapshot(), progress: this.progressGuard.snapshot(),
+			});
+		} catch (error) { this.options.onError?.("Fusion 恢复状态未能保存：" + String(error)); }
+	}
+	private restoreFusionRun(): void {
+		if (!this.fusionConfig || this.mainRoutingTurn) return;
+		const branch = this.options.sessionManager.getBranch();
+		const entry = [...branch].reverse().find((item) => item.type === "custom" && item.customType === FUSION_RUN_ENTRY);
+		if (!entry || entry.type !== "custom") return;
+		try {
+			const v = entry.data as { version: number; config: string; objective: string; user: string; role: "lead" | "sidekick";
+				pending?: "lead" | "sidekick"; activePlan: boolean; source?: string; notice?: string; blocker?: string;
+				inline: ReturnType<FusionInlineHandoffState["snapshot"]>; document: unknown; review: unknown; progress: unknown };
+			if (!v || v.version !== 1 || v.config !== this.fusionStateKey() || JSON.stringify(v).length > 200_000 ||
+				!["lead", "sidekick"].includes(v.role) || (v.pending !== undefined && !["lead", "sidekick"].includes(v.pending)) ||
+				typeof v.activePlan !== "boolean" || (v.source !== undefined && (typeof v.source !== "string" || v.source.length > 400)) ||
+				(v.notice !== undefined && (typeof v.notice !== "string" || v.notice.length > 4000)) ||
+				(v.blocker !== undefined && (typeof v.blocker !== "string" || v.blocker.length > 4000))) return;
+			const users = branch.filter((item) => item.type === "message" && item.message.role === "user").map((item) => item.id);
+			if (!users.includes(v.objective) || !users.includes(v.user) || users.indexOf(v.objective) > users.indexOf(v.user)) return;
+			const inline = new FusionInlineHandoffState(); const doc = new FusionDocumentBudget();
+			const review = new FusionDocumentReviewBudget(); const progress = new FusionProgressGuard();
+			if (!inline.restore(v.inline) || !doc.restore(v.document) || !review.restore(v.review) || !progress.restore(v.progress)) return;
+			const plan = inline.snapshot().previous;
+			if (v.activePlan && !plan) return;
+			for (const scope of plan?.writablePaths ?? []) resolveWorkspacePath(this.options.cwd, scope);
+			if (review.explicitDocumentPath && plan?.writablePaths.some((scope) => resolveWorkspacePath(this.options.cwd, scope) !== resolveWorkspacePath(this.options.cwd, review.explicitDocumentPath!))) return;
+			this.inlineHandoffs.restore(v.inline); this.documentBudget.restore(v.document); this.documentReviewBudget.restore(v.review);
+			this.progressGuard = progress; this.fusionObjective = v.objective; this.mainRoutingTurn = v.user;
+			this.mainHandoff = v.activePlan ? plan : undefined; this.mainPlanSourceCall = v.source;
+			this.mainModelRole = v.role === "sidekick" && !this.mainHandoff ? "lead" : v.role;
+			this.pendingMainRole = v.pending ?? this.mainModelRole; this.pendingDocumentNotice = v.notice;
+			this.fusionBlocker = v.blocker;
+		} catch { /* Invalid or older snapshots grant no authority; rebuild from the user task. */ }
+	}
+	/** Continuations keep the objective and budgets; a new task receives fresh evidence. */
+	private syncMainRouting(): void {
+		if (!this.fusionConfig) return;
+		this.restoreFusionRun();
+		const entry = [...this.options.sessionManager.getBranch()].reverse()
+			.find((value) => value.type === "message" && value.message.role === "user");
+		if (!entry || entry.type !== "message") return;
+		const key = entry.id;
+		if (key === this.mainRoutingTurn) return;
+		if (entry.message.role === "user") {
+			const continuing = !!this.fusionObjective && isFusionContinuation(textOf(entry.message.content));
+			this.mainRoutingTurn = key;
+			this.mainRouting = new FusionRoutingState("main", textOf(entry.message.content));
+			this.mainHandoff = undefined;
+			this.pendingDocumentNotice = undefined;
+			this.fusionBlocker = undefined;
+			if (continuing) this.progressGuard.resume();
+			else {
+				this.fusionObjective = key; this.progressGuard = new FusionProgressGuard();
+				this.documentReviewBudget.start(textOf(entry.message.content)); this.documentBudget.reset();
+				this.inlineHandoffs.reset(); this.mainPlanSourceCall = undefined;
+			}
+			this.pendingMainRole = "lead";
+			this.saveFusionRun();
+		}
+	}
+
+	private async applyMainHandoff(signal?: AbortSignal): Promise<void> {
+		this.syncMainRouting();
+		const role = this.pendingMainRole;
+		const session = this.session;
+		const config = this.fusionConfig;
+		if (!role || !config || !session || this.closed || signal?.aborted) return;
+		const resolved = await resolveFusion(config, this.options.modelRuntime);
+		if (this.closed || signal?.aborted || this.session !== session || this.fusionConfig !== config) throw new Error("Fusion handoff cancelled");
+		if (this.pendingMainRole !== role) return;
+		const target = resolved[role];
+		if (`${session.model?.provider}/${session.model?.id}` !== `${target.provider}/${target.id}`) await session.setModel(target);
+		session.setThinkingLevel(role === "lead" ? config.leadThinkingLevel : config.sidekickThinkingLevel);
+		this.mainModelRole = role;
+		this.pendingMainRole = undefined;
+		if (role === "lead") this.mainHandoff = undefined;
+		this.refresh();
+		this.options.sessionManager.appendCustomEntry("nekocode.fusion.route.v1", {
+			agent: "main", role, model: `${target.provider}/${target.id}`, boundary: "implementation_handoff", timestamp: Date.now(),
+		});
+		this.saveFusionRun();
+	}
+
+	/** Called only by the awaited, successful compaction hook, never by switch_mode. */
+	async routeMainAfterCompaction(signal: AbortSignal): Promise<void> {
+		// Inline execution is controlled by Lead's plan and Sidekick's report, not compaction.
+		if (this.mainModelRole === "sidekick" || this.pendingMainRole) return;
+		this.syncMainRouting();
+		const config = this.fusionConfig;
+		const session = this.session;
+		const routing = this.mainRouting;
+		if (!config || !session?.model || this.closed || signal.aborted || this.state.hasRunningTasks) return;
+		const decision = routing.atCacheBoundary(config, `${session.model.provider}/${session.model.id}`);
+		if (!decision) return;
+		try {
+			const resolved = await resolveFusion(config, this.options.modelRuntime);
+			if (this.closed || signal.aborted || this.session !== session || this.fusionConfig !== config || this.mainRouting !== routing) return;
+			await session.setModel(resolved[decision.role]);
+			if (this.closed || signal.aborted || this.session !== session || this.mainRouting !== routing) return;
+			session.setThinkingLevel(decision.role === "lead" ? config.leadThinkingLevel : config.sidekickThinkingLevel);
+			routing.recordAttempt(decision.role, true);
+			this.options.sessionManager.appendCustomEntry("nekocode.fusion.route.v1", {
+				agent: "main", model: `${session.model?.provider}/${session.model?.id}`, reason: decision.reason,
+				boundary: "compaction", timestamp: Date.now(),
+			});
+			this.changed();
+		} catch (error) {
+			routing.recordAttempt(decision.role, false);
+			this.options.onError?.("Fusion 主会话路由失败；不重复自动重试：" + String(error));
+		}
+	}
+
 	async requestMode(mode: WorkMode, reason: string, signal?: AbortSignal): Promise<unknown> {
 		if (!isWorkMode(mode)) throw new Error("Unknown work mode");
 		// In the automatic mode this tool selects a phase rather than a mode, and
@@ -556,9 +1039,12 @@ export class WorkflowRuntime {
 		// it is not the model's to decide.
 		if (this.mode === "agent") {
 			const phase = PHASE_FOR_MODE[mode];
-			if (phase === this.phase) return { changed: false, mode: this.mode, phase };
-			this.setPhase(phase);
-			return { changed: true, automatic: true, mode: this.mode, phase, note: TOOLS_NEXT_STEP };
+			if (this.state.hasRunningTasks)
+				throw new Error("Wait for or cancel all workers before changing phases");
+			// Workflow discipline and model routing are independent axes.
+			const changed = phase !== this.phase;
+			if (changed) this.setPhase(phase);
+			return { changed, automatic: true, mode: this.mode, phase, note: TOOLS_NEXT_STEP };
 		}
 		if (mode === this.mode) return { changed: false, mode };
 		if (this.state.hasRunningTasks)
@@ -610,6 +1096,19 @@ export class WorkflowRuntime {
 	}
 	/** Invalidate on model/configuration changes and history/code restoration. */
 	resetHelpers(): void {
+		this.fusionBlocker = undefined;
+		this.requestDeadline?.clear(); this.fusionObjective = undefined; this.progressGuard = new FusionProgressGuard();
+		this.documentReviewBudget.reset();
+		this.documentBudget.reset();
+		this.pendingDocumentNotice = undefined;
+		this.mainPlanSourceCall = undefined;
+		this.inlineHandoffs.reset();
+		this.leadContextProjection.reset();
+		this.mainModelRole = "lead";
+		this.mainHandoff = undefined;
+		this.pendingMainRole = "lead";
+		this.mainRouting = new FusionRoutingState("main");
+		this.mainRoutingTurn = undefined;
 		this.sidekick.reset();
 		this.sidekickParentAnchor = undefined;
 	}
@@ -618,7 +1117,9 @@ export class WorkflowRuntime {
 		await this.sidekick.whenSettled();
 	}
 	stop(): void {
-		this.resetHelpers();
+		// Cancellation preserves the contract and counters. History restoration and an
+		// explicit configuration change still invalidate through resetHelpers().
+		this.stopped = true; this.requestDeadline?.clear(); this.saveFusionRun(); this.sidekick.reset(); this.sidekickParentAnchor = undefined;
 		this.noticeGeneration++;
 		this.notices = [];
 		this.state.abortAll();
@@ -627,6 +1128,8 @@ export class WorkflowRuntime {
 		if (this.closed) return;
 		this.stop();
 		this.closed = true;
+		this.detachRoutingEvents?.();
+		this.detachRoutingEvents = undefined;
 		this.state.dispose();
 	}
 	private async deliverNotices(): Promise<void> {
@@ -686,6 +1189,19 @@ export class WorkflowRuntime {
 				? input.writablePaths.map((path) => resolveWorkspacePath(this.options.cwd, path))
 				: [];
 		const evidence = this.fusionConfig && input.kind === "worker" ? new FusionExecutionEvidence() : null;
+		const metric: {
+			parentEntryId?: string; verificationMode?: "run" | "skip"; plannedChecks: number;
+			evidence?: FusionExecutionEvidence; report?: FusionTaskReport;
+		} | undefined = this.fusionConfig && taskId ? {
+			parentEntryId: [...this.options.sessionManager.getBranch()].reverse()
+				.find((entry) => entry.type === "message" && entry.message.role === "user")?.id,
+			verificationMode: input.executionPlan?.verification.mode,
+			plannedChecks: input.executionPlan?.verification.checks.length ?? 0,
+			evidence: evidence ?? undefined,
+		} : undefined;
+		if (metric && taskId) this.fusionTaskMetrics.set(taskId, metric);
+		const routing = new FusionRoutingState("auxiliary", JSON.stringify({ description: input.description,
+			prompt: input.prompt, plan: input.executionPlan }), input.kind === "worker" && !!input.executionPlan);
 		let report: FusionTaskReport | undefined;
 		try {
 			const result = await this.runHelper(
@@ -697,15 +1213,28 @@ export class WorkflowRuntime {
 					evidence?.record(step);
 					onStep(step);
 				},
-				{ reuseFusionWorker: !!this.fusionConfig && input.kind === "worker", taskId, onReport: (value) => {
+				{ reuseFusionWorker: !!this.fusionConfig && input.kind === "worker", taskId,
+					routing,
+					onReport: (value) => {
 					const criteria = input.executionPlan?.acceptanceCriteria ?? [];
 					if (value.acceptance.length !== criteria.length || new Set(value.acceptance.map((item) => item.criterion)).size !== criteria.length ||
 						!criteria.every((criterion) => value.acceptance.some((item) => item.criterion === criterion)))
 						throw new Error("Report each executionPlan acceptance criterion exactly once, using its original text");
 					report = value;
+					if (metric) metric.report = value;
 				} },
 			);
-			if (!evidence) return result;
+			const safety = routing.snapshot();
+			if (!evidence) return safety.safeToContinue ? result : {
+				text: result + "\n\nRuntime handoff: " + safety.reason + "\n" + safety.evidence,
+				outcome: safety.environmentalSignal ? "blocked" : "needs_escalation",
+			};
+			if (!safety.safeToContinue) report = {
+				outcome: safety.environmentalSignal ? "blocked" : "needs_escalation", summary: safety.reason, decision: safety.evidence,
+				acceptance: (input.executionPlan?.acceptanceCriteria ?? []).map((criterion) => ({
+					criterion, status: "unverified" as const, evidence: "Unsafe continuation was paused; parent review is required" })),
+			};
+			if (metric) metric.report = report;
 			const handoff = fusionTaskResult(result, report);
 			return { ...handoff, text: evidence.appendTo(handoff.text) };
 		} catch (error) {
@@ -723,6 +1252,9 @@ export class WorkflowRuntime {
 					kind, sourceEntryId, usage } satisfies FusionUsageRecord,
 			);
 			this.helperUsageSources.add(sourceEntryId);
+			if (origin.objective && origin.objective === this.fusionObjective) {
+				this.progressGuard.usage(usage.totalTokens); this.saveFusionRun();
+			}
 			this.options.onChange();
 		} catch (error) { this.options.onError?.("辅助模型用量未能保存：" + String(error)); }
 	}
@@ -739,19 +1271,39 @@ export class WorkflowRuntime {
 		if (this.closed || signal?.aborted) throw new Error("Helper cancelled");
 		// Capture before awaiting setup: a queued prompt can arrive while the child runs.
 		const parentUser = [...this.options.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && entry.message.role === "user");
+		const helperObjective = this.fusionObjective;
 		const turnTimestamp = parentUser?.type === "message" ? parentUser.message.timestamp :
 			[...parent.messages].reverse().find((message) => message.role === "user")?.timestamp;
 		const piModule = await pi();
-		const { createAgentSession, createBashToolDefinition, SessionManager } = piModule;
+		const { createAgentSession, SessionManager } = piModule;
 		const fusion = this.fusionConfig
 			? await resolveFusion(this.fusionConfig, this.options.modelRuntime) : null;
-		const helperModel = helperOptions?.model ?? fusion?.sidekick ?? parent.model;
+		const routing = helperOptions?.routing ?? new FusionRoutingState("auxiliary", prompt, !!helperOptions?.fastContext);
+		// Planned implementation always belongs to Sidekick, including sensitive work.
+		// Lead supplies decisions in the brief instead of becoming the file editor.
+		const implementation = !!fusion && !!helperOptions?.reuseFusionWorker;
+		const initialModelRole = implementation || helperOptions?.fastContext ? "sidekick" : routing.initialRole();
+		const adaptiveHelper = !!fusion && !helperOptions?.fastContext && role !== "commit" && fusion.config.adaptiveRouting !== false;
+		const helperModel = implementation && fusion ? fusion.sidekick : adaptiveHelper && fusion
+			? fusion[initialModelRole] : helperOptions?.model ?? fusion?.sidekick ?? parent.model;
+		const helperThinking = implementation && fusion ? fusion.config.sidekickThinkingLevel : adaptiveHelper && fusion
+			? initialModelRole === "lead" ? fusion.config.leadThinkingLevel : fusion.config.sidekickThinkingLevel
+			: helperOptions?.thinkingLevel ?? fusion?.config.sidekickThinkingLevel ?? parent.thinkingLevel;
 		const allowWorkerShell = !!fusion && role === "agent" && !helperOptions?.fastContext &&
-			scopes.some((scope) => scope === resolveWorkspacePath(this.options.cwd, "."));
+			scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, "."));
+		const allowWorkerMcp = !!fusion && role === "agent" && !helperOptions?.fastContext &&
+			scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, ".")) &&
+			this.options.getPermission() !== "read-only";
+		const delegatedMcpTools = allowWorkerMcp ? (this.options.getMcpTools?.() ?? []) : [];
+		const delegatedMcpToolNames = delegatedMcpTools.map((t) => t.name);
 		const context: PromptContext = {
-			fusionRole: fusion && !helperOptions?.fastContext ? "sidekick" : undefined,
-			fusionAdaptiveRouting: !!fusion?.config.adaptiveRouting,
+			fusionAgent: fusion && role !== "commit" ? "auxiliary" : undefined,
+			fusionModelRole: fusion ? adaptiveHelper ? initialModelRole : "sidekick" : undefined,
+			fusionAdaptiveRouting: adaptiveHelper && !implementation,
+			fusionModelRouting: adaptiveHelper && !implementation,
+			fusionRoutingState: fusion ? JSON.stringify(routing.snapshot()) : undefined,
 			allowWorkerShell,
+			mcpTools: delegatedMcpToolNames,
 			mode: role,
 			permission: scopes.length ? this.options.getPermission() : "read-only",
 			child: true,
@@ -768,15 +1320,22 @@ export class WorkflowRuntime {
 			.some((entry) => entry.id === this.sidekickParentAnchor)) this.resetHelpers();
 		const usageKind = helperOptions?.usage ?? (fusion && role !== "commit" ? "fusion" : undefined);
 		const origin: HelperUsageOrigin | undefined = usageKind && turnTimestamp !== undefined ? {
-			turnTimestamp, parentEntryId: parentUser?.id, taskId: helperOptions?.taskId, usageKind,
+			turnTimestamp, parentEntryId: parentUser?.id, taskId: helperOptions?.taskId, usageKind, objective: helperObjective,
 		} : undefined;
-		const lease: SidekickLease = { context, scopes, signal, origin, routeChanges: 0, onStep, onReport: helperOptions?.onReport };
+		const lease: SidekickLease = { context, scopes, signal, origin, routing, onStep, onReport: helperOptions?.onReport };
 		const currentLease = () => persistent ? this.sidekick.current : lease;
 		const getContext = (): PromptContext => {
 			const active = currentLease();
+			const activeMcpAllowed = !!active && !active.signal?.aborted &&
+				!!fusion && active.context.mode === "agent" && !active.context.fastContext &&
+				active.scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, ".")) &&
+				this.options.getPermission() !== "read-only";
+			const activeMcpNames = activeMcpAllowed ? (this.options.getMcpTools?.() ?? []).map((t) => t.name) : [];
 			return { ...(active?.context ?? context),
+				fusionRoutingState: fusion ? JSON.stringify((active?.routing ?? routing).snapshot()) : undefined,
 				permission: active?.scopes.length ? this.options.getPermission() : "read-only",
 				allowWorkerShell: !!active && !active.signal?.aborted && active.context.allowWorkerShell,
+				mcpTools: activeMcpNames,
 			};
 		};
 		const create = async (): Promise<AgentSession> => {
@@ -792,31 +1351,58 @@ export class WorkflowRuntime {
 			sessionManager: SessionManager.inMemory(this.options.cwd),
 			modelRuntime: this.options.modelRuntime,
 			model: helperModel,
-			thinkingLevel:
-				helperOptions?.thinkingLevel ?? fusion?.config.sidekickThinkingLevel ?? parent.thinkingLevel,
+			thinkingLevel: helperThinking,
 			resourceLoader,
-			tools: toolsForMode(persistent ? { ...context, permission: "auto", allowWorkerShell: true } : context).filter((name) =>
+			tools: toolsForMode(persistent ? { ...context, permission: "auto", allowWorkerShell: true, mcpTools: delegatedMcpToolNames } : context).filter((name) =>
 				(helperOptions?.fastContext
-					? ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME]
-					: ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, ...WEB_TOOL_NAMES, GITHUB_TOOL_NAME, "edit", AST_EDIT_TOOL_NAME, "write", FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL]
+					? ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, FUSION_MODEL_ROUTE_TOOL]
+					: ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, ...WEB_TOOL_NAMES, GITHUB_TOOL_NAME, "edit", AST_EDIT_TOOL_NAME, "write", FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, FUSION_MODEL_ROUTE_TOOL, ...delegatedMcpToolNames]
 				).includes(name) || (!helperOptions?.fastContext && (persistent || allowWorkerShell) && isShellTool(name)),
 			),
 			customTools: [
-				...(persistent && fusion?.config.adaptiveRouting ? [createFusionUpgradeTool((value) => {
+				...(context.fusionModelRouting && fusion ? [createFusionModelRouteTool(async (value, toolSignal) => {
+					const active = currentLease();
+					if (!active || active.signal?.aborted || toolSignal?.aborted || this.closed)
+						throw new Error("No active Fusion helper");
+					active.routing.request(value);
+					return { status: "pending_cache_boundary", ...active.routing.snapshot() };
+				})] : []),
+				...(persistent && fusion && fusion.config.adaptiveRouting !== false ? [createFusionUpgradeTool((value) => {
 					const active = currentLease();
 					if (!active || active.signal?.aborted || this.closed) throw new Error("No active Fusion task");
-					if (active.upgrade) throw new Error("An upgrade was already requested; return to Lead if blocked");
-					active.upgrade = value;
+					active.routing.request({ workload: "investigation", risk: "high", ...value });
 				})] : []),
 				...(persistent ? [createFusionReportTool((value) => {
 					const active = currentLease();
 					if (!active || active.signal?.aborted || this.closed) throw new Error("No active Fusion task");
+					if (!active.routing.snapshot().safeToContinue && value.outcome === "completed")
+						throw new Error("Unsafe continuation requires a blocked/needs_escalation handoff, not completed");
 					active.onReport?.(value);
+					if (value.outcome === "needs_escalation") active.routing.request({ workload: "review", risk: "high",
+						reason: value.summary, evidence: value.decision!, safeToContinue: false });
 				})] : []),
 				createReadTool(piModule, this.options.cwd),
 				createStatTool(this.options.cwd),
 				createAstGrepTool(this.options.cwd),
 				createSemanticSearchTool(this.options.cwd),
+				...delegatedMcpTools.map((original) => ({
+					...original,
+					execute: async (id: string, params: unknown, toolSignal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => {
+						const active = currentLease();
+						if (this.closed || !active || active.signal?.aborted)
+							throw new Error("Helper cancelled or idle");
+						const mcpAllowed = !!fusion && active.context.mode === "agent" &&
+							!active.context.fastContext &&
+							active.scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, ".")) &&
+							this.options.getPermission() !== "read-only";
+						if (!mcpAllowed || !active.routing.allowsTool(original.name))
+							throw new Error(`MCP tool is not permitted for the current worker: ${original.name}`);
+						const combinedSignal = active.signal
+							? AbortSignal.any([active.signal, toolSignal ?? new AbortController().signal])
+							: toolSignal;
+						return (original.execute as any)(id, params, combinedSignal, onUpdate, ctx);
+					},
+				} as unknown as ToolDefinition)),
 				...(helperOptions?.fastContext
 					? []
 					: [
@@ -826,36 +1412,38 @@ export class WorkflowRuntime {
 							createAstEditTool(this.options.cwd, {
 								assertWritable: (path) => {
 									const active = currentLease();
-									if (!active || active.signal?.aborted || this.closed || this.options.getPermission() === "read-only" ||
-										!active.scopes.some((scope) => containsPath(scope, resolveWorkspacePath(this.options.cwd, path))))
+									if (!active || active.signal?.aborted || this.closed || !active.routing.allowsTool(AST_EDIT_TOOL_NAME) ||
+										this.options.getPermission() === "read-only" || !active.scopes.some((scope) => containsPath(scope, resolveWorkspacePath(this.options.cwd, path))))
 										throw new Error(`Write is outside the worker's declared scope: ${path}`);
 								},
 							}),
 						]),
-				...(persistent || allowWorkerShell ? this.shell.customTools(this.options.cwd, createBashToolDefinition) : []),
+				...(persistent || allowWorkerShell ? this.commandTools(piModule) : []),
 			],
 			toolOptions: this.shell.toolOptions,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
-			afterCompaction: persistent && fusion?.config.adaptiveRouting ? async ({ signal: compactSignal }) => {
+			afterCompaction: context.fusionModelRouting && fusion ? async ({ signal: compactSignal }) => {
 				const active = currentLease();
 				if (!active || active.signal?.aborted || compactSignal.aborted || this.closed || !session.model) return;
-				const route = fusionRouteAtCompaction(fusion.config, `${session.model.provider}/${session.model.id}`,
-					active.upgrade, active.routeChanges);
-				if (!route) return;
-				// Count attempts too: an auth failure must not retry an expensive route at every boundary.
-				active.routeChanges++;
+				const decision = active.routing.atCacheBoundary(fusion.config, `${session.model.provider}/${session.model.id}`);
+				if (!decision) return;
 				try {
-					const target = route === "lead" ? fusion.lead : fusion.sidekick;
+					const target = fusion[decision.role];
 					await session.setModel(target);
 					if (active !== currentLease() || active.signal?.aborted || compactSignal.aborted || this.closed) return;
-					session.setThinkingLevel(route === "lead" ? fusion.config.leadThinkingLevel : fusion.config.sidekickThinkingLevel);
+					session.setThinkingLevel(decision.role === "lead" ? fusion.config.leadThinkingLevel : fusion.config.sidekickThinkingLevel);
+					active.routing.recordAttempt(decision.role, true);
 					active.context.modelId = `${target.provider}/${target.id}`;
+					active.context.fusionModelRole = decision.role;
 					session.setActiveToolsByName(toolsForMode(getContext()));
+					session.sessionManager.appendCustomEntry("nekocode.fusion.route.v1", { agent: "auxiliary",
+						model: active.context.modelId, reason: decision.reason, boundary: "compaction", timestamp: Date.now() });
 					active.onStep?.({ kind: "message", id: `route-${Date.now()}`, startedAt: Date.now(),
-						text: `Fusion 在压缩边界切换执行模型为 ${target.provider}/${target.id}；权限不变。` });
+						text: `Fusion 根据风险与执行证据在压缩边界切换为 ${target.provider}/${target.id}；权限不变。` });
 				} catch (error) {
+					active.routing.recordAttempt(decision.role, false);
 					active.onStep?.({ kind: "message", id: `route-error-${Date.now()}`, startedAt: Date.now(),
-						text: "Fusion 路由失败，保留当前模型并交由 Lead 审查：" + String(error) });
+						text: "Fusion 路由失败，不重复自动重试；无法安全推进时交回父代理：" + String(error) });
 				}
 			} : undefined,
 		});
@@ -863,7 +1451,15 @@ export class WorkflowRuntime {
 		// Attribute warming to the request that wrote the cache, not a newly leased task.
 		let lastRequestOrigin = origin;
 		let compactionModel = session.model;
+		const routingCalls = new Map<string, { name: string; args: unknown }>();
 		session.subscribe((event) => {
+			if (event.type === "tool_execution_start") routingCalls.set(event.toolCallId, { name: event.toolName, args: event.args });
+			if (event.type === "tool_execution_end") {
+				const call = routingCalls.get(event.toolCallId);
+				routingCalls.delete(event.toolCallId);
+				if (fusion && call) currentLease()?.routing.observe(call.name, call.args, toolOutputText(event.result), event.isError);
+			}
+			if (event.type === "agent_end") routingCalls.clear();
 			if (event.type === "message_start" && event.message.role === "assistant")
 				lastRequestOrigin = currentLease()?.origin;
 			if (event.type === "compaction_start") compactionModel = session.model;
@@ -881,10 +1477,39 @@ export class WorkflowRuntime {
 		});
 		return session;
 		};
+		const mcpSignature = allowWorkerMcp ? JSON.stringify({
+			revision: this.options.getMcpToolsRevision?.(),
+			tools: delegatedMcpTools.map(({ name, description, parameters, executionMode, exposure }) =>
+				({ name, description, parameters, executionMode, exposure })),
+		}) : "none";
+		const persistentKey = JSON.stringify({
+			fusion: fusion?.config,
+			allowWorkerMcp,
+			mcpSignature,
+		});
 		const session = persistent
-			? await this.sidekick.acquire(JSON.stringify(fusion!.config), lease, create)
+			? await this.sidekick.acquire(persistentKey, lease, create)
 			: await create();
-		if (session.model) lease.context.modelId = `${session.model.provider}/${session.model.id}`;
+		// Also correct older/restored helper selections before granting implementation tools.
+		if (persistent && session.model &&
+			`${session.model.provider}/${session.model.id}` !== `${helperModel.provider}/${helperModel.id}`) {
+			try {
+				await session.setModel(helperModel);
+				session.setThinkingLevel(helperThinking);
+				routing.recordAttempt(initialModelRole, true);
+			} catch (error) {
+				routing.recordAttempt(initialModelRole, false);
+				// Never retain Lead as an implementation fallback when Sidekick is unavailable.
+				this.sidekick.release(lease, false);
+				throw error;
+			}
+		}
+		if (session.model) {
+			lease.context.modelId = `${session.model.provider}/${session.model.id}`;
+			lease.context.fusionModelRole = implementation || helperOptions?.fastContext || !adaptiveHelper ? "sidekick" :
+				fusion?.config.sidekickModelKey === fusion?.config.leadModelKey ? initialModelRole :
+				lease.context.modelId === fusion?.config.sidekickModelKey ? "sidekick" : "lead";
+		}
 		session.setActiveToolsByName(toolsForMode(getContext()));
 		const abort = () => {
 			void session.abort();
@@ -993,11 +1618,20 @@ export class WorkflowRuntime {
 					}
 				})
 			: undefined;
+		let fastContextToolCalls = 0;
 		session.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const active = currentLease();
 			if (this.closed || !active || active.signal?.aborted) return { block: true, reason: "Helper cancelled or idle" };
+			if (helperOptions?.fastContext) {
+				if (fastContextToolCalls >= 12)
+					return { block: true, reason: "Fast Context reached its 12-tool location budget. Return the locations and gaps already found; do not call more tools." };
+				// Reserve a slot before any awaited gate so parallel tool calls cannot exceed the cap.
+				fastContextToolCalls++;
+			}
 			if (!toolsForMode(getContext()).includes(toolCall.name))
 				return { block: true, reason: "Tool is outside the helper's allowlist" };
+			if (!active.routing.allowsTool(toolCall.name))
+				return { block: true, reason: "Unsafe Fusion work is paused; report needs_escalation and return to the parent without forcing compaction" };
 			const guarded = await guardToolCall(toolCall.name, args, this.options.cwd, toolsForMode(getContext()));
 			if (guarded) return guarded;
 			if (active !== currentLease() || this.closed || active.signal?.aborted || !toolsForMode(getContext()).includes(toolCall.name))
@@ -1009,13 +1643,26 @@ export class WorkflowRuntime {
 			}
 			return undefined;
 		};
+		// The helper's in-memory transcript is not part of the parent's checkpoints.
+		// Install after its authority gate, but commit pre-images to the parent tree.
+		const journal = new FileJournalRecorder(this.options.cwd, () => {
+			if (!this.closed) this.options.onChange();
+		});
+		const detachJournal = journal.attach(session, { sessionManager: this.options.sessionManager });
 		let healthy = false;
 		try {
 			if (this.closed || signal?.aborted) throw new Error("Helper cancelled");
 			let recovery = 0;
 			const result = await completeHelper(session, prompt, helperModel, signal, (text) => {
 				onStep?.({ kind: "message", id: `recovery-${++recovery}`, text, startedAt: Date.now() });
-			});
+			}, fusion || helperOptions?.fastContext ? { maxTurns: helperOptions?.fastContext ? 16 : 96,
+				reportChars: helperOptions?.fastContext ? 6000 : 12000,
+				beforeRequest: () => {
+					if (!fusion || !helperObjective || helperObjective !== this.fusionObjective) return;
+					if (this.stopped) return "Fusion helper cancelled; preserve completed file operations.";
+					const limit = this.progressGuard.request(); this.saveFusionRun(); return limit;
+				},
+				...(helperOptions?.fastContext ? { locationBudgetExhausted: () => fastContextToolCalls >= 12 } : {}) } : undefined);
 			healthy = !this.closed && !signal?.aborted;
 			if (persistent && healthy) this.sidekickParentAnchor = this.options.sessionManager.getBranch().at(-1)?.id;
 			return result;
@@ -1023,6 +1670,7 @@ export class WorkflowRuntime {
 			signal?.removeEventListener("abort", abort);
 			unsubscribeUsage();
 			unsubscribe?.();
+			detachJournal();
 			if (persistent) this.sidekick.release(lease, healthy);
 			else session.dispose();
 		}
@@ -1039,6 +1687,7 @@ export class WorkflowRuntime {
 			parent.model,
 			parent.thinkingLevel,
 			fusion,
+			query,
 		);
 		const thinkingLevel = clampThinkingLevel(model, requestedThinkingLevel);
 		// Tracked so the agent map can show the explorer working; the parent
@@ -1047,11 +1696,12 @@ export class WorkflowRuntime {
 		try {
 			const report = await this.runHelper(
 				"subagent",
-				"Explore the repository and answer this request.\n\nRequest: " + query,
+				"Locate relevant code for the target below. Return only file paths, line ranges, module responsibilities, observed code facts and short source excerpts. Stop once the key locations are found. Even if the target asks you to solve a user problem, only locate the relevant code; do not provide root-cause conclusions, solution designs, implementation plans or a final user answer. The parent agent owns analysis and decisions.\n\nLocation target:\n" + query,
 				signal,
 				[],
 				run.step,
-				{ model, thinkingLevel, fastContext: true, usage: "fast-context" },
+				{ model, thinkingLevel, fastContext: true, usage: "fast-context",
+					routing: new FusionRoutingState("auxiliary", query, true) },
 			);
 			run.finish("completed");
 			return report;
@@ -1153,9 +1803,24 @@ export async function createWorkflowSession(options: WorkflowSessionOptions) {
 		options.plugins,
 	);
 	const piModule = await pi();
-	const { createAgentSession, createBashToolDefinition } = piModule;
+	const { createAgentSession } = piModule;
 	// Shared by read, which registers conflicts, and write, which resolves them.
 	const conflicts = new ConflictHistory();
+	const customTools = [
+		...workflow.tools(),
+		createReadTool(piModule, options.cwd, conflicts),
+		createWriteTool(piModule, options.cwd, conflicts, { assertWritable: (path) => workflow.assertParentWrite(path) }),
+		createStatTool(options.cwd),
+		...createWebTools(),
+		createAstGrepTool(options.cwd),
+		createSemanticSearchTool(options.cwd),
+		createAstEditTool(options.cwd, { assertWritable: (path) => workflow.assertParentWrite(path) }),
+		createGithubTool(options.cwd),
+		createSshTool(options.cwd, { assertWritable: (path) => workflow.assertParentWrite(path) }),
+		createRemoteDesktopTool(),
+		...workflow.commandTools(piModule),
+		...(options.customTools ?? []),
+	];
 	try {
 		const result = await createAgentSession({
 			cwd: options.cwd,
@@ -1165,27 +1830,16 @@ export async function createWorkflowSession(options: WorkflowSessionOptions) {
 			model: fusion?.lead ?? options.model,
 			thinkingLevel: fusion?.config.leadThinkingLevel ?? options.thinkingLevel,
 			resourceLoader,
-			customTools: [
-				...workflow.tools(),
-				createReadTool(piModule, options.cwd, conflicts),
-				createWriteTool(piModule, options.cwd, conflicts, { assertWritable: (path) => workflow.assertParentWrite(path) }),
-				createStatTool(options.cwd),
-				...createWebTools(),
-				createAstGrepTool(options.cwd),
-				createSemanticSearchTool(options.cwd),
-				createAstEditTool(options.cwd, { assertWritable: (path) => workflow.assertParentWrite(path) }),
-				createGithubTool(options.cwd),
-				createSshTool(options.cwd, { assertWritable: (path) => workflow.assertParentWrite(path) }),
-				createRemoteDesktopTool(),
-				...workflow.shell.customTools(options.cwd, createBashToolDefinition),
-				...(options.customTools ?? []),
-			],
+			customTools: [...customTools, ...(options.getMcpTools?.() ?? [])],
 			toolOptions: workflow.shell.toolOptions,
 			compactionInstructions: COMPACTION_INSTRUCTIONS,
+			afterCompaction: ({ signal }) => workflow.routeMainAfterCompaction(signal),
 			...(options.sessionStartEvent ? { sessionStartEvent: options.sessionStartEvent } : {}),
 		});
-		workflow.attach(result.session);
-		if (fusion) await workflow.setFusion(fusion.config);
+		workflow.attach(result.session, customTools);
+		// Connecting may have finished while asynchronous session setup was in flight.
+		workflow.syncMcpTools();
+		if (fusion) await workflow.setFusion(fusion.config, true);
 		else if (workflow.fusion) options.sessionManager.appendCustomEntry(FUSION_ENTRY, workflow.fusion);
 		// The loader goes back with the session: after a hot reload the extensions
 		// are different, and it is the only thing that can say what loaded now.

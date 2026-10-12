@@ -311,6 +311,7 @@ const api = {
 	agentTasks: (): Promise<TaskBoardEntry[]> => ipcRenderer.invoke("agent:tasks"),
 	onAgentTasks: (listener: (entries: TaskBoardEntry[]) => void) => subscribe("agent:tasks", listener),
 	agentAbortTask: (sessionId: string): Promise<void> => ipcRenderer.invoke("agent:abortTask", sessionId),
+	agentStopCommand: (sessionId: string, toolCallId: string): Promise<boolean> => ipcRenderer.invoke("agent:stopCommand", sessionId, toolCallId),
 	agentDismissTasks: (sessionIds: string[]): Promise<void> => ipcRenderer.invoke("agent:dismissTasks", sessionIds),
 	preferencesGet: (): Promise<AppPreferences> => ipcRenderer.invoke("preferences:get"),
 	preferencesUpdate: (patch: Partial<AppPreferences>): Promise<AppPreferences> =>

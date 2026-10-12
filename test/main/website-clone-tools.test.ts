@@ -264,3 +264,17 @@ describe("website_clone_scaffold", () => {
 		await expect(run("website_clone_scaffold", { directory: "example-com-clone" })).rejects.toThrow("not empty");
 	});
 });
+
+
+describe("webpage QA guidance", () => {
+	test("screenshot tools carry the opt-in and stopping rules into PI tool guidelines", () => {
+		const tools = createWebsiteCloneTools({ cwd: tmpdir(), browser, templateDir: null, onNavigate: () => undefined });
+		const screenshot = tools.find((tool) => tool.name === "browser_screenshot")!;
+		expect(screenshot.description).toContain("Default webpage QA uses browser_extract / browser_evaluate");
+		const guidance = screenshot.promptGuidelines?.join("\n") ?? "";
+		expect(guidance).toContain("do not take screenshots unless the user explicitly requests them");
+		expect(guidance).toContain("Stop repeating unchanged checks");
+		const extract = tools.find((tool) => tool.name === "browser_extract")!;
+		expect(extract).toBeDefined();
+	});
+});

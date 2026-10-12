@@ -433,14 +433,15 @@
   top: 0;
   left: 0;
   height: 1.5px;
-  width: 40%;
+  width: 28%;
+  opacity: 0.6;
   background: linear-gradient(
     90deg,
     transparent,
     var(--color-token-text-link-foreground),
     transparent
   );
-  animation: fast-context-scan 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: fast-context-scan 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   pointer-events: none;
 }
 
@@ -451,7 +452,7 @@
 }
 
 .fast-context-bolt {
-  animation: fast-context-bolt 1.1s ease-in-out infinite;
+  animation: none;
 }
 
 @keyframes fast-context-pop {
@@ -460,7 +461,7 @@
 }
 
 .fast-context-pop {
-  animation: fast-context-pop 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  animation: fast-context-pop 180ms ease-out both;
 }
 
 @keyframes fast-context-live {
@@ -477,8 +478,8 @@
   );
   background-size: 200% 100%;
   animation:
-    fast-context-pop 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both,
-    fast-context-live 1.1s linear infinite;
+    fast-context-pop 180ms ease-out both,
+    fast-context-live 1.8s linear infinite;
 }
 
 /* Older turns scroll up behind a fade rather than being cut off. */
@@ -507,7 +508,7 @@
 }
 
 .tool-enter {
-  animation: tool-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: tool-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .tool-scan::before {
@@ -517,19 +518,20 @@
   top: 0;
   left: 0;
   height: 1.5px;
-  width: 40%;
+  width: 28%;
+  opacity: 0.6;
   background: linear-gradient(
     90deg,
     transparent,
     var(--color-token-text-link-foreground),
     transparent
   );
-  animation: fast-context-scan 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: fast-context-scan 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   pointer-events: none;
 }
 
 .tool-pop {
-  animation: fast-context-pop 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  animation: tool-enter 180ms ease-out both;
 }
 
 .tool-live {
@@ -541,18 +543,17 @@
   );
   background-size: 200% 100%;
   animation:
-    fast-context-pop 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both,
-    fast-context-live 1.1s linear infinite;
+    tool-enter 180ms ease-out both,
+    fast-context-live 1.8s linear infinite;
 }
 
 @keyframes tool-settle {
-  0% { opacity: 0.2; transform: scale(0.6); }
-  60% { opacity: 1; transform: scale(1.12); }
+  0% { opacity: 0.5; transform: scale(0.9); }
   100% { opacity: 1; transform: none; }
 }
 
 .tool-settle {
-  animation: tool-settle 280ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  animation: tool-settle 180ms ease-out both;
 }
 
 @keyframes tool-breathe {
@@ -608,7 +609,29 @@
   transform: rotate(90deg);
 }
 
+.workflow-disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--workflow-motion-duration, 180ms) ease-out,
+    opacity var(--workflow-motion-duration, 180ms) ease-out;
+}
+.workflow-disclosure[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.workflow-disclosure-inner { min-height: 0; overflow: hidden; }
+.workflow-file-enter { animation: tool-enter 180ms ease-out both; }
+.workflow-chevron {
+  transition: transform 180ms ease-out;
+}
+.workflow-chevron[data-open="true"] { transform: rotate(90deg); }
+
 @media (prefers-reduced-motion: reduce) {
+  .workflow-disclosure,
+  .workflow-chevron,
+  .tool-line .tool-chevron { transition: none; }
+  .workflow-file-enter { animation: none; }
   .tool-enter,
   .tool-scan::before,
   .tool-pop,

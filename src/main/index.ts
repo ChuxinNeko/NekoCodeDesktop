@@ -852,6 +852,7 @@ function createWindow(): void {
 		app.getPath("userData"),
 		() => taskManager?.active.getSnapshot()?.session.cwd ?? app.getPath("home"),
 		() => {
+			taskManager?.syncMcpTools();
 			for (const window of BrowserWindow.getAllWindows()) {
 				if (window.isDestroyed()) continue;
 				revokeUnavailableDesktopGuests(window, mcpService?.desktopViewers() ?? []);
@@ -887,6 +888,7 @@ function createWindow(): void {
 	const extraTools = {
 		tools: () => [...(mcpService?.tools() ?? []), ...(computerUse?.tools() ?? [])],
 		toolNames: () => [...(mcpService?.toolNames() ?? []), ...(computerUse?.toolNames() ?? [])],
+		revision: () => mcpService?.toolRevision ?? 0,
 	};
 	taskManager = new TaskManager((emit, owner) => new AgentService(win, modelConfig!, inspector, antigravity, { emit, owner }, extraTools),
 		(channel, payload) => { if (!win.isDestroyed()) win.webContents.send(channel, payload); },
@@ -1331,6 +1333,12 @@ function registerIpc(): void {
 	ipcMain.handle("agent:abortTask", (_e, sessionId: string) => {
 		if (typeof sessionId !== "string") throw new Error("Invalid session id");
 		return taskManager?.abortSession(sessionId);
+	});
+	ipcMain.handle("agent:stopCommand", (_e, sessionId: unknown, toolCallId: unknown): boolean => {
+		if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200 ||
+			typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 500)
+			throw new Error("Invalid command stop request");
+		return taskManager?.stopCommand(sessionId, toolCallId) ?? false;
 	});
 	ipcMain.handle("agent:dismissTasks", (_e, sessionIds: unknown) => {
 		if (!Array.isArray(sessionIds) || !sessionIds.every((id) => typeof id === "string")) throw new Error("Invalid session ids");
