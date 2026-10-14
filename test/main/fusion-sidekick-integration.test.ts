@@ -39,7 +39,7 @@ describe("Fusion Sidekick task integration", () => {
 			};
 			workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
 				sessionManager: manager, initialMode: "multitask", getPermission: () => "auto",
-				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+				initialFusion: { orchestration: "inline", leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 					leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				getMcpTools: () => [{ name: "mcp__fixture__verify", label: "Verify", description: "Fixture check",
 					parameters: { type: "object", properties: {} } as never,
@@ -100,7 +100,7 @@ describe("Fusion Sidekick task integration", () => {
 			};
 			workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime,
 				sessionManager: manager, initialMode: "multitask", getPermission: () => permission,
-				initialFusion: { leadModelKey: `${leadModel.provider}/${leadModel.id}`, sidekickModelKey: `${model.provider}/${model.id}`,
+				initialFusion: { orchestration: "inline", leadModelKey: `${leadModel.provider}/${leadModel.id}`, sidekickModelKey: `${model.provider}/${model.id}`,
 					leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				onChange: () => undefined, onModeChange: () => undefined,
 			});
@@ -151,8 +151,8 @@ describe("Fusion Sidekick task integration", () => {
 		}
 	}, 30000);
 
-	test("planned implementation stays on Sidekick across natural compaction even for sensitive work", async () => {
-		for (const adaptiveRouting of [true, false]) {
+	test("only parallel adaptive implementation reroutes at natural compaction and preserves the selection for the next task", async () => {
+		for (const orchestration of ["inline", "parallel"] as const) for (const adaptiveRouting of [true, false]) {
 			const cwd = await mkdtemp(join(tmpdir(), "fusion-routing-"));
 			let workflow: WorkflowRuntime | undefined;
 			try {
@@ -191,7 +191,7 @@ describe("Fusion Sidekick task integration", () => {
 				};
 				workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime,
 					sessionManager: manager, initialMode: "multitask", getPermission: () => "auto",
-					initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+					initialFusion: { orchestration, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 						leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting },
 					onChange: () => undefined, onModeChange: () => undefined });
 				workflow.attach({ model: lead, messages: [{ role: "user", timestamp: 1 }], agent: {},
@@ -201,13 +201,21 @@ describe("Fusion Sidekick task integration", () => {
 					executionPlan: { steps: ["Implement invariant"], constraints: ["Skip checks in fixture"], acceptanceCriteria: ["Preserve invariant"],
 						verification: { mode: "skip", checks: [] } } });
 				await workflow.whenSettled();
-				expect(requested).toEqual([side.id, side.id, side.id]);
+				const routed = orchestration === "parallel" && adaptiveRouting ? lead.id : side.id;
+				expect(requested).toEqual([side.id, routed, routed]);
 				expect(await readFile(join(cwd, "invariant.txt"), "utf8")).toBe("Lead specified implementation");
 				const records = manager.getBranch().flatMap((entry) => entry.type === "custom" && entry.customType === FUSION_USAGE_ENTRY
 					? [entry.data as FusionUsageRecord] : []);
 				expect(records.some((entry) => entry.kind === "compaction")).toBe(true);
 				expect(records.filter((entry) => entry.kind === "compaction").every((entry) => entry.usage.model === side.id)).toBe(true);
 				expect(workflow.state.snapshot().tasks[0].outcome).toBe("completed");
+				if (orchestration === "parallel") {
+					workflow.state.startTask({ kind: "worker", description: "Follow-up", prompt: "Review the previous result; no changes or checks needed",
+						writablePaths: ["."], executionPlan: { steps: ["Return observed facts"], constraints: ["Skip checks"],
+							acceptanceCriteria: ["Preserve invariant"], verification: { mode: "skip", checks: [] } } });
+					await workflow.whenSettled();
+					expect(requested.at(-1)).toBe(routed);
+				}
 			} finally { workflow?.dispose(); await workflow?.whenSettled(); await rm(cwd, { recursive: true, force: true }); }
 		}
 	}, 30000);

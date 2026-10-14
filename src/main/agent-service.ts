@@ -921,7 +921,7 @@ export class AgentService {
 			const raw: unknown = JSON.parse(readFileSync(this.preferencesPath, "utf8"));
 			const workMode = (raw as { workMode?: unknown }).workMode;
 			const fusion = (raw as { fusion?: unknown }).fusion;
-			if (isFusionConfig(fusion)) this.pendingFusion = fusion;
+			if (isFusionConfig(fusion)) this.pendingFusion = { ...fusion, orchestration: "engine" };
 			if (isWorkMode(workMode)) this.workMode = workMode;
 			const mode = (raw as { mode?: unknown }).mode;
 			if (MODES.includes(mode as ExecutionMode)) {
@@ -1825,9 +1825,9 @@ export class AgentService {
 
 	async setFusion(value: FusionConfig): Promise<AgentSnapshot | null> {
 		this.assertWorkflowIdle();
-		const { config } = await resolveFusion(value, await this.getModelRuntime());
+		const { config } = await resolveFusion({ ...value, orchestration: "engine" }, await this.getModelRuntime());
 		await this.workflow?.setFusion(config);
-		this.pendingFusion = config;
+		this.pendingFusion = config ? { ...config, orchestration: "engine" } : null;
 		this.pendingModelKey = config.leadModelKey;
 		this.pendingThinkingLevel = config.leadThinkingLevel;
 		this.savePreferences();

@@ -14,6 +14,8 @@ import { cn } from "../../lib/utils";
 import { ChevronDownIcon, TriangleAlertIcon, XIcon } from "../../lib/icons";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Transcript } from "../Transcript";
+import { ConversationTimeline } from "../chat/ConversationTimeline";
+import { jumpToTimelinePrompt } from "../../lib/timeline";
 import { Button } from "../ui/button";
 import { Menu, MenuGroupLabel, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
@@ -151,19 +153,41 @@ function PermissionCard({
  * The transcript sticks to the bottom while the user is there, and stays put
  * once they scroll up to read something.
  */
-function useStickToBottom(dependency: unknown) {
+function useStickToBottom(dependency: unknown, sessionId?: string) {
 	const ref = useRef<HTMLDivElement | null>(null);
 	const stuck = useRef(true);
+	const navigating = useRef(false);
+	const manualScroll = useRef(false);
 	const onScroll = useCallback(() => {
 		const element = ref.current;
-		if (!element) return;
+		if (!element || navigating.current || !manualScroll.current) return;
 		stuck.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+		if (stuck.current) manualScroll.current = false;
 	}, []);
+	useLayoutEffect(() => { stuck.current = true; navigating.current = false; manualScroll.current = false; }, [sessionId]);
 	useLayoutEffect(() => {
 		const element = ref.current;
-		if (element && stuck.current) element.scrollTop = element.scrollHeight;
+		if (!element || !stuck.current) return;
+		let frame: number | undefined;
+		const follow = (tries: number) => {
+			if (!stuck.current) return;
+			element.scrollTop = element.scrollHeight;
+			if (tries > 0) frame = requestAnimationFrame(() => follow(tries - 1));
+		};
+		// Off-screen transcript rows initially use estimated heights.
+		follow(4);
+		return () => { if (frame !== undefined) cancelAnimationFrame(frame); };
 	}, [dependency]);
-	return { ref, onScroll, stick: () => (stuck.current = true) };
+	const jumpToPrompt = useCallback((id: string) => {
+		const element = ref.current;
+		if (!element) return;
+		stuck.current = false;
+		navigating.current = true;
+		jumpToTimelinePrompt(element, id);
+	}, []);
+	return { ref, onScroll, jumpToPrompt,
+		onUserInteraction: () => { navigating.current = false; manualScroll.current = true; stuck.current = false; },
+		stick: () => { navigating.current = false; manualScroll.current = false; stuck.current = true; } };
 }
 
 interface AcpChatViewProps {
@@ -204,7 +228,7 @@ interface AcpChatViewProps {
 export function AcpChatView(props: AcpChatViewProps) {
 	const { t } = useTranslation();
 	const { agent, snapshot } = props;
-	const scroll = useStickToBottom(snapshot?.cells);
+	const scroll = useStickToBottom(snapshot?.cells, snapshot?.id);
 	// A session opened for a message not yet sent still reads as a new
 	// conversation — its only visible part is the pickers it brought along.
 	const fresh = !snapshot || (snapshot.pristine && snapshot.cells.length === 0);
@@ -258,16 +282,21 @@ export function AcpChatView(props: AcpChatViewProps) {
 			) : null}
 
 			{snapshot && !fresh ? (
-				<div className="min-h-0 flex-1 overflow-y-auto" onScroll={scroll.onScroll} ref={scroll.ref}>
-					<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
-						{busy ? (
-							<div className={cn("flex items-center justify-center gap-2 py-10 text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-								<Spinner className="size-3.5" />
-								{t("acp.startingHint", { agent: agent.name })}
-							</div>
-						) : null}
-						<Transcript cells={snapshot.cells} streaming={snapshot.streaming} />
+				<div className="relative flex min-h-0 flex-1 flex-col">
+					<div className="min-h-0 flex-1 overflow-y-auto" onScroll={scroll.onScroll} ref={scroll.ref}
+						onWheel={scroll.onUserInteraction} onTouchStart={scroll.onUserInteraction}
+						onPointerDown={scroll.onUserInteraction} onKeyDown={scroll.onUserInteraction}>
+						<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+							{busy ? (
+								<div className={cn("flex items-center justify-center gap-2 py-10 text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
+									<Spinner className="size-3.5" />
+									{t("acp.startingHint", { agent: agent.name })}
+								</div>
+							) : null}
+							<Transcript cells={snapshot.cells} streaming={snapshot.streaming} />
+						</div>
 					</div>
+					{!props.mobile ? <ConversationTimeline cells={snapshot.cells} scrollRef={scroll.ref} onJump={scroll.jumpToPrompt} /> : null}
 				</div>
 			) : props.loadingSession ? (
 				<div className="flex min-h-0 flex-1 items-center justify-center">

@@ -13,6 +13,7 @@ const parent = model("anthropic", "lead");
 const sidekick = model("zai", "side");
 const fusion = {
 	config: {
+		orchestration: "inline",
 		leadModelKey: "anthropic/lead", leadThinkingLevel: "high",
 		sidekickModelKey: "zai/side", sidekickThinkingLevel: "medium",
 	},

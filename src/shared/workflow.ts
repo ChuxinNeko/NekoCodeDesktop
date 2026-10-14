@@ -1,4 +1,5 @@
 import type { ExecutionMode } from "./agent";
+import type { FusionState } from "./fusion-engine-state";
 
 export const WORK_MODES = ["agent", "ask", "plan", "debug", "multitask"] as const;
 export type WorkMode = (typeof WORK_MODES)[number];
@@ -219,6 +220,7 @@ export const MAX_FINISHED_EXPLORERS = 5;
 /** A task as it is written to the session file — see {@link TaskStep}. */
 export type SavedWorkflowTask = Omit<WorkflowTask, "steps">;
 export interface WorkflowSnapshot {
+	fusion?: FusionState;
 	maxWorkers?: number;
 	request: WorkflowRequest | null;
 	todos: WorkflowTodo[];

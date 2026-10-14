@@ -1,0 +1,41 @@
+{
+  "source": "demo/fusion/packages/agent/src",
+  "commit": "c4ecb1cc4b9d1ecdf4f3580991c8b5095fc8ece5",
+  "files": [
+    {
+      "path": "core/types.ts",
+      "identical": true,
+      "sha256": "a8da882f5e2c64bbb892a3a37423be72bce25915869824d3d2d1b7500201b56e"
+    },
+    {
+      "path": "core/fusion-engine.ts",
+      "identical": true,
+      "sha256": "ecb5d4725fe5432733f0c17274af4088c81c8821007ebbecf043acb9a9e53426"
+    },
+    {
+      "path": "core/routing-policy.ts",
+      "identical": true,
+      "sha256": "f8636a08d3cbe064a7385d9c8a4f6d7a71ac238e1da04f67989dcb43a5500777"
+    },
+    {
+      "path": "core/RunBudgetGuard.ts",
+      "identical": true,
+      "sha256": "27854f3b11a83489491a7e29f91e6f6694c670c1510228ba2f08973cebacf123"
+    },
+    {
+      "path": "sessions/session-store.ts",
+      "identical": true,
+      "sha256": "57302a88a0a8b3461fe291c22351d62b3bdf4def4dd97f993ca30e0869d63c56"
+    },
+    {
+      "path": "sessions/file-session-store.ts",
+      "identical": true,
+      "sha256": "1b83113d84b8f4fa69a4e2e58aa8862ab3e6d9ead0d6c0b8b4fe40886d4ee4f6"
+    },
+    {
+      "path": "hooks/CommandHookRunner.ts",
+      "identical": true,
+      "sha256": "9bce19971af6fd90e68db2b5557e88e40e3b636f126febbdd9d6650f2fba2fdb"
+    }
+  ]
+}

@@ -14,7 +14,7 @@ async function fixture(name: string, failover?: boolean) {
 	await runtime.setRuntimeApiKey("openai", "test-only");
 	const lead = getModel("anthropic", "claude-opus-4-5")!;
 	const side = getModel("openai", "gpt-5-mini")!;
-	return { cwd, runtime, lead, side, initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+	return { cwd, runtime, lead, side, initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 		leadThinkingLevel: "off" as const, sidekickThinkingLevel: "off" as const, ...(failover === undefined ? {} : { failover }) } };
 }
 const reply = (model: any, calls?: ToolCall[]) => {

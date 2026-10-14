@@ -9,6 +9,51 @@ export interface TimelineEntry {
 
 const PREVIEW_LENGTH = 80;
 
+/** The row shared by native and ACP transcripts. */
+export const userCellSelector = (id: string) => `[data-user-cell="${CSS.escape(id)}"]`;
+
+/** Navigate within the transcript, settling estimated off-screen row heights. */
+export function jumpToTimelinePrompt(el: HTMLDivElement, id: string): void {
+	const row = el.querySelector<HTMLElement>(userCellSelector(id));
+	if (!row) return;
+	const targetFor = () => {
+		const max = Math.max(0, el.scrollHeight - el.clientHeight);
+		const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+		return Math.min(Math.max(top - 16, 0), max);
+	};
+	let cancelled = false;
+	const cancel = () => { cancelled = true; };
+	const stopWatching = () => {
+		for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) el.removeEventListener(type, cancel);
+	};
+	for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) el.addEventListener(type, cancel, { passive: true });
+	const settle = (tries: number) => {
+		if (cancelled || !el.isConnected || !row.isConnected) return stopWatching();
+		const target = targetFor();
+		if (Math.abs(el.scrollTop - target) < 1 || tries <= 0) return stopWatching();
+		el.scrollTop = target;
+		requestAnimationFrame(() => settle(tries - 1));
+	};
+	if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) settle(8);
+	else {
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			el.removeEventListener("scrollend", finish);
+			settle(8);
+		};
+		el.addEventListener("scrollend", finish);
+		el.scrollTo({ top: targetFor(), behavior: "smooth" });
+		window.setTimeout(finish, 900);
+	}
+	const bubble = row.querySelector<HTMLElement>(".chat-user-message-bubble") ?? row;
+	bubble.removeAttribute("data-timeline-flash");
+	void bubble.offsetWidth;
+	bubble.setAttribute("data-timeline-flash", "");
+	window.setTimeout(() => bubble.removeAttribute("data-timeline-flash"), 1400);
+}
+
 /** One-line, markdown-free preview; image/file placeholders keep their meaning. */
 export function timelinePreview(text: string): string {
 	const plain = text

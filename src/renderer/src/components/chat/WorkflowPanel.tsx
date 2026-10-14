@@ -20,6 +20,7 @@ import {
 } from "../../lib/icons";
 import { Button } from "../ui/button";
 import { TaskCard, WorkerSlots } from "./AgentTask";
+import { FusionEngineInspector } from "./FusionEngineInspector";
 import {
 	CHAT_COLUMN_FRAME_CLASS_NAME,
 	CHAT_COLUMN_GUTTER_CLASS_NAME,
@@ -385,7 +386,7 @@ export function WorkflowPanel({
 	onCancelWorker?: (id: string) => Promise<unknown>;
 }) {
 	const [error, setError] = useState("");
-	if (!workflow.request && !workflow.todos.length && !workflow.tasks.length) return null;
+	if (!workflow.request && !workflow.todos.length && !workflow.tasks.length && !workflow.fusion) return null;
 	return (
 		<div className={cn("shrink-0 pb-1", CHAT_COLUMN_GUTTER_CLASS_NAME)}>
 			{/* A column rather than one scrolling box: each section below owns its
@@ -397,6 +398,7 @@ export function WorkflowPanel({
 					"flex max-h-[40vh] flex-col gap-2 text-[length:var(--app-font-size-ui,12px)]",
 				)}
 			>
+				{workflow.fusion ? <FusionEngineInspector state={workflow.fusion} /> : null}
 				{workflow.request ? (
 					<QuestionCard key={workflow.request.id} request={workflow.request} onAnswer={onAnswer} />
 				) : null}

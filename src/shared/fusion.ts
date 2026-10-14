@@ -2,16 +2,21 @@ import type { ThinkingLevel } from "./agent";
 
 /** Parent decisions stay on Lead; helpers default to Sidekick and may escalate. */
 export interface FusionConfig {
+	/** Public configurations use the shared engine; old literals support internal legacy tests. */
+	orchestration?: "engine" | "parallel" | "inline";
+	/** Shared engine defaults to 24 messages per lane. */
+	contextMessageLimit?: number;
+	budget?: { maxTurns?: number; maxTokens?: number; timeoutMs?: number };
+	workerProfiles?: Array<{ name: string; instructions: string; description?: string; model?: string; tools?: string[] }>;
 	leadModelKey: string;
 	leadThinkingLevel: ThinkingLevel;
 	sidekickModelKey: string;
 	sidekickThinkingLevel: ThinkingLevel;
-	/** Helper routing at task start and natural compaction boundaries. Defaults to true. */
+	/** Reference routing after lane compaction, based on recorded Sidekick failures. */
 	adaptiveRouting?: boolean;
 	/**
-	 * High availability: when one model's endpoint fails (auth, quota, 5xx,
-	 * network, stall) before producing output, the same request is replayed on
-	 * the other Fusion model. Defaults to true.
+	 * Legacy orchestration only. Shared engine preserves the reference failure
+	 * policy and does not replay requests on the alternate model.
 	 */
 	failover?: boolean;
 }
@@ -24,5 +29,15 @@ export function isFusionConfig(value: unknown): value is FusionConfig {
 		typeof config.sidekickModelKey === "string" && !!config.sidekickModelKey &&
 		levels.has(config.leadThinkingLevel) && levels.has(config.sidekickThinkingLevel) &&
 		(config.adaptiveRouting === undefined || typeof config.adaptiveRouting === "boolean") &&
+		(config.orchestration === undefined || ["engine", "parallel", "inline"].includes(config.orchestration)) &&
+		(config.contextMessageLimit === undefined || (Number.isInteger(config.contextMessageLimit) && config.contextMessageLimit > 0)) &&
+		(config.budget === undefined || (!!config.budget && typeof config.budget === "object" &&
+			Object.entries(config.budget).every(([key, limit]) => ["maxTurns", "maxTokens", "timeoutMs"].includes(key) &&
+				(limit === undefined || (typeof limit === "number" && Number.isInteger(limit) && limit > 0))))) &&
+		(config.workerProfiles === undefined || (Array.isArray(config.workerProfiles) && config.workerProfiles.every(profile =>
+			profile && typeof profile.name === "string" && !!profile.name.trim() && typeof profile.instructions === "string" &&
+			(profile.description === undefined || typeof profile.description === "string") &&
+			(profile.model === undefined || (typeof profile.model === "string" && !!profile.model.trim())) &&
+			(profile.tools === undefined || (Array.isArray(profile.tools) && profile.tools.every(tool => typeof tool === "string")))))) &&
 		(config.failover === undefined || typeof config.failover === "boolean");
 }

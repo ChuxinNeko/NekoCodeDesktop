@@ -81,9 +81,9 @@ export class FusionInlineHandoffState {
 				typeof entry[0] === "string" && /^[a-f0-9]{64}$/.test(entry[0]) && Number.isSafeInteger(entry[1]) && entry[1] >= 0 && entry[1] <= 10000)) return false;
 		this.previous = v.previous ? structuredClone(v.previous) : undefined; this.failed = new Map(v.failed); return true;
 	}
-	report(report?: FusionTaskReport): void {
-		if (!this.previous) return;
-		const signature = this.signature(this.previous);
+	report(report?: FusionTaskReport, input = this.previous): void {
+		if (!input) return;
+		const signature = this.signature(input);
 		if (report?.outcome === "completed") { this.failed.delete(signature); return; }
 		this.failed.set(signature, (this.failed.get(signature) ?? 0) + 1);
 	}

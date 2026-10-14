@@ -50,7 +50,7 @@ async function run(fusion: boolean) {
   created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
    model: runtime.getAvailableSnapshot().find(m => m.provider === provider && m.id === lead), thinkingLevel: "off",
    sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => "auto",
-   initialFusion: fusion ? { leadModelKey: `${provider}/${lead}`, sidekickModelKey: `${provider}/${side}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: false } : null,
+   initialFusion: fusion ? { orchestration: "inline", leadModelKey: `${provider}/${lead}`, sidekickModelKey: `${provider}/${side}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: false } : null,
    onChange: () => undefined, onModeChange: () => undefined, onError: e => errors.push(e.replaceAll(key!, "[REDACTED]")) });
   const timer = setTimeout(() => { created?.workflow.stop(); void created?.session.abort(); }, large ? 600000 : 360000);
   try { await created.session.prompt(large ? largeTask : prompt); } finally { clearTimeout(timer); }

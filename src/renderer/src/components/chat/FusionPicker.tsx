@@ -20,13 +20,13 @@ export function FusionPicker(props: Props) {
 	const initial = (): FusionConfig => {
 		const lead = props.models.find((m) => m.key === props.modelKey) ?? props.models[0];
 		const sidekick = props.models.find((m) => m.key !== lead?.key) ?? lead;
-		return props.fusion ?? {
+		return props.fusion ? { ...props.fusion, orchestration: "engine" } : {
+			orchestration: "engine",
 			leadModelKey: lead?.key ?? "",
 			leadThinkingLevel: preferredLevel(lead, "high"),
 			sidekickModelKey: sidekick?.key ?? "",
 			sidekickThinkingLevel: preferredLevel(sidekick, "low"),
 			adaptiveRouting: true,
-			failover: true,
 		};
 	};
 	const [draft, setDraft] = useState(initial);
@@ -88,15 +88,6 @@ export function FusionPicker(props: Props) {
 								onCheckedChange={(adaptiveRouting) => setDraft((value) => ({ ...value, adaptiveRouting }))} />
 						</div>
 						<p id={`${id}-adaptive-hint`} className="text-xs text-muted-foreground">{t("fusion.adaptiveRoutingHint")}</p>
-					</div>
-					<div className="space-y-1">
-						<div className="flex items-center justify-between gap-3">
-							<span id={`${id}-failover`}>{t("fusion.failover")}</span>
-							<Switch aria-labelledby={`${id}-failover`} aria-describedby={`${id}-failover-hint`}
-								checked={draft.failover ?? true}
-								onCheckedChange={(failover) => setDraft((value) => ({ ...value, failover }))} />
-						</div>
-						<p id={`${id}-failover-hint`} className="text-xs text-muted-foreground">{t("fusion.failoverHint")}</p>
 					</div>
 				</div>
 				<MenuSeparator />

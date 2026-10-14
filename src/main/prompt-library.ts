@@ -152,8 +152,12 @@ export interface DelegatedMcpToolSummary {
 }
 
 export interface PromptContext {
+	/** Reference engine actors use capability tools without recursive workflow tools. */
+	fusionEngine?: boolean;
+	fusionEngineInstructions?: string;
 	/** Agent identity is independent of the currently selected model role. */
 	fusionAgent?: FusionAgentIdentity;
+	fusionOrchestration?: "parallel" | "inline";
 	fusionModelRole?: FusionModelRole;
 	fusionInvestigation?: boolean;
 	fusionDocumentAssembly?: boolean;
@@ -273,9 +277,10 @@ export function toolsForMode(context: PromptContext): string[] {
 		...(context.mcpTools ?? []),
 	];
 	return withMemory.filter((name) => {
+		if (context.fusionEngine && (WORKFLOW_TOOL_NAMES.includes(name) || name.startsWith("fusion_"))) return false;
 		if (context.fusionAgent === "main") {
 			if (context.fusionImplementationBlocked && ["fusion_implement", "fusion_investigate"].includes(name)) return false;
-			if (["task", "task_status", "task_cancel", "code_search"].includes(name) && phase !== "delegate" && context.mode !== "multitask") return false;
+			if (context.fusionOrchestration !== "parallel" && ["task", "task_status", "task_cancel", "code_search"].includes(name) && phase !== "delegate" && context.mode !== "multitask") return false;
 			if (context.fusionModelRole === "sidekick" && context.fusionInvestigation &&
 				(!readOnlyNames.has(name) || ["todo_write", "task_status", "task_cancel"].includes(name))) return false;
 			if (context.fusionModelRole !== "sidekick" && context.fusionDocumentReview &&
@@ -327,6 +332,7 @@ export function toolsForMode(context: PromptContext): string[] {
 	});
 }
 export function buildModePrompt(context: PromptContext): string {
+	if (context.fusionEngineInstructions) return context.fusionEngineInstructions;
 	if (context.mode === "commit") return prompts.commit.trim();
 	const phase = phaseOf(context);
 	const tools = toolsForMode(context);
@@ -443,11 +449,13 @@ export function buildModePrompt(context: PromptContext): string {
 		prefix,
 		custom !== null || (phase && !automatic) || (context.fusionAgent === "main" && context.mode === "multitask") ? "" : prompts[context.mode],
 		phase && custom === null ? phasePrompts[phase] : "",
-		context.fusionAgent === "main" ? context.fusionModelRole === "sidekick" ? context.fusionInvestigation ? FUSION_INVESTIGATION_PROMPT : FUSION_MAIN_SIDEKICK_PROMPT : tools.includes("task") ? FUSION_LEAD_PROMPT : FUSION_COMPACT_LEAD_PROMPT : "",
+		context.fusionAgent === "main" ? context.fusionOrchestration === "parallel" ? FUSION_PARALLEL_LEAD_PROMPT : context.fusionModelRole === "sidekick" ? context.fusionInvestigation ? FUSION_INVESTIGATION_PROMPT : FUSION_MAIN_SIDEKICK_PROMPT : tools.includes("task") ? FUSION_LEAD_PROMPT : FUSION_COMPACT_LEAD_PROMPT : "",
 		context.fusionImplementationBlocked ? "## Fusion 无进展熔断\n本轮已停止重复实施。核对已观察到的文件状态与失败，诚实告知用户未完成/未验证项及需要的具体新信息；不能重复派发或声称验收完成。用户给出新方向后才接续原任务，累计预算仍保留。" : "",
 		context.fusionDocumentReview ? `## 代码审查文档的任务预算\n${context.fusionDocumentPolicy ?? "Investigation is bounded across this user objective."}\n第一次定位应合并审查项，后续只补具体缺口；不要每个符号都启动独立搜索。定位报告已有位置与原文时复用，不搜索无关 README、架构或目录。达到预算后调查工具会移除，必须使用 fusion_implement 给出结论框架、场景、优先级和证据位置，让 Sidekick 写文档；真实 API、费用、缓存效果没有数据就写未验证，不能以此继续探索。验收只检查成文内容和疑点；具体未解决的结构化报告可获得一次有限补充调查，不因 resume 或“继续”无限刷新预算。预算限制不代表证据充分，缺失项必须诚实写入文档。` : "",
 		context.fusionDocumentAssembly ? `## 文档成文阶段\n你已接到文档实施交接，复用共享历史与 Lead 的结论、提纲和证据位置，尽快 write 第一版文档。只补读缺失的决定性范围，不重新完整审查项目，不为已有引用重复搜索行号，不额外探索缓存厂商实现。连续 12 次调查工具尝试仍无实际文件内容进展，或本任务累计 36 次调查，运行时会交回 Lead；写入同样内容、resume 和重新交接不能清零累计预算。这不是要求用满预算。关键结论或证据不足时立即 fusion_review(needs_decision)，一次列全缺口；不能把“创建完成”的交接描述当作文件实际存在。成文后仅核对引用与结论，缺少真实 API 数据明确写未验证，不为此反复调查。` : "",
-		context.fusionAgent === "auxiliary" && !context.fastContext ? FUSION_SIDEKICK_PROMPT : "",
+		context.fusionAgent === "auxiliary" && !context.fastContext ? context.fusionOrchestration === "parallel"
+			? FUSION_SIDEKICK_PROMPT.replace("实施任务始终使用 Sidekick", "实施任务从 Sidekick 开始，仅在自然压缩边界按风险和执行证据重评模型")
+			: FUSION_SIDEKICK_PROMPT : "",
 		context.fusionAgent ? `## Fusion 运行时状态\n代理身份：${context.fusionAgent}；当前模型角色：${context.fusionModelRole ?? "unknown"}。\n${context.fusionRoutingState ?? ""}` : "",
 		tools.includes("fusion_route_model")
 			? "Fusion 模型选择与代理身份是两条独立轴：Sidekick 模型不等于子代理，Lead 模型也不等于主代理。fusion_route_model 只提交 workload、risk、reason、evidence 和 safeToContinue 风险信号，不指定模型、不立即切换；运行时结合实际执行结果，仅在自然上下文压缩边界选择已配置模型和思考等级。switch_mode 只改变工作纪律，不触发模型切换。不要主动压缩、重复失败或逐条提交信号来制造切换。一个普通测试失败或网络故障不是能力不足的证据。没有边界时保留当前缓存；只能继续安全且在授权内的工作，无法安全推进时结束相关工作并向父代理交回 needs_escalation，不等待、不强行继续。模型切换不创建新代理、不改变用户权限、写范围、父任务规格或验证限制。" : "",
@@ -468,6 +476,12 @@ export function buildModePrompt(context: PromptContext): string {
 		.join("\n\n")
 		.trim();
 }
+
+export const FUSION_PARALLEL_LEAD_PROMPT = `## Fusion · 独立上下文协作
+你是 Lead，负责理解需求、制定方案、关键判断、整合和最终验收。Sidekick 是独立且可复用的辅助会话，不接收你的完整对话；主会话保持 Lead，不因派发切换模型。
+将工作拆成有明确范围的任务。fusion_investigate 派发只读证据调查；fusion_implement 派发实施；task 可使用完整的 explore/worker 合约。最多一个 Sidekick 任务同时活动，后续任务复用它的历史，写权限只来自当前任务。Sidekick 运行时你可推进不依赖其结果的分析与决策，不重复调查它的范围，不轮询 task_status。完成结果自动送回并唤醒你；需要结果时结束当前步骤，不能在它完成前宣称交付。
+交接显式传递具体问题、必要路径与已知证据、你已作出的设计决定、用户限制和停止条件，不复制整个主会话。所有编辑交给 Sidekick。实施须包含 writablePaths 和 executionPlan；简写可用 instruction、path/paths、acceptanceCriterion、check 或 skipReason。修正使用 resume=true、instruction 和 resolution 复用上次合约。用户禁止验证时明确 skipReason；检查需 shell 时必须授权独占 writablePaths=["."]，不能扩大用户允许的修改范围。视觉任务提供具体 designSpec。
+结果是待核对资料，completed 只代表辅助任务结束。核对实际改动、指定检查、关键证据与未知项，由你决定纠正或交付。未验证就明确未验证，失败先分析证据并补充具体决定，不原样重派。文档任务交接结论、引用位置和提纲，避免重新完整审查。模型风险路由只在自然压缩边界应用，代理身份和用户权限保持不变。`;
 
 export const FUSION_COMPACT_LEAD_PROMPT = `## Fusion · Lead 决策与验收
 Lead/Sidekick 是同一主会话无感交替的模型，不是子代理。不创建后台任务，不等待另一个 Lead。你负责需求、根因、算法、不变量、设计和最终验收；所有文件编辑都交给 Sidekick。

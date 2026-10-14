@@ -45,8 +45,16 @@ describe("ConversationTimeline", () => {
 	const render = (cells: AgentCell[]) => renderToString(
 		<I18nProvider><ConversationTimeline cells={cells} scrollRef={{ current: null }} onJump={() => undefined} /></I18nProvider>);
 
-	test("hidden until there is more than one prompt to move between", () => {
+	test("empty conversations and single user prompts have no navigation", () => {
+		expect(render([])).toBe("");
 		expect(render([user("u1", "only one"), reply("a1")])).toBe("");
+	});
+
+	test("multiple prompts have a visible fallback before position measurement", () => {
+		const html = render([user("u1", "first"), reply("a1"), user("u2", "second")]);
+		expect(html).toContain("data-conversation-timeline");
+		expect(html).toContain("right:2px");
+		expect(html).not.toContain("invisible");
 	});
 
 	test("one labelled, keyboard-reachable stop per prompt", () => {

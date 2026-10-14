@@ -50,7 +50,7 @@ describe("Fusion inline main conversation", () => {
 			};
 			created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
 				sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => permission,
-				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
+				initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				onChange: () => undefined, onModeChange: () => undefined });
 			await created.session.prompt("Inspect source.txt; Lead decides whether to create result.txt.");
 			expect(selected).toEqual(permission === "auto" ? [lead.id, side.id, side.id, side.id, lead.id, side.id, side.id, lead.id] : [lead.id, side.id, side.id, side.id, lead.id]);
@@ -76,7 +76,7 @@ describe("Fusion inline main conversation", () => {
 				} })); return stream; };
 			created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
 				sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => "auto",
-				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${lead.provider}/${lead.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
+				initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${lead.provider}/${lead.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				onChange: () => undefined, onModeChange: () => undefined, onError: (error) => errors.push(error) });
 			await created.session.prompt("Implement the scoped task."); expect(requests).toBe(3);
 			expect(errors.some((error) => error.includes("three consecutive failed"))).toBe(true);
@@ -108,13 +108,14 @@ describe("Fusion inline main conversation", () => {
 			};
 			const options = { cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime, sessionManager: manager,
 				initialMode: "agent" as const, getPermission: () => "auto" as const, onChange: () => undefined, onModeChange: () => undefined };
-			created = await createWorkflowSession({ ...options, initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" } });
+			created = await createWorkflowSession({ ...options, initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" } });
 			await created.session.prompt("审查代码并生成 review.md，不测试。"); expect(round).toBe(3);
 			const state = () => { const entry = [...manager.getBranch()].reverse().find((item) => item.type === "custom" && item.customType === FUSION_RUN_ENTRY);
 				return entry?.type === "custom" ? entry.data as { objective: string; progress: { requests: number }; inline: { previous: { writablePaths: string[] } } } : undefined; };
 			const before = state()!; expect(before.inline.previous.writablePaths).toEqual(["review.md"]);
 			created.workflow.dispose(); created.session.dispose();
-			created = await createWorkflowSession(options);
+			created = await createWorkflowSession({ ...options, initialFusion: { orchestration: "inline", leadModelKey: `${lead.provider}/${lead.id}`,
+				sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" } });
 			expect(created.workflow.context().fusionDocumentReview).toBe(true);
 			await created.session.prompt("继续，保留已写入内容和未提交修改。");
 			expect(await readFile(join(cwd, "review.md"), "utf8")).toBe("final cited review");
@@ -170,7 +171,7 @@ describe("Fusion inline main conversation", () => {
 			};
 			created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd,
 				modelRuntime: runtime, sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => "auto",
-				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+				initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 					leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: true },
 				onChange: () => undefined, onModeChange: () => undefined });
 			created.workflow.searchCode = async () => { searches++; return "source.ts:1 export const value = 1;"; };
@@ -235,7 +236,7 @@ describe("Fusion inline main conversation", () => {
 			};
 			created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd,
 				modelRuntime: runtime, sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => "auto",
-				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+				initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 					leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: true },
 				onChange: () => undefined, onModeChange: () => undefined });
 			const checkpointId = created.session.sessionManager.appendCustomEntry(CHECKPOINT_ENTRY, { label: "Edit a.txt" });
@@ -322,7 +323,7 @@ describe("Fusion inline main conversation", () => {
 				};
 				created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd,
 					modelRuntime: runtime, sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => "auto",
-					initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
+					initialFusion: { orchestration: "inline" as const, leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 						leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting },
 					onChange: () => undefined, onModeChange: () => undefined });
 				await created.session.prompt("Write a greeting file. Do not test.");

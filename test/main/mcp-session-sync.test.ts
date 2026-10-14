@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAssistantMessageEventStream, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, fauxAssistantMessage, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { createAgentSession, ModelRuntime, SessionManager, type AgentSession, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-works/pi-mcp/testing";
@@ -39,9 +39,20 @@ async function fixture(fusion: boolean) {
 		});
 		await server.start(); return pair.client;
 	} });
-	modelRuntime.streamSimple = (selected, _context, options) => {
+	modelRuntime.streamSimple = (selected, context, options) => {
 		const stream = createAssistantMessageEventStream();
 		helperIds.push(options?.sessionId ?? "missing");
+		const system = getCurrentSystemPrompt(context.messages);
+		if (fusion && (system.includes("structured plan") || system.includes("Reconcile the work"))) {
+			const planning = system.includes("structured plan");
+			queueMicrotask(() => stream.push({ type: "done", reason: planning ? "toolUse" : "stop", message: {
+				...fauxAssistantMessage("done"), api: selected.api, provider: selected.provider, model: selected.id,
+				content: planning ? [{ type: "toolCall", id: "fusion-plan", name: "fusion_submit_plan", arguments: {
+					complexity: 0.2, mainTask: "Use MCP", sidekickTasks: [] } }] : [{ type: "text", text: "done" }],
+				stopReason: planning ? "toolUse" : "stop",
+			} }));
+			return stream;
+		}
 		const toolUse = ++round % 2 === 1;
 		queueMicrotask(() => stream.push({ type: "done", reason: toolUse ? "toolUse" : "stop", message: {
 			...fauxAssistantMessage("done"), api: selected.api, provider: selected.provider, model: selected.id,

@@ -32,7 +32,7 @@ try {
  };
  created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
   sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => "auto",
-  initialFusion: { leadModelKey: `${provider}/${lead}`, sidekickModelKey: `${provider}/${side}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: false },
+  initialFusion: { orchestration: "inline", leadModelKey: `${provider}/${lead}`, sidekickModelKey: `${provider}/${side}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: false },
   onChange: () => undefined, onModeChange: () => undefined, onError: error => errors.push(error.replaceAll(key, "[REDACTED]")) });
  const deadline = setTimeout(() => { created?.workflow.stop(); void created?.session.abort(); }, 360_000);
  try {

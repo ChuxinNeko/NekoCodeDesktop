@@ -12,6 +12,9 @@ const endpoint = process.env.NEKO_FUSION_EVAL_ENDPOINT ?? "https://model.nekofun
 const baseUrl = endpoint.replace(/\/chat\/completions\/?$/, "");
 const leadId = process.env.NEKO_FUSION_EVAL_LEAD ?? "deepseek-v4.1-flash";
 const sideId = process.env.NEKO_FUSION_EVAL_SIDEKICK ?? "qwen3.8-flash";
+const requestedOrchestration = process.env.NEKO_FUSION_EVAL_ORCHESTRATION ?? "engine";
+if (!["engine", "parallel", "inline"].includes(requestedOrchestration)) throw new Error("Unknown Fusion orchestration");
+const orchestration = requestedOrchestration as "engine" | "parallel" | "inline";
 const output = process.env.NEKO_FUSION_EVAL_OUTPUT ?? await mkdtemp(join(tmpdir(), "neko-fusion-live-"));
 await mkdir(output, { recursive: true });
 console.log(JSON.stringify({ event: "output", path: output }));
@@ -162,7 +165,7 @@ for (const selected of ["lead", "fusion"] as const) {
   const errors: string[] = []; const tools: { name: string; model?: string; error?: boolean }[] = [];
   const created = await createWorkflowSession({ cwd, agentDir, debugRoot: join(output,"debug"), modelRuntime:runtime, sessionManager:manager,
     initialMode:"agent", getPermission:()=>"auto", model:lead, thinkingLevel:"off",
-    initialFusion:selected === "fusion" ? { leadModelKey:`neko-live-eval/${leadId}`,sidekickModelKey:`neko-live-eval/${sideId}`, leadThinkingLevel:"off",sidekickThinkingLevel:"off",adaptiveRouting:true } : null,
+    initialFusion:selected === "fusion" ? { orchestration, leadModelKey:`neko-live-eval/${leadId}`,sidekickModelKey:`neko-live-eval/${sideId}`, leadThinkingLevel:"off",sidekickThinkingLevel:"off",adaptiveRouting:true } : null,
     onChange:()=>{},onModeChange:()=>{},onError:(error)=>errors.push(error.replaceAll(key,"[redacted]")),
   });
   let requests = 0;
@@ -174,8 +177,21 @@ for (const selected of ["lead", "fusion"] as const) {
     if(event.type === "tool_execution_start") { tools.push({ name:event.toolName, model:created.session.model?.id }); console.log(JSON.stringify({event:"tool",mode:selected,name:event.toolName,model:created.session.model?.id})); }
     if(event.type === "tool_execution_end" && event.isError) console.log(JSON.stringify({event:"tool_error",mode:selected,name:event.toolName}));
   });
-  const started = Date.now(); const timeout = setTimeout(()=>void created.session.abort(), 600000);
-  try { await created.session.prompt(prompt); await created.workflow.whenSettled(); }
+  const started = Date.now(); let timedOut = false;
+  const timeout = setTimeout(()=> { timedOut = true; created.workflow.stop(); void created.session.abort(); }, 600000);
+  try {
+    await created.session.prompt(prompt);
+    // Background completion can start another Lead turn and then another assignment.
+    // Require the complete task/notification pipeline to be quiet before measuring.
+    let quietSince = 0;
+    while (!timedOut) {
+      await created.workflow.whenSettled();
+      const idle = created.session.isIdle && !created.workflow.state.hasRunningTasks && created.session.pendingMessageCount === 0;
+      if (idle) { quietSince ||= Date.now(); if (Date.now() - quietSince >= 1000) break; }
+      else quietSince = 0;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
   catch(error) { errors.push(String(error).replaceAll(key,"[redacted]")); }
   finally { clearTimeout(timeout); }
   const elapsedMs = Date.now()-started;
@@ -199,13 +215,17 @@ for (const selected of ["lead", "fusion"] as const) {
   if (last?.type === "message" && last.message.role === "assistant" && last.message.stopReason === "error") {
     errors.push((last.message.errorMessage ?? "Assistant stream failed").replaceAll(key, "[redacted]"));
   }
-  const reviewed = selected === "lead" || tools.some(tool => tool.name === "fusion_review");
+  const snapshot = created.workflow.state.snapshot();
+  const tasks = snapshot.tasks;
+  const reviewed = selected === "lead" || (orchestration === "engine" ? snapshot.fusion?.status === "complete" : orchestration === "inline" ? tools.some(tool => tool.name === "fusion_review") :
+    manager.getBranch().some(entry => entry.type === "custom_message" && entry.customType === "nekocode.task-result") &&
+    tasks.some(task => task.kind === "worker" && task.status === "completed"));
   const completedNormally=last?.type === "message" && last.message.role === "assistant" && last.message.stopReason === "stop" &&
     (selected === "lead" || last.message.model === leadId) && reviewed &&
-    !created.session.isStreaming && !created.workflow.state.hasRunningTasks && !errors.length;
-  const result={mode:selected,elapsedMs,pass:exitCode===0 && ownExitCode===0 && completedNormally,completedNormally,reviewed,ownTestsPass:ownExitCode===0,ownTestsExitCode:ownExitCode,validationPass:exitCode===0,validationExitCode:exitCode,sessionFile:manager.getSessionFile(),byModel,tools,errors,
+    !created.session.isStreaming && !created.workflow.state.hasRunningTasks && !errors.length && !timedOut;
+  const result={mode:selected,orchestration:selected === "fusion" ? orchestration : undefined,timedOut,elapsedMs,pass:exitCode===0 && ownExitCode===0 && completedNormally,completedNormally,reviewed,ownTestsPass:ownExitCode===0,ownTestsExitCode:ownExitCode,validationPass:exitCode===0,validationExitCode:exitCode,sessionFile:manager.getSessionFile(),byModel,tools,errors,tasks,fusion:snapshot.fusion,
     lastMessage:assistants.at(-1),pricing:"unknown; registration zero prices are placeholders and are excluded from cost claims"};
-  summaries.push(result);await writeFile(join(output,"results.json"),JSON.stringify({ endpoint,leadId,sideId,prompt,thinking:"off for both",runs:summaries },null,2));
+  summaries.push(result);await writeFile(join(output,"results.json"),JSON.stringify({ endpoint,leadId,sideId,orchestration,prompt,thinking:"off for both",runs:summaries },null,2));
   await writeFile(join(output,"network.json"),JSON.stringify(calls,null,2));
   console.log(JSON.stringify({event:"run_complete",mode:selected,elapsedMs,pass:result.pass,completedNormally,validationPass:exitCode===0,byModel,errors}));
   created.workflow.dispose();created.session.dispose();await created.workflow.whenSettled();

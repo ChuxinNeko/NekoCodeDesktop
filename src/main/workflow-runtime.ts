@@ -81,6 +81,9 @@ import { isShellTool } from "../shared/hooks";
 import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence, FusionInlineHandoffState,
 	FUSION_COMPACT_HANDOFF_SCHEMA, FUSION_RESUME_HANDOFF_SCHEMA } from "./fusion-handoff";
 import { FusionSidekickSession } from "./fusion-sidekick-session";
+import { FusionEngineRuntime } from "./fusion/engine-runtime";
+import type { PiFusionStage } from "./fusion/pi-runner";
+import { createFusionParallelTools } from "./fusion-parallel-tools";
 import { createFusionReportTool, createFusionUpgradeTool, createFusionModelRouteTool, FUSION_MODEL_ROUTE_TOOL, FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, fusionTaskResult,
 } from "./fusion-report-tool";
 import { FusionRoutingState } from "./fusion-routing";
@@ -332,6 +335,7 @@ interface HelperRunOptions {
 	fastContext?: boolean;
 	usage?: "fusion" | "fast-context";
 	reuseFusionWorker?: boolean;
+	fusionLane?: boolean;
 	taskId?: string;
 	onReport?: (report: FusionTaskReport) => void;
 	routing?: FusionRoutingState;
@@ -370,9 +374,12 @@ export function selectFastContextModel(
 }
 export class WorkflowRuntime {
 	private fusionConfig: FusionConfig | null;
+	private engine?: FusionEngineRuntime;
+	private get engineFusion(): boolean { return !!this.fusionConfig && (this.fusionConfig.orchestration === undefined || this.fusionConfig.orchestration === "engine"); }
+	private get parallelFusion(): boolean { return !!this.fusionConfig && this.fusionConfig.orchestration !== "inline"; }
 	get fusion(): FusionConfig | null { return this.fusionConfig ? { ...this.fusionConfig } : null; }
 	async setFusion(config: FusionConfig | null, preserveRun = false): Promise<void> {
-		if (this.session?.isStreaming || this.state.hasRunningTasks)
+		if (this.session?.isStreaming || this.engine?.running || this.state.hasRunningTasks)
 			throw new Error("请先停止当前运行及后台任务，再配置 Fusion");
 		const previousKey = this.fusionStateKey();
 		if (config) {
@@ -385,6 +392,13 @@ export class WorkflowRuntime {
 		} else this.fusionConfig = null;
 		if (!preserveRun || previousKey !== this.fusionStateKey()) this.resetHelpers();
 		this.options.sessionManager.appendCustomEntry(FUSION_ENTRY, this.fusionConfig);
+		// Fusion may be enabled or its orchestration changed after session creation.
+		// Refresh actual definitions as well as names so PI uses the selected harness.
+		if (this.session && this.parentCustomTools) {
+			this.parentCustomTools = [...this.parentCustomTools.filter(tool => !tool.name.startsWith("fusion_")),
+				...this.tools().filter(tool => tool.name.startsWith("fusion_"))];
+			this.session.setCustomTools([...this.parentCustomTools, ...(this.options.getMcpTools?.() ?? [])]);
+		}
 		this.refresh();
 		this.options.onChange();
 	}
@@ -412,6 +426,7 @@ export class WorkflowRuntime {
 		].map((tool) => this.commands.wrap(tool as ToolDefinition));
 	}
 	private session: AgentSession | null = null;
+	private engineUsageQueue: Array<{ usage: TurnUsage; kind: FusionUsageKind; source: string }> = [];
 	/** Stable SDK tools; connected MCP definitions are replaced alongside these. */
 	private parentCustomTools?: ToolDefinition[];
 	private mainRouting = new FusionRoutingState("main");
@@ -473,7 +488,8 @@ export class WorkflowRuntime {
 			getPermission: options.getPermission,
 			// One source of truth for delegation: the task tool is available exactly
 			// when the current mode and phase put it in the live tool set.
-			canDelegate: () => toolsForMode(this.context()).includes("task"),
+			canDelegate: () => toolsForMode(this.context()).includes("task") ||
+				(this.parallelFusion && toolsForMode(this.context()).includes("fusion_investigate")),
 			maxWorkers: () => this.fusionConfig ? 1 : 4,
 			saved,
 			onChange: () => this.changed(),
@@ -521,8 +537,12 @@ export class WorkflowRuntime {
 		const { todos, tasks } = this.state.snapshot();
 		this.syncMainRouting();
 		return {
-			fusionAgent: this.fusionConfig ? "main" : undefined,
-			fusionModelRole: this.fusionConfig ? this.mainModelRole : undefined,
+			fusionEngine: this.engineFusion,
+			fusionEngineInstructions: this.engine?.driver.currentMainStage ? [this.engine.driver.currentMainStage.instructions,
+				...this.engine.driver.currentMainStage.messages.filter(message => message.role === "system").map(message => message.content)].join("\n\n") : undefined,
+			fusionAgent: this.fusionConfig && !this.engineFusion ? "main" : undefined,
+			fusionOrchestration: this.parallelFusion ? "parallel" : "inline",
+			fusionModelRole: this.fusionConfig && !this.engineFusion ? this.mainModelRole : undefined,
 			fusionInvestigation: !!this.mainInvestigation,
 			fusionDocumentAssembly: this.mainModelRole === "sidekick" && !this.mainInvestigation && this.documentBudget.document,
 			fusionDocumentReview: this.documentReviewBudget.document,
@@ -531,7 +551,7 @@ export class WorkflowRuntime {
 			fusionDocumentCanSearch: this.documentReviewBudget.canSearch,
 			fusionDocumentCanRead: this.documentReviewBudget.canRead,
 			fusionRoutingState: this.fusionConfig ? JSON.stringify(this.mainRouting.snapshot()) : undefined,
-			fusionModelRouting: !!this.fusionConfig && this.fusionConfig.adaptiveRouting !== false,
+			fusionModelRouting: !!this.fusionConfig && !this.engineFusion && this.fusionConfig.adaptiveRouting !== false,
 			mode: this.mode,
 			phase: this.phase,
 			permission: this.options.getPermission(),
@@ -565,6 +585,31 @@ export class WorkflowRuntime {
 	}
 	tools() {
 		const workflowTools = createWorkflowTools(this);
+		if (this.engineFusion) return workflowTools;
+		if (this.parallelFusion) return [...workflowTools, ...createFusionParallelTools(
+			workflowTools.find((tool) => tool.name === "task")!, {
+				handoffs: this.inlineHandoffs,
+				assertAvailable: (name) => {
+					if (this.closed || this.stopped || !this.parallelFusion || !toolsForMode(this.context()).includes(name))
+						throw new Error("Fusion assignment is unavailable in this mode or permission");
+				},
+				start: (input) => {
+					const onlyDocument = this.documentReviewBudget.explicitDocumentPath;
+					if (onlyDocument && input.kind === "worker" && input.writablePaths.some(path =>
+						resolveWorkspacePath(this.options.cwd, path) !== resolveWorkspacePath(this.options.cwd, onlyDocument)))
+						throw new Error("The user authorized only " + onlyDocument);
+					const stalled = this.progressGuard.handoff();
+					if (stalled) throw new Error(stalled);
+					const result = this.state.startTask(input);
+					this.saveFusionRun();
+					return result;
+				},
+			}), createFusionModelRouteTool(async (value, signal) => {
+				if (!this.fusionConfig || this.fusionConfig.adaptiveRouting === false || this.closed || signal?.aborted)
+					throw new Error("Fusion routing is unavailable or cancelled");
+				this.syncMainRouting(); this.mainRouting.request(value);
+				return { status: "pending_cache_boundary", ...this.mainRouting.snapshot() };
+			})];
 		const implement: ToolDefinition = {
 			...workflowTools.find((tool) => tool.name === "task")!,
 			// Chat Completions gateways require an object at the schema root. The
@@ -667,7 +712,7 @@ export class WorkflowRuntime {
 	/** Refuse a write into a scope a running worker owns — for tools that find their files as they go. */
 	assertParentWrite(path: string): void {
 		this.syncMainRouting();
-		if (this.fusionConfig) {
+		if (this.fusionConfig && !this.engineFusion) {
 			if (this.mainModelRole !== "sidekick" || this.pendingMainRole) throw new Error("Lead must hand file edits to Sidekick via fusion_implement");
 			const onlyDocument = this.documentReviewBudget.explicitDocumentPath;
 			if (onlyDocument && resolveWorkspacePath(this.options.cwd, path) !== resolveWorkspacePath(this.options.cwd, onlyDocument))
@@ -692,7 +737,7 @@ export class WorkflowRuntime {
 		const transformContext = session.agent.transformContext;
 		session.agent.transformContext = async (messages, signal) => {
 			const transformed = await transformContext?.(messages, signal) ?? messages;
-			return this.fusionConfig && this.mainModelRole === "lead" ? this.leadContextProjection.project(transformed) : transformed;
+			return this.fusionConfig && !this.parallelFusion && this.mainModelRole === "lead" ? this.leadContextProjection.project(transformed) : transformed;
 		};
 		const prepareNext = session.agent.prepareNextTurnWithContext;
 		session.agent.prepareNextTurnWithContext = async (turn, signal) => {
@@ -707,7 +752,7 @@ export class WorkflowRuntime {
 		const prepareRequest = session.agent.prepareRequest;
 		session.agent.prepareRequest = async (request, signal) => {
 			await this.applyMainHandoff(signal);
-			if (this.fusionConfig && !signal?.aborted) {
+			if (this.fusionConfig && !this.engineFusion && !signal?.aborted) {
 				const limit = this.progressGuard.request(); this.saveFusionRun();
 				if (limit) throw new Error(limit);
 				// With failover the stream watchdog bounds every attempt and hands the
@@ -725,6 +770,7 @@ export class WorkflowRuntime {
 				this.investigationBudget.finish();
 			}
 			const result = await finishTurn?.(turn, signal);
+			if (this.engineFusion) return result ?? undefined;
 			if (this.stopped) { this.saveFusionRun(); return { action: "end" }; }
 			if (this.fusionConfig) {
 				const halt = this.progressGuard.finish(turn);
@@ -774,7 +820,7 @@ export class WorkflowRuntime {
 		const calls = new Map<string, { name: string; args: unknown }>();
 		this.detachRoutingEvents = session.subscribe((event) => {
 			if (event.type === "agent_start") this.stopped = false;
-			if (!this.fusionConfig || this.closed) return;
+			if (!this.fusionConfig || this.engineFusion || this.closed) return;
 			if (event.type === "message_end" && event.message.role === "assistant") {
 				this.requestDeadline?.clear(); this.progressGuard.usage(event.message.usage.totalTokens);
 			}
@@ -825,6 +871,12 @@ export class WorkflowRuntime {
 		session.agent.beforeToolCall = async (context, signal) => {
 			const result = await before?.(context, signal);
 			if (result?.block) return result;
+			if (this.engineFusion) {
+				const allowed = toolsForMode(this.context());
+				if (this.closed || signal?.aborted || !allowed.includes(context.toolCall.name))
+					return { block: true, reason: "Tool is not allowed in the current mode or permission" };
+				return await guardToolCall(context.toolCall.name, context.args, this.options.cwd, allowed) ?? result;
+			}
 			this.syncMainRouting();
 			// Snapshot authority before reserving a budget slot: the last allowed slot
 			// must not deactivate its own tool midway through this gate.
@@ -893,8 +945,78 @@ export class WorkflowRuntime {
 		};
 		this.refresh();
 		this.changed();
+		if (session.settingsManager) this.installSharedFusionEngine(session);
 	}
 	/** Refresh definitions, not just names: activating an unregistered name does nothing in PI. */
+	private installSharedFusionEngine(parent: AgentSession): void {
+		this.engine = new FusionEngineRuntime({ parent, manager: this.options.sessionManager,
+			config: () => this.fusionConfig, enabled: () => this.engineFusion,
+			createActor: stage => this.createEngineActor(stage),
+			resolveModel: key => {
+				const model = this.options.modelRuntime.getAvailableSnapshot().find(item => `${item.provider}/${item.id}` === key);
+				if (!model) throw new Error(`Fusion model unavailable: ${key}`);
+				return model;
+			},
+			thinking: role => role === "main" ? this.fusionConfig?.leadThinkingLevel ?? "off" : this.fusionConfig?.sidekickThinkingLevel ?? "off",
+			allowedTools: role => toolsForMode(role === "main" ? this.context() : this.engineActorContext()),
+			onUsage: (stage, usage, source) => {
+				const kind = stage.kind === "compact" ? "compaction" : "inference";
+				const user = [...this.options.sessionManager.getBranch()].reverse().find(entry => entry.type === "message" &&
+					entry.message.role === "user" && entry.message.timestamp >= (this.engine?.startedAt ?? Infinity));
+				const canonical = stage.role === "main" && ["execute", "synthesize"].includes(stage.kind);
+				if (!user || user.type !== "message") { if (!canonical) this.engineUsageQueue.push({ usage, kind, source }); return; }
+				const entries = this.engineUsageQueue.splice(0);
+				if (!canonical) entries.push({ usage, kind, source });
+				for (const entry of entries) this.options.sessionManager.appendCustomEntry(FUSION_USAGE_ENTRY,
+					{ turnTimestamp: user.message.timestamp, parentEntryId: user.id, sourceEntryId: entry.source,
+						kind: entry.kind, usage: entry.usage } satisfies FusionUsageRecord);
+			},
+			onActorEvent: (event, source) => this.options.onHelperEvent?.(event as ProjectionEvent, source),
+			onChange: () => this.options.onChange(),
+		});
+		const snapshot = this.state.snapshot.bind(this.state);
+		this.state.snapshot = () => ({ ...snapshot(), ...(this.engineFusion && this.engine ? { fusion: this.engine.state } : {}) });
+	}
+	private engineActorContext(): PromptContext {
+		const context = this.context();
+		return { ...context, fusionEngine: true, fusionEngineInstructions: undefined, fusionAgent: undefined, fusionModelRole: undefined,
+			fusionModelRouting: false, mode: "agent", phase: "execute", child: true, allowWorkerShell: true,
+			permission: ["ask", "plan"].includes(this.mode) || (this.mode === "agent" && ["answer", "plan"].includes(this.phase))
+				? "read-only" : this.options.getPermission() };
+	}
+	private async createEngineActor(stage: PiFusionStage): Promise<AgentSession> {
+		const module = await pi();
+		const context = (): PromptContext => ({ ...this.engineActorContext(),
+			fusionEngineInstructions: [stage.instructions, ...stage.messages.filter(message => message.role === "system").map(message => message.content)].join("\n\n") });
+		const resourceLoader = await createPromptResources(this.options.cwd, context, true, this.options.agentDir);
+		const actorTools = this.session!.getAllTools().flatMap(info => {
+			const definition = this.session!.getToolDefinition(info.name);
+			return definition && !["question", "todo_write", "switch_mode", "task", "task_status", "task_cancel", "code_search", "commit_message", "debug_log"].includes(info.name) &&
+				!info.name.startsWith("fusion_") ? [definition] : [];
+		});
+		const { session } = await module.createAgentSession({ cwd: this.options.cwd, agentDir: this.options.agentDir,
+			model: typeof stage.model === "string" ? this.options.modelRuntime.getAvailableSnapshot().find(model => `${model.provider}/${model.id}` === stage.model) : undefined,
+			modelRuntime: this.options.modelRuntime, resourceLoader, sessionManager: module.SessionManager.inMemory(this.options.cwd),
+			settingsManager: module.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off" }),
+			customTools: actorTools, tools: stage.kind === "plan" ? ["fusion_submit_plan"] : stage.kind === "compact" ? [] : toolsForMode(context()),
+			toolOptions: this.shell.toolOptions });
+		const gate = session.agent.beforeToolCall;
+		session.agent.beforeToolCall = async (call, signal) => {
+			const result = await gate?.(call, signal);
+			if (result?.block) return result;
+			const allowed = toolsForMode(context());
+			// The planner has its own sole output tool, which the driver installs after creation.
+			if (stage.kind === "plan" && call.toolCall.name === "fusion_submit_plan") return result;
+			if (this.closed || signal?.aborted || !allowed.includes(call.toolCall.name))
+				return { block: true, reason: "Tool is outside the engine actor's enabled capabilities" };
+			return await guardToolCall(call.toolCall.name, call.args, this.options.cwd, allowed) ?? result;
+		};
+		const journal = new FileJournalRecorder(this.options.cwd, () => this.options.onChange());
+		const detach = journal.attach(session, { sessionManager: this.options.sessionManager });
+		const dispose = session.dispose.bind(session);
+		session.dispose = () => { detach(); dispose(); };
+		return session;
+	}
 	syncMcpTools(): void {
 		if (this.closed) return;
 		if (this.session && this.parentCustomTools) {
@@ -977,7 +1099,7 @@ export class WorkflowRuntime {
 	}
 
 	private failoverActive(): boolean {
-		return !!this.fusionConfig && this.fusionConfig.failover !== false;
+		return !!this.fusionConfig && !this.engineFusion && this.fusionConfig.failover !== false;
 	}
 	/** Candidate models for a request: the role's own model first, then the partner model. */
 	private failoverRoutes(model: Model<Api>): FusionFailoverRoute[] {
@@ -1029,7 +1151,8 @@ export class WorkflowRuntime {
 	private fusionStateKey(): string {
 		const config = this.fusionConfig;
 		return JSON.stringify(config ? [config.leadModelKey, config.sidekickModelKey, config.leadThinkingLevel,
-			config.sidekickThinkingLevel, config.adaptiveRouting !== false] : null);
+			config.sidekickThinkingLevel, config.adaptiveRouting !== false,
+			...(this.parallelFusion ? ["parallel"] : [])] : null);
 	}
 	private saveFusionRun(): void {
 		if (!this.fusionConfig || !this.fusionObjective || !this.mainRoutingTurn) return;
@@ -1083,6 +1206,7 @@ export class WorkflowRuntime {
 	}
 	/** Continuations keep the objective and budgets; a new task receives fresh evidence. */
 	private syncMainRouting(): void {
+		if (this.engineFusion) return;
 		if (!this.fusionConfig) return;
 		this.restoreFusionRun();
 		const entry = [...this.options.sessionManager.getBranch()].reverse()
@@ -1110,7 +1234,9 @@ export class WorkflowRuntime {
 	}
 
 	private async applyMainHandoff(signal?: AbortSignal): Promise<void> {
+		if (this.engineFusion) return;
 		this.syncMainRouting();
+		if (this.parallelFusion) { this.pendingMainRole = undefined; return; }
 		const role = this.pendingMainRole;
 		const session = this.session;
 		const config = this.fusionConfig;
@@ -1250,6 +1376,7 @@ export class WorkflowRuntime {
 	}
 	/** Invalidate on model/configuration changes and history/code restoration. */
 	resetHelpers(): void {
+		this.engine?.reset();
 		this.fusionBlocker = undefined;
 		this.requestDeadline?.clear(); this.fusionObjective = undefined; this.progressGuard = new FusionProgressGuard();
 		this.documentReviewBudget.reset();
@@ -1268,10 +1395,12 @@ export class WorkflowRuntime {
 		this.sidekickParentAnchor = undefined;
 	}
 	async whenSettled(): Promise<void> {
+		await this.engine?.whenSettled();
 		await this.state.whenSettled();
 		await this.sidekick.whenSettled();
 	}
 	stop(): void {
+		this.engine?.stop();
 		// Cancellation preserves the contract and counters. History restoration and an
 		// explicit configuration change still invalidate through resetHelpers().
 		this.stopped = true; this.requestDeadline?.clear(); this.saveFusionRun(); this.sidekick.reset(); this.sidekickParentAnchor = undefined;
@@ -1280,6 +1409,7 @@ export class WorkflowRuntime {
 		this.state.abortAll();
 	}
 	dispose(): void {
+		this.engine?.dispose();
 		if (this.closed) return;
 		this.stop();
 		this.closed = true;
@@ -1339,6 +1469,8 @@ export class WorkflowRuntime {
 		onStep: (step: TaskStep) => void,
 		taskId?: string,
 	): Promise<string | TaskRunResult> {
+		const planError = this.fusionConfig ? fusionTaskError(input) : undefined;
+		if (planError) throw new Error(planError);
 		const writablePaths =
 			input.kind === "worker"
 				? input.writablePaths.map((path) => resolveWorkspacePath(this.options.cwd, path))
@@ -1369,6 +1501,7 @@ export class WorkflowRuntime {
 					onStep(step);
 				},
 				{ reuseFusionWorker: !!this.fusionConfig && input.kind === "worker", taskId,
+					fusionLane: this.parallelFusion,
 					routing,
 					onReport: (value) => {
 					const criteria = input.executionPlan?.acceptanceCriteria ?? [];
@@ -1390,10 +1523,12 @@ export class WorkflowRuntime {
 					criterion, status: "unverified" as const, evidence: "Unsafe continuation was paused; parent review is required" })),
 			};
 			if (metric) metric.report = report;
+			if (this.parallelFusion) { this.inlineHandoffs.report(report, input); this.saveFusionRun(); }
 			const handoff = fusionTaskResult(result, report);
 			return { ...handoff, text: evidence.appendTo(handoff.text) };
 		} catch (error) {
 			if (!evidence) throw error;
+			if (this.parallelFusion) { this.inlineHandoffs.report(undefined, input); this.saveFusionRun(); }
 			throw new Error(evidence.appendTo(error instanceof Error ? error.message : String(error)));
 		}
 	}
@@ -1437,7 +1572,7 @@ export class WorkflowRuntime {
 		// Planned implementation always belongs to Sidekick, including sensitive work.
 		// Lead supplies decisions in the brief instead of becoming the file editor.
 		const implementation = !!fusion && !!helperOptions?.reuseFusionWorker;
-		const initialModelRole = implementation || helperOptions?.fastContext ? "sidekick" : routing.initialRole();
+		const initialModelRole = implementation || helperOptions?.fusionLane || helperOptions?.fastContext ? "sidekick" : routing.initialRole();
 		const adaptiveHelper = !!fusion && !helperOptions?.fastContext && role !== "commit" && fusion.config.adaptiveRouting !== false;
 		const helperModel = implementation && fusion ? fusion.sidekick : adaptiveHelper && fusion
 			? fusion[initialModelRole] : helperOptions?.model ?? fusion?.sidekick ?? parent.model;
@@ -1446,16 +1581,17 @@ export class WorkflowRuntime {
 			: helperOptions?.thinkingLevel ?? fusion?.config.sidekickThinkingLevel ?? parent.thinkingLevel;
 		const allowWorkerShell = !!fusion && role === "agent" && !helperOptions?.fastContext &&
 			scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, "."));
-		const allowWorkerMcp = !!fusion && role === "agent" && !helperOptions?.fastContext &&
+		const allowWorkerMcp = !!helperOptions?.fusionLane || (!!fusion && role === "agent" && !helperOptions?.fastContext &&
 			scopes.some((scope) => scope === "." || scope === resolveWorkspacePath(this.options.cwd, ".")) &&
-			this.options.getPermission() !== "read-only";
+			this.options.getPermission() !== "read-only");
 		const delegatedMcpTools = allowWorkerMcp ? (this.options.getMcpTools?.() ?? []) : [];
 		const delegatedMcpToolNames = delegatedMcpTools.map((t) => t.name);
 		const context: PromptContext = {
+			fusionOrchestration: helperOptions?.fusionLane ? "parallel" : "inline",
 			fusionAgent: fusion && role !== "commit" ? "auxiliary" : undefined,
 			fusionModelRole: fusion ? adaptiveHelper ? initialModelRole : "sidekick" : undefined,
-			fusionAdaptiveRouting: adaptiveHelper && !implementation,
-			fusionModelRouting: adaptiveHelper && !implementation,
+			fusionAdaptiveRouting: adaptiveHelper && (!implementation || !!helperOptions?.fusionLane),
+			fusionModelRouting: adaptiveHelper && (!implementation || !!helperOptions?.fusionLane),
 			fusionRoutingState: fusion ? JSON.stringify(routing.snapshot()) : undefined,
 			allowWorkerShell,
 			mcpTools: delegatedMcpToolNames,
@@ -1470,7 +1606,7 @@ export class WorkflowRuntime {
 			modelId: helperModel.provider + "/" + helperModel.id,
 			...this.shellContext(),
 		};
-		const persistent = !!fusion && !!helperOptions?.reuseFusionWorker;
+		const persistent = !!fusion && (!!helperOptions?.reuseFusionWorker || !!helperOptions?.fusionLane);
 		if (persistent && this.sidekickParentAnchor && !this.options.sessionManager.getBranch()
 			.some((entry) => entry.id === this.sidekickParentAnchor)) this.resetHelpers();
 		const usageKind = helperOptions?.usage ?? (fusion && role !== "commit" ? "fusion" : undefined);
@@ -1508,7 +1644,7 @@ export class WorkflowRuntime {
 			model: helperModel,
 			thinkingLevel: helperThinking,
 			resourceLoader,
-			tools: toolsForMode(persistent ? { ...context, permission: "auto", allowWorkerShell: true, mcpTools: delegatedMcpToolNames } : context).filter((name) =>
+			tools: toolsForMode(persistent ? { ...context, mode: "agent", permission: "auto", allowWorkerShell: true, mcpTools: delegatedMcpToolNames } : context).filter((name) =>
 				(helperOptions?.fastContext
 					? ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, FUSION_MODEL_ROUTE_TOOL]
 					: ["read", "grep", AST_GREP_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, "find", "ls", STAT_TOOL_NAME, ...WEB_TOOL_NAMES, GITHUB_TOOL_NAME, "edit", AST_EDIT_TOOL_NAME, "write", FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, FUSION_MODEL_ROUTE_TOOL, ...delegatedMcpToolNames]
@@ -1648,7 +1784,7 @@ export class WorkflowRuntime {
 			? await this.sidekick.acquire(persistentKey, lease, create)
 			: await create();
 		// Also correct older/restored helper selections before granting implementation tools.
-		if (persistent && session.model &&
+		if (persistent && !helperOptions?.fusionLane && session.model &&
 			`${session.model.provider}/${session.model.id}` !== `${helperModel.provider}/${helperModel.id}`) {
 			try {
 				await session.setModel(helperModel);
@@ -1663,7 +1799,7 @@ export class WorkflowRuntime {
 		}
 		if (session.model) {
 			lease.context.modelId = `${session.model.provider}/${session.model.id}`;
-			lease.context.fusionModelRole = implementation || helperOptions?.fastContext || !adaptiveHelper ? "sidekick" :
+			lease.context.fusionModelRole = (!helperOptions?.fusionLane && implementation) || helperOptions?.fastContext || !adaptiveHelper ? "sidekick" :
 				fusion?.config.sidekickModelKey === fusion?.config.leadModelKey ? initialModelRole :
 				lease.context.modelId === fusion?.config.sidekickModelKey ? "sidekick" : "lead";
 		}

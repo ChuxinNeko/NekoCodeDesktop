@@ -2,13 +2,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import type { AgentCell } from "../../../../shared/agent";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { activeTimelineIndex, timelineEntries, timelineTime } from "../../lib/timeline";
+import { activeTimelineIndex, timelineEntries, timelineTime, userCellSelector } from "../../lib/timeline";
 
-/** Fewer prompts than this need no navigation: the whole turn is on screen. */
+/** Show navigation only when there are multiple user prompts to move between. */
 export const TIMELINE_MIN_ENTRIES = 2;
-
-/** The row of a prompt in the transcript; `Transcript` tags each user cell with it. */
-export const userCellSelector = (id: string) => `[data-user-cell="${CSS.escape(id)}"]`;
 
 interface Props {
 	cells: readonly AgentCell[];
@@ -106,16 +103,13 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 			ref={railRef}
 			aria-label={t("chat.timeline")}
 			data-conversation-timeline=""
-			className={cn(
-				"pointer-events-none absolute top-1/2 z-10 flex max-h-[min(45%,15rem)] w-5 -translate-y-1/2 flex-col",
-				left === null && "invisible",
-			)}
-			style={{ left: left ?? 0 }}
+			className="pointer-events-none absolute top-1/2 z-10 flex max-h-[min(45%,15rem)] w-5 -translate-y-1/2 flex-col"
+			style={left === null ? { right: 2 } : { left }}
 		>
 			<div
 				ref={listRef}
 				onMouseLeave={() => setPreview(null)}
-				className="conversation-timeline-list pointer-events-auto flex min-h-0 w-full flex-col overflow-y-auto overscroll-contain py-1"
+				className="conversation-timeline-list pointer-events-auto relative flex min-h-0 w-full flex-col overflow-y-auto overscroll-contain py-1"
 			>
 				{entries.map((entry, index) => {
 					const current = index === active;
@@ -136,7 +130,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 								aria-hidden="true"
 								className={cn(
 									"block h-[2px] rounded-full transition-[width,background-color] duration-150",
-									current ? "w-3.5 bg-foreground" : "w-2 bg-muted-foreground/45 group-hover:w-3 group-hover:bg-muted-foreground",
+									current ? "w-3.5 bg-foreground" : "w-2 bg-muted-foreground/65 group-hover:w-3 group-hover:bg-muted-foreground",
 								)}
 							/>
 						</button>

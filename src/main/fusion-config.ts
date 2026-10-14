@@ -9,7 +9,7 @@ export function savedFusion(manager: Pick<SessionManager, "getBranch">): FusionC
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry.type === "custom" && entry.customType === FUSION_ENTRY)
-			return isFusionConfig(entry.data) ? { ...entry.data } : null;
+			return isFusionConfig(entry.data) ? { ...entry.data, orchestration: "engine" } : null;
 	}
 	return null;
 }
@@ -24,6 +24,7 @@ export async function resolveFusion(value: unknown, runtime: ModelRuntime) {
 	const { clampThinkingLevel } = await piAi();
 	const config: FusionConfig = {
 		...value,
+		orchestration: value.orchestration ?? "engine",
 		adaptiveRouting: value.adaptiveRouting ?? true,
 		failover: value.failover ?? true,
 		leadThinkingLevel: clampThinkingLevel(lead, value.leadThinkingLevel),
