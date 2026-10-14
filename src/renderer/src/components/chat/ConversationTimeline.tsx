@@ -17,8 +17,13 @@ interface Props {
 	onJump: (id: string) => void;
 }
 
+/** Space between the chat column's right edge and the rail. */
+const RAIL_GAP = 8;
+/** The rail's width; it never sits closer than this to the pane's right edge. */
+const RAIL_WIDTH = 20;
+
 /**
- * A vertical rail on the right edge of the transcript: one tick per prompt the
+ * A short vertical rail just right of the chat column, beside the prompts: one tick per prompt the
  * user sent, the one being read highlighted. Hover or focus previews the prompt;
  * clicking scrolls to it. Only prompts already loaded are listed.
  */
@@ -27,6 +32,8 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 	const entries = useMemo(() => timelineEntries(cells), [cells]);
 	const [active, setActive] = useState(-1);
 	const [preview, setPreview] = useState<{ index: number; top: number } | null>(null);
+	/** Offset from the transcript pane's left edge; null until first measured. */
+	const [left, setLeft] = useState<number | null>(null);
 	const railRef = useRef<HTMLDivElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const ids = useMemo(() => entries.map((entry) => entry.id), [entries]);
@@ -41,6 +48,17 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 			tops.push(row ? row.getBoundingClientRect().top - origin : Number.POSITIVE_INFINITY);
 		}
 		setActive(activeTimelineIndex(tops, el.scrollTop, el.clientHeight));
+		// Follow the column, which is centred and capped in width: the rail sits
+		// right beside the prompts, and against the pane's edge when the column
+		// already fills it.
+		const pane = el.parentElement;
+		const column = el.firstElementChild;
+		if (pane && column) {
+			const paneBox = pane.getBoundingClientRect();
+			const right = column.getBoundingClientRect().right - paneBox.left;
+			const next = Math.round(Math.max(0, Math.min(right + RAIL_GAP, paneBox.width - RAIL_WIDTH - 2)));
+			setLeft((value) => (value === next ? value : next));
+		}
 	}, [ids, scrollRef]);
 
 	useEffect(() => {
@@ -55,6 +73,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 		el.addEventListener("scroll", schedule, { passive: true });
 		const observer = new ResizeObserver(schedule);
 		observer.observe(el);
+		if (el.firstElementChild) observer.observe(el.firstElementChild);
 		return () => {
 			el.removeEventListener("scroll", schedule);
 			observer.disconnect();
@@ -87,12 +106,16 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 			ref={railRef}
 			aria-label={t("chat.timeline")}
 			data-conversation-timeline=""
-			className="pointer-events-none absolute top-6 bottom-14 right-1 z-10 flex w-5 items-center"
+			className={cn(
+				"pointer-events-none absolute top-1/2 z-10 flex max-h-[min(45%,15rem)] w-5 -translate-y-1/2 flex-col",
+				left === null && "invisible",
+			)}
+			style={{ left: left ?? 0 }}
 		>
 			<div
 				ref={listRef}
 				onMouseLeave={() => setPreview(null)}
-				className="conversation-timeline-list pointer-events-auto flex max-h-full w-full flex-col overflow-y-auto overscroll-contain py-1"
+				className="conversation-timeline-list pointer-events-auto flex min-h-0 w-full flex-col overflow-y-auto overscroll-contain py-1"
 			>
 				{entries.map((entry, index) => {
 					const current = index === active;
@@ -107,7 +130,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({ cells, 
 							onMouseEnter={(event) => show(index, event.currentTarget)}
 							onFocus={(event) => show(index, event.currentTarget)}
 							onBlur={() => setPreview(null)}
-							className="group flex h-6 min-h-6 w-full shrink-0 items-center justify-end rounded-sm pr-1 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							className="group flex h-5 min-h-5 w-full shrink-0 items-center justify-start rounded-sm pl-1 outline-none focus-visible:ring-1 focus-visible:ring-ring"
 						>
 							<span
 								aria-hidden="true"
