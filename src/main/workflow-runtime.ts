@@ -84,6 +84,8 @@ import { FusionSidekickSession } from "./fusion-sidekick-session";
 import { createFusionReportTool, createFusionUpgradeTool, createFusionModelRouteTool, FUSION_MODEL_ROUTE_TOOL, FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, fusionTaskResult,
 } from "./fusion-report-tool";
 import { FusionRoutingState } from "./fusion-routing";
+import { FusionModelHealth, withFusionFailover, type FusionFailoverEvent, type FusionFailoverRoute } from "./fusion-failover";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { currentCommandShell, type CommandShellSetup } from "./command-shell";
 import { containsPath, resolveWorkspacePath } from "./workflow-paths";
 import { readSavedWorkflow, WorkflowState } from "./workflow-state";
@@ -433,6 +435,9 @@ export class WorkflowRuntime {
 	private pendingMainRole?: "lead" | "sidekick";
 	private detachRoutingEvents?: () => void;
 	private readonly sidekick = new FusionSidekickSession<AgentSession, SidekickLease>();
+	/** Shared by the main conversation and helpers: one endpoint outage is learned once. */
+	private readonly modelHealth = new FusionModelHealth();
+	private readonly failoverWrapped = new WeakSet<object>();
 	private sidekickParentAnchor?: string;
 	private readonly helperUsageSources = new Set<string>();
 	private readonly fusionTaskMetrics = new Map<string, {
@@ -677,6 +682,7 @@ export class WorkflowRuntime {
 	attach(session: AgentSession, customTools?: ToolDefinition[]): void {
 		if (this.session && this.session !== session) this.resetHelpers();
 		this.session = session;
+		this.installFailover(session, (event) => this.reportFailover("main", event));
 		this.requestDeadline?.clear();
 		this.requestDeadline = new FusionRequestDeadline(() => {
 			this.stopped = true; this.saveFusionRun();
@@ -704,7 +710,9 @@ export class WorkflowRuntime {
 			if (this.fusionConfig && !signal?.aborted) {
 				const limit = this.progressGuard.request(); this.saveFusionRun();
 				if (limit) throw new Error(limit);
-				this.requestDeadline?.start();
+				// With failover the stream watchdog bounds every attempt and hands the
+				// request to the other model; aborting the whole run would defeat it.
+				if (!this.failoverActive()) this.requestDeadline?.start();
 			}
 			return await prepareRequest?.({ ...request, model: session.model!, thinkingLevel: session.thinkingLevel }, signal) ??
 				{ model: session.model, thinkingLevel: session.thinkingLevel };
@@ -803,7 +811,15 @@ export class WorkflowRuntime {
 					this.mainRouting.observe(call.name, call.args, toolOutputText(event.result), event.isError);
 				}
 			}
-			if (event.type === "agent_end") { calls.clear(); this.writePreimages.clear(); this.requestDeadline?.clear(); this.saveFusionRun(); }
+			if (event.type === "agent_end") {
+				calls.clear(); this.writePreimages.clear(); this.requestDeadline?.clear(); this.saveFusionRun();
+				if (this.mainModelRole === "sidekick" || this.pendingMainRole === "sidekick") {
+					// A stopped run cannot be retried: hand the prompt and tools to Lead before
+					// prompt() resolves, so an immediate next message is built for Lead.
+					if (this.stopped) this.markLeadOwnsNextTurn();
+					else void this.returnToLeadAfterRun(session);
+				}
+			}
 		});
 		const before = session.agent.beforeToolCall;
 		session.agent.beforeToolCall = async (context, signal) => {
@@ -960,6 +976,56 @@ export class WorkflowRuntime {
 		this.changed();
 	}
 
+	private failoverActive(): boolean {
+		return !!this.fusionConfig && this.fusionConfig.failover !== false;
+	}
+	/** Candidate models for a request: the role's own model first, then the partner model. */
+	private failoverRoutes(model: Model<Api>): FusionFailoverRoute[] {
+		const config = this.fusionConfig;
+		if (!config || config.failover === false || this.closed) return [];
+		const available = this.options.modelRuntime.getAvailableSnapshot();
+		const find = (key: string) => available.find((m) => `${m.provider}/${m.id}` === key);
+		const lead = find(config.leadModelKey);
+		const sidekick = find(config.sidekickModelKey);
+		const key = `${model.provider}/${model.id}`;
+		const routes: Record<"lead" | "sidekick", FusionFailoverRoute | undefined> = {
+			lead: lead && { role: "lead", model: lead, thinkingLevel: config.leadThinkingLevel },
+			sidekick: sidekick && { role: "sidekick", model: sidekick, thinkingLevel: config.sidekickThinkingLevel },
+		};
+		const own = key === config.sidekickModelKey ? "sidekick" : key === config.leadModelKey ? "lead" : undefined;
+		if (!own || !routes[own]) return [];
+		const partner = routes[own === "lead" ? "sidekick" : "lead"];
+		// The request's own model object may carry auth-resolved baseUrl; keep it first.
+		return [{ ...routes[own]!, model }, ...(partner && config.leadModelKey !== config.sidekickModelKey ? [partner] : [])];
+	}
+	private installFailover(session: AgentSession, onEvent: (event: FusionFailoverEvent) => void): void {
+		if (this.failoverWrapped.has(session.agent)) return;
+		this.failoverWrapped.add(session.agent);
+		const base: StreamFn = session.agent.streamFunction;
+		let wrapped: StreamFn | undefined;
+		session.agent.streamFunction = async (model, context, options) => {
+			if (!this.failoverActive()) return base(model, context, options);
+			if (!wrapped) {
+				const ai = await piAi();
+				wrapped = withFusionFailover(base, { routes: (m) => this.failoverRoutes(m), health: this.modelHealth,
+					createStream: ai.createAssistantMessageEventStream, isContextOverflow: ai.isContextOverflow, onEvent });
+			}
+			return wrapped(model, context, options);
+		};
+	}
+	private reportFailover(agent: "main" | "auxiliary", event: FusionFailoverEvent, notify?: (text: string) => void): void {
+		const label = (role?: string) => role === "lead" ? "Lead" : "Sidekick";
+		const text = event.type === "failover"
+			? `Fusion ${label(event.fromRole)} 模型 ${event.from} 暂不可用（${event.error?.slice(0, 200)}），本次请求已自动切换到 ${label(event.toRole)} 模型 ${event.to}，角色与权限不变。` +
+				(event.fromRole === "lead" ? "Lead 的决策与验收临时由 Sidekick 代理，建议恢复后复核。" : "")
+			: event.type === "exhausted"
+				? `Fusion 两个模型均不可用，最后错误来自 ${event.from}：${event.error?.slice(0, 300)}。已写入的文件和任务状态保留，可稍后发送“继续”。`
+				: "";
+		try {
+			this.options.sessionManager.appendCustomEntry("nekocode.fusion.failover.v1", { agent, ...event, timestamp: Date.now() });
+		} catch { /* Audit entries are best effort; the request result is authoritative. */ }
+		if (text) (notify ?? ((value: string) => this.options.onError?.(value)))(text);
+	}
 	private fusionStateKey(): string {
 		const config = this.fusionConfig;
 		return JSON.stringify(config ? [config.leadModelKey, config.sidekickModelKey, config.leadThinkingLevel,
@@ -1068,6 +1134,27 @@ export class WorkflowRuntime {
 			agent: "main", role, model: `${target.provider}/${target.id}`, boundary: "implementation_handoff", ...(this.mainInvestigation ? { handoff: "investigation" } : {}), timestamp: Date.now(),
 		});
 		this.saveFusionRun();
+	}
+
+	/**
+	 * A run that ends while Sidekick holds the session (user stop, runtime halt,
+	 * or provider failure without a pending retry) must not leave the next user
+	 * request on Sidekick's prompt, tools and model: Lead owns every new turn.
+	 */
+	private markLeadOwnsNextTurn(): void {
+		this.mainModelRole = "lead";
+		this.pendingMainRole = "lead";
+		this.pendingDocumentNotice ??= "Runtime role transition: YOU ARE NOW LEAD. The previous Sidekick run was interrupted before returning a report (stopped, halted or provider failure). Inspect the actual files before deciding; acceptance is unverified. Do not answer as Sidekick.";
+		this.refresh();
+		this.saveFusionRun();
+	}
+	private async returnToLeadAfterRun(session: AgentSession): Promise<void> {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		if (this.closed || this.session !== session || !this.fusionConfig || !session.isIdle || session.retryAttempt > 0) return;
+		if (this.mainModelRole !== "sidekick" && this.pendingMainRole !== "sidekick") return;
+		this.markLeadOwnsNextTurn();
+		try { await this.applyMainHandoff(); this.changed(); }
+		catch (error) { this.options.onError?.("Fusion 未能把会话交回 Lead：" + String(error)); }
 	}
 
 	/** Called only by the awaited, successful compaction hook, never by switch_mode. */
@@ -1515,6 +1602,8 @@ export class WorkflowRuntime {
 				}
 			} : undefined,
 		});
+		if (fusion) this.installFailover(session, (event) => this.reportFailover("auxiliary", event, (text) =>
+			currentLease()?.onStep?.({ kind: "message", id: `failover-${Date.now()}`, startedAt: Date.now(), text })));
 		// This subscription survives healthy task handoffs, so idle cache warming is not lost.
 		// Attribute warming to the request that wrote the cache, not a newly leased task.
 		let lastRequestOrigin = origin;

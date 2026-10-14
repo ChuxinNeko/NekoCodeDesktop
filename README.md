@@ -132,6 +132,8 @@ GitHub Enterprise 不支持；`url.<base>.insteadof` 镜像重写会被正确绕
 
 Lead / Sidekick 是模型配置，不是主代理 / 子代理身份。Fusion 主会话像一个模型一样使用：Lead 制定具体计划，Sidekick 执行全部文件编辑，Lead 审查和交付。主会话内部通过 `fusion_implement` / `fusion_review` 自动交接，沿用共享历史，无需手动切换或创建子任务；短编辑也交给 Sidekick。关闭自动路由后这一实施分工仍生效，开关仅控制辅助任务的风险匹配。主会话和辅助任务均遵守工作阶段、只读权限与写入范围；局部写入范围不能执行 shell 或任意插件，声明整个工作区才能运行命令。命令执行不是操作系统级沙箱。
 
+**高可用**：任一模型接口在产出内容前失败或长时间无响应时，同一请求自动切到另一个模型完成（角色与权限不变），故障模型冷却后自动恢复；Lead 不可用时由 Sidekick 临时代理并提示复核。可在 Fusion 面板关闭“双模型故障转移”。
+
 回复下方的仪表盘按钮 **本轮用量** 可查看 Fusion 汇总、辅助任务实际模型与调用类型明细，以及单独列出的 Fast Context 用量。完整配置、分工、路由时机与统计口径见 [Fusion 使用指南](docs/fusion.md)（直达章节：[分工与角色](docs/fusion.md#lead-与-sidekick-如何分工)、[自动路由时机](docs/fusion.md#自动路由何时切换)、[用量查看](docs/fusion.md#在哪里查看用量)）。
 
 要比较 Fusion 与 Lead 单模型的完整任务质量和费用，参见 [Fusion 对照评测](docs/fusion-evaluation.md)。

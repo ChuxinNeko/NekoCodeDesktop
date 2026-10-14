@@ -135,6 +135,8 @@ export const en = {
 	"fusion.usage.cache-warm": "Cache warming",
 	"fusion.adaptiveRouting": "Risk- and evidence-driven routing",
 	"fusion.adaptiveRoutingHint": "On by default. Lead plans and reviews; Sidekick performs file edits in the same conversation and returns to Lead automatically. This setting controls helper risk routing; inline implementation handoffs remain enabled when off.",
+	"fusion.failover": "Two-model failover",
+	"fusion.failoverHint": "On by default. If either model's endpoint fails before producing output (auth, quota, 5xx, network or a stalled stream), the same request is replayed on the other model with unchanged role and permissions; the failed model is retried after a cooldown.",
 	"fusion.apply": "Use Fusion",
 	"fusion.description": "Use Fusion as one model: Lead decides, Sidekick edits, Lead reviews. The main conversation hands off automatically with shared history, without creating a background task or manual model switching. Cost depends on models and usage.",
 	"fastCard.stats.searches": "{count} searches",

@@ -137,6 +137,8 @@ export const zhCN: Record<TranslationKey, string> = {
 	"fusion.usage.cache-warm": "缓存保温",
 	"fusion.adaptiveRouting": "风险与证据驱动的自动路由",
 	"fusion.adaptiveRoutingHint": "默认开启。主会话由 Lead 规划与审查，Sidekick 按具体计划执行全部编辑并交回 Lead，无需手动切换。此设置控制辅助任务的风险路由；关闭后主会话实施交接仍生效。",
+	"fusion.failover": "双模型故障转移",
+	"fusion.failoverHint": "默认开启。任一模型的接口在产出内容前失败（鉴权、额度、5xx、网络或长时间无响应）时，同一请求自动改由另一个模型完成，角色与权限不变；故障模型冷却后自动恢复。",
 	"fusion.apply": "使用 Fusion",
 	"fusion.description": "像一个模型一样使用：Lead 决定如何做，Sidekick 执行编辑，Lead 审查交付。主会话自动交接并共享历史，无需创建子任务或手动切模型；实际费用取决于模型与用量。",
 	"fastCard.stats.searches": "{count} 次搜索",

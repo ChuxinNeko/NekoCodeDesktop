@@ -25,6 +25,7 @@ export async function resolveFusion(value: unknown, runtime: ModelRuntime) {
 	const config: FusionConfig = {
 		...value,
 		adaptiveRouting: value.adaptiveRouting ?? true,
+		failover: value.failover ?? true,
 		leadThinkingLevel: clampThinkingLevel(lead, value.leadThinkingLevel),
 		sidekickThinkingLevel: clampThinkingLevel(sidekick, value.sidekickThinkingLevel),
 	};
