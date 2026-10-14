@@ -26,6 +26,7 @@ import { Composer } from "./Composer";
 import { ProjectPicker } from "./chat/ProjectPicker";
 import { Transcript } from "./Transcript";
 import { EditedFilesCard } from "./chat/EditedFilesCard";
+import { ConversationTimeline, userCellSelector } from "./chat/ConversationTimeline";
 import { activeTurnChanges } from "../lib/turnChanges";
 import { useRunSettlement } from "../lib/motion";
 import { WelcomeView } from "./WelcomeView";
@@ -330,6 +331,56 @@ export function ChatView(props: ChatViewProps) {
 		setJumpVisible(false);
 	};
 
+	/** Timeline jump: park the prompt near the top and stop tail-following. */
+	const jumpToUserCell = (id: string) => {
+		const el = scrollRef.current;
+		const row = el?.querySelector<HTMLElement>(userCellSelector(id));
+		if (!el || !row) return;
+		followRef.current = null;
+		// Where the prompt has to land: a little below the top edge.
+		const targetFor = () => {
+			const max = Math.max(0, el.scrollHeight - el.clientHeight);
+			const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+			return Math.min(Math.max(top - 16, 0), max);
+		};
+		// Rows off screen skip layout (`content-visibility: auto`) and stand at an
+		// estimated height, so the distance to the prompt is only known for sure
+		// once the rows around it render. Settle on it a frame at a time, and
+		// give up the moment the user takes the scroll back.
+		let cancelled = false;
+		const cancel = () => { cancelled = true; };
+		const stopWatching = () => {
+			for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) el.removeEventListener(type, cancel);
+		};
+		for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) el.addEventListener(type, cancel, { passive: true });
+		const settle = (tries: number) => {
+			if (cancelled || !el.isConnected || !row.isConnected) return stopWatching();
+			const target = targetFor();
+			if (Math.abs(el.scrollTop - target) < 1 || tries <= 0) return stopWatching();
+			el.scrollTop = target;
+			requestAnimationFrame(() => settle(tries - 1));
+		};
+		const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		if (reduce) settle(8);
+		else {
+			el.scrollTo({ top: targetFor(), behavior: "smooth" });
+			let done = false;
+			const finish = () => {
+				if (done) return;
+				done = true;
+				el.removeEventListener("scrollend", finish);
+				settle(8);
+			};
+			el.addEventListener("scrollend", finish);
+			window.setTimeout(finish, 900);
+		}
+		const bubble = row.querySelector<HTMLElement>(".chat-user-message-bubble") ?? row;
+		bubble.removeAttribute("data-timeline-flash");
+		void bubble.offsetWidth; // restart the highlight when the same prompt is chosen twice
+		bubble.setAttribute("data-timeline-flash", "");
+		window.setTimeout(() => bubble.removeAttribute("data-timeline-flash"), 1400);
+	};
+
 	// A session was opened and its transcript is still in flight. The chat
 	// surface has nothing to draw until it lands, but the welcome screen would
 	// be plainly wrong — and holding the tap until the fetch returns is what
@@ -520,6 +571,9 @@ export function ChatView(props: ChatViewProps) {
 					    jump-to-bottom targets all stop at this spacer's top edge. */}
 					<div aria-hidden="true" data-scroll-spacer style={{ height: spacerPx }} />
 				</div>
+				{!props.mobile && snapshot.cells.length ? (
+					<ConversationTimeline cells={snapshot.cells} scrollRef={scrollRef} onJump={jumpToUserCell} />
+				) : null}
 				{jumpVisible ? (
 					<Button
 						className="absolute bottom-3 right-4 z-10 shadow-md"

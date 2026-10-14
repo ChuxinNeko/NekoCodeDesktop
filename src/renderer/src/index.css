@@ -3719,3 +3719,22 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
     animation: none;
   }
 }
+
+/* Conversation timeline: the rail scrolls on its own without a visible bar, and
+   a jumped-to prompt pulses once so the eye lands on it. */
+.conversation-timeline-list {
+  scrollbar-width: none;
+}
+.conversation-timeline-list::-webkit-scrollbar {
+  display: none;
+}
+@keyframes timeline-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  25% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-ring, currentColor) 60%, transparent); }
+}
+.chat-user-message-bubble[data-timeline-flash] {
+  animation: timeline-flash 1.2s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-user-message-bubble[data-timeline-flash] { animation: none; outline: 2px solid var(--color-ring, currentColor); outline-offset: 1px; }
+}

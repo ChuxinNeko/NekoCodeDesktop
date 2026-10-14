@@ -63,7 +63,7 @@ const UserCell = memo(function UserCell({
 }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex w-full justify-end" data-turn-anchor={anchor ? "" : undefined}>
+		<div className="flex w-full justify-end" data-turn-anchor={anchor ? "" : undefined} data-user-cell={cell.id}>
 			<div className="group flex max-w-[80%] flex-col items-end gap-px">
 				<div
 					className={cn(
