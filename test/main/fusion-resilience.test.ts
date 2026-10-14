@@ -10,6 +10,15 @@ const frame = (failed = false) => ({ message: { ...fauxAssistantMessage(""), con
 ] }, toolResults: [{ role: "toolResult" as const, toolCallId: "read", toolName: "read", content: [{ type: "text" as const, text: "result" }], isError: failed, timestamp: 1 }] });
 
 describe("Fusion task resilience", () => {
+	test("novel successful handoff interrupts stagnation but repeated handoffs do not", () => {
+		const guard = new FusionProgressGuard();
+		for (let i=0;i<5;i++) expect(guard.finish(frame())).toBeUndefined();
+		guard.transition("implementation", "new scoped correction");
+		expect(guard.finish(frame())).toBeUndefined();
+		for (let i=0;i<5;i++) { guard.transition("implementation", "new scoped correction"); expect(guard.finish(frame())).toBeUndefined(); }
+		guard.transition("implementation", "new scoped correction");
+		expect(guard.finish(frame())).toContain("six tool turns");
+	});
 	test("repeated failed calls and repeated evidence are bounded even if the model ignores tool restrictions", () => {
 		const failed = new FusionProgressGuard();
 		expect(failed.finish(frame(true))).toBeUndefined(); expect(failed.finish(frame(true))).toBeUndefined();

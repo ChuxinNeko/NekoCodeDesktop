@@ -19,6 +19,21 @@ const review = [call("review", "fusion_review", { outcome: "needs_decision", sum
 	acceptance: [{ criterion: "Correct", status: "not_met", evidence: "Assertion failed" }] }), result("review", "fusion_review", "Recorded")];
 
 describe("Fusion Lead request projection", () => {
+	test("closed investigation keeps evidence but omits repeated source bodies without changing raw history", () => {
+		const raw = [user("Implement requested change"), call("i", "fusion_investigate", { instruction: "Locate source" }),
+			result("i", "fusion_investigate", "Accepted"),
+			call("listing", "ls", { path: "." }), result("listing", "ls", "src/\nactual-entry.ts"),
+			call("r", "read", { path: "src/a.ts" }),
+			result("r", "read", "DECISIVE_ENTRY\n" + "REPEATED_SOURCE\n".repeat(5000)),
+			call("report", "fusion_review", { outcome: "completed", summary: "src/a.ts:1 DECISIVE_ENTRY", acceptance: [] }),
+			result("report", "fusion_review", "Recorded")];
+		const before = JSON.stringify(raw); const projected = JSON.stringify(projectFusionLeadContext(raw));
+		expect(projected).toContain("Fusion investigation context summary");
+		expect(projected).toContain("DECISIVE_ENTRY");
+		expect(projected).toContain("actual-entry.ts");
+		expect(projected.length).toBeLessThan(before.length / 10);
+		expect(JSON.stringify(raw)).toBe(before);
+	});
 	test("runtime budget return seals only Sidekick history and retains the unverified notice", () => {
 		const raw: AgentMessage[] = [...handoff, ...implementation, {
 			role: "custom", customType: "nekocode.fusion.document-return.v1", display: false,

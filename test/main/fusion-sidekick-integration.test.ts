@@ -38,7 +38,7 @@ describe("Fusion Sidekick task integration", () => {
 				return stream;
 			};
 			workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
-				sessionManager: manager, initialMode: "agent", getPermission: () => "auto",
+				sessionManager: manager, initialMode: "multitask", getPermission: () => "auto",
 				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 					leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				getMcpTools: () => [{ name: "mcp__fixture__verify", label: "Verify", description: "Fixture check",
@@ -99,7 +99,7 @@ describe("Fusion Sidekick task integration", () => {
 				return stream;
 			};
 			workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime,
-				sessionManager: manager, initialMode: "agent", getPermission: () => permission,
+				sessionManager: manager, initialMode: "multitask", getPermission: () => permission,
 				initialFusion: { leadModelKey: `${leadModel.provider}/${leadModel.id}`, sidekickModelKey: `${model.provider}/${model.id}`,
 					leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				onChange: () => undefined, onModeChange: () => undefined,
@@ -190,7 +190,7 @@ describe("Fusion Sidekick task integration", () => {
 					} })); return stream;
 				};
 				workflow = new WorkflowRuntime({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime,
-					sessionManager: manager, initialMode: "agent", getPermission: () => "auto",
+					sessionManager: manager, initialMode: "multitask", getPermission: () => "auto",
 					initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`,
 						leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting },
 					onChange: () => undefined, onModeChange: () => undefined });

@@ -6,15 +6,16 @@ import type { FusionTaskReport } from "../shared/workflow";
 
 const shortText = () => Type.String({ minLength: 1, maxLength: 2000 });
 export const FUSION_COMPACT_HANDOFF_SCHEMA = Type.Object({
-	instruction: shortText(),
-	path: Type.String({ minLength: 1, maxLength: 1000 }),
+	instruction: Type.String({ minLength: 1, maxLength: 6000 }),
+	path: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+	paths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 1000 }), { minItems: 1, maxItems: 20 })),
 	acceptanceCriterion: shortText(),
 	check: Type.Optional(shortText()),
 	skipReason: Type.Optional(shortText()),
 }, { additionalProperties: false });
 export const FUSION_RESUME_HANDOFF_SCHEMA = Type.Object({
 	resume: Type.Literal(true),
-	instruction: shortText(),
+	instruction: Type.String({ minLength: 1, maxLength: 6000 }),
 	resolution: shortText(),
 }, { additionalProperties: false });
 
@@ -29,22 +30,33 @@ export class FusionInlineHandoffState {
 	prepare(args: unknown): TaskInput {
 		if (!args || typeof args !== "object") throw new Error("Fusion handoff requires an object");
 		const value = args as Record<string, unknown>;
+		if (typeof value.instruction === "string" && value.instruction.length > 6000) throw new Error("Instruction exceeds 6000 characters; provide only new decisions");
 		let input: TaskInput;
 		if (value.resume === true) {
 			if (!this.previous) throw new Error("No inline plan to resume in this user task; provide a new handoff");
 			if (typeof value.instruction !== "string" || !value.instruction.trim() || typeof value.resolution !== "string" || !value.resolution.trim())
 				throw new Error("Resume needs a concrete correction and resolution of the previous blocker");
 			input = { ...this.previous, prompt: value.instruction + "\nLead resolution: " + value.resolution,
-				executionPlan: { ...this.previous.executionPlan!, steps: [value.instruction] } };
+				executionPlan: { ...this.previous.executionPlan!, steps: value.instruction.match(/[\s\S]{1,2000}/g)! } };
+		} else if (value.executionPlan && Array.isArray(value.writablePaths)) {
+			// Object-root gateway schemas allow both compact and full fields. An
+			// explicit full execution contract wins over an incidental instruction.
+			input = { ...value, kind: "worker", prompt: value.prompt ?? value.instruction,
+				description: value.description ?? String(value.instruction ?? "Lead execution plan").slice(0, 200) } as TaskInput;
 		} else if (typeof value.instruction === "string") {
-			if (!value.instruction.trim() || typeof value.path !== "string" || !value.path.trim() ||
+			const paths = Array.isArray(value.paths) ? value.paths : typeof value.path === "string" ? [value.path] : [];
+			if (value.paths !== undefined && value.path !== undefined) throw new Error("Provide path or paths, not both");
+			if (!value.instruction.trim() || !paths.length || paths.length > 20 ||
+				!paths.every(path => typeof path === "string" && !!path.trim() && path.length <= 1000) ||
 				typeof value.acceptanceCriterion !== "string" || !value.acceptanceCriterion.trim())
-				throw new Error("Compact handoff requires instruction, path and acceptanceCriterion");
-			const check = typeof value.check === "string" && !!value.check.trim();
+				throw new Error("Compact handoff requires instruction, path or paths, and acceptanceCriterion");
 			const skip = typeof value.skipReason === "string" && !!value.skipReason.trim();
-			if (check === skip) throw new Error("Provide exactly one concrete check or explicit skipReason");
+			// Conflicting optional fields must never enable checks against an
+			// explicit exclusion. Prefer the stricter skip contract and expose it.
+			const check = !skip && typeof value.check === "string" && !!value.check.trim();
+			if (!check && !skip) throw new Error("Provide exactly one concrete check or explicit skipReason");
 			input = { kind: "worker", description: value.instruction.slice(0, 200), prompt: value.instruction,
-				writablePaths: [value.path], executionPlan: { steps: [value.instruction],
+				writablePaths: paths as string[], executionPlan: { steps: value.instruction.match(/[\s\S]{1,2000}/g)!,
 					constraints: ["Preserve user changes and all shared user restrictions.", ...(skip ? [String(value.skipReason)] : [])],
 					acceptanceCriteria: [value.acceptanceCriterion], verification: check ? { mode: "run", checks: [String(value.check)] } : { mode: "skip", checks: [] } } };
 		} else input = args as TaskInput;

@@ -81,16 +81,27 @@ describe("fast context prompts", () => {
 	test("a Fusion parent uses Fast Context for location rather than delegating its decisions", () => {
 		for (const phase of AGENT_PHASES) {
 			const prompt = buildModePrompt({ ...base, mode: "agent", phase, fusionAgent: "main" });
-			expect(prompt, phase).toContain("### Fast Context 只做代码定位");
 			expect(prompt, phase).toContain("不能原样转发用户问题");
-			expect(prompt, phase).toContain("根因判断、方案设计和最终回答由主代理负责");
 			expect(prompt, phase).toContain("代码查找固定由 Sidekick 完成");
-			expect(prompt, phase).toContain("固定使用 Sidekick");
+			expect(prompt, phase).toContain("fusion_investigate");
+			if (phase !== "delegate") expect(prompt).not.toContain("### Fast Context");
 		}
 	});
 });
 
 describe("Fusion identity and permission boundaries", () => {
+	test("investigation is same-session and read-only in every phase", () => {
+		for (const phase of AGENT_PHASES) {
+			const context: PromptContext = { ...base, mode: "agent", phase, fusionAgent: "main" };
+			expect(toolsForMode(context)).toContain("fusion_investigate");
+			const tools = toolsForMode({ ...context, fusionModelRole: "sidekick", fusionInvestigation: true,
+				pluginTools: ["plugin"], mcpTools: ["mcp__demo"] });
+			for (const name of ["write", "edit", "ast_edit", "bash", "powershell", "plugin", "mcp__demo", "task", "code_search", "question", "switch_mode"])
+				expect(tools).not.toContain(name);
+			for (const name of ["read", "grep", "fusion_review"]) expect(tools).toContain(name);
+			expect(buildModePrompt({ ...context, fusionModelRole: "sidekick", fusionInvestigation: true })).toContain("不是子代理，没有后台任务");
+		}
+	});
 	test("inline handoff cannot enter read-only phases and review survives revoked write permission", () => {
 		for (const mode of ["ask", "plan"] as const) {
 			expect(toolsForMode({ ...base, mode, fusionAgent: "main", fusionModelRole: "lead" })).not.toContain("fusion_implement");
@@ -117,7 +128,8 @@ describe("Fusion identity and permission boundaries", () => {
 		for (const phase of AGENT_PHASES) {
 			const tools = toolsForMode({ ...base, mode: "agent", phase, fusionAgent: "main", webTools: true, semanticSearch: true });
 			for (const name of investigation.slice(0, 6)) expect(tools, `${phase}: ${name}`).not.toContain(name);
-			for (const name of ["code_search", "read", ...investigation.slice(6)]) expect(tools, `${phase}: ${name}`).toContain(name);
+			for (const name of ["fusion_investigate", "read", ...investigation.slice(6)]) expect(tools, `${phase}: ${name}`).toContain(name);
+			expect(tools.includes("code_search")).toBe(phase === "delegate");
 			const sidekickTools = toolsForMode({ ...base, mode: "agent", phase, fusionAgent: "main", fusionModelRole: "sidekick", semanticSearch: true });
 			for (const name of investigation.slice(0, 6)) expect(sidekickTools, `${phase}: ${name}`).toContain(name);
 		}
@@ -134,12 +146,12 @@ describe("Fusion identity and permission boundaries", () => {
 	test("Fusion parent gives specific instructions for every edit", () => {
 		const prompt = buildModePrompt({ ...base, mode: "agent", fusionAgent: "main" });
 		expect(prompt).toContain("所有文件编辑都交给 Sidekick");
-		expect(prompt).toContain("机械实施、耗时命令和验证交给 task(kind=worker)");
+		expect(prompt).toContain("不要重复整个用户需求");
 		expect(prompt).toContain("常规连贯修改优先在同一主会话交接");
 		expect(prompt).toContain("即使只改一行，也必须通过 fusion_implement");
 		expect(prompt).toContain("高风险改动先由 Lead 决定算法");
-		expect(prompt).toContain("worker 运行时不要对其任务范围重复搜索或逐文件预审");
-		expect(prompt).toContain("不轮询 task_status");
+		expect(prompt).toContain("不重复读完整源码");
+		expect(prompt).toContain("不轮询task_status");
 		expect(prompt).toContain("不能保证固定降本比例");
 	});
 	test("workers follow parent specifications and cannot recursively delegate", () => {
@@ -197,8 +209,8 @@ describe("custom prompts", () => {
 		expect(buildModePrompt({ mode: "subagent", permission: "read-only", child: true, fastContext: true })).toContain(FAST_CONTEXT_PROMPT);
 		expect(buildModePrompt({ mode: "agent", permission: "auto", child: true, fusionAgent: "auxiliary" })).not.toContain("MINE");
 		const lead = buildModePrompt({ ...base, mode: "agent", fusionAgent: "main", pluginTools: ["custom_write"] });
-		expect(lead).toContain("## Fusion · 主代理");
-		expect(lead).toContain("主会话委派与自动模型路由");
+		expect(lead).toContain("## Fusion · Lead");
+		expect(lead).toContain("不要重复整个用户需求");
 		expect(toolsForMode({ ...base, mode: "agent", fusionAgent: "main", pluginTools: ["custom_write"] })).not.toContain("custom_write");
 		expect(buildModePrompt({ ...base, mode: "commit" })).not.toContain("MINE");
 	});

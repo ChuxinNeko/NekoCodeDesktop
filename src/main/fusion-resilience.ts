@@ -44,8 +44,15 @@ export class FusionProgressGuard {
 		if (this.seen.has(hashed) || this.seen.size >= 1024) return false;
 		this.seen.add(hashed); this.progressed = true; return true;
 	}
+	/** A new accepted contract/report is workflow progress, not proof of acceptance.
+	 * Deduplication prevents identical ping-pong from replenishing the guard. */
+	transition(kind: string, contract: string): void {
+		if (this.novel(`transition\n${kind}\n${contract}`)) {
+			this.stagnant = 0; this.failedTurns = 0;
+		}
+	}
 	evidence(name: string, path: string, text: string): void {
-		if (!["fusion_implement", "fusion_review", "fusion_route_model", "todo_write", "write", "edit", "ast_edit"].includes(name))
+		if (!["fusion_implement", "fusion_investigate", "fusion_review", "fusion_route_model", "todo_write", "write", "edit", "ast_edit"].includes(name))
 			this.novel(`${name}\n${path}\n${text}`);
 	}
 	write(path: string, before: string, after: string): boolean {

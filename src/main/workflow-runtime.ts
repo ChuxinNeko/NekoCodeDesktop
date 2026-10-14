@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { FusionInvestigationBudget } from "./fusion-investigation-budget";
 import { execFile } from "node:child_process";
 import { mkdir, open, lstat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -415,6 +416,8 @@ export class WorkflowRuntime {
 	private mainRoutingTurn?: string;
 	private mainModelRole: "lead" | "sidekick" = "lead";
 	private mainHandoff?: TaskInput;
+	private mainInvestigation?: string;
+	private readonly investigationBudget = new FusionInvestigationBudget();
 	private readonly documentBudget = new FusionDocumentBudget();
 	private readonly documentReviewBudget = new FusionDocumentReviewBudget();
 	private progressGuard = new FusionProgressGuard();
@@ -515,7 +518,8 @@ export class WorkflowRuntime {
 		return {
 			fusionAgent: this.fusionConfig ? "main" : undefined,
 			fusionModelRole: this.fusionConfig ? this.mainModelRole : undefined,
-			fusionDocumentAssembly: this.mainModelRole === "sidekick" && this.documentBudget.document,
+			fusionInvestigation: !!this.mainInvestigation,
+			fusionDocumentAssembly: this.mainModelRole === "sidekick" && !this.mainInvestigation && this.documentBudget.document,
 			fusionDocumentReview: this.documentReviewBudget.document,
 			fusionDocumentPolicy: this.documentReviewBudget.policy,
 			fusionImplementationBlocked: !!this.fusionBlocker,
@@ -558,10 +562,14 @@ export class WorkflowRuntime {
 		const workflowTools = createWorkflowTools(this);
 		const implement: ToolDefinition = {
 			...workflowTools.find((tool) => tool.name === "task")!,
-			parameters: Type.Union([FUSION_COMPACT_HANDOFF_SCHEMA, FUSION_RESUME_HANDOFF_SCHEMA,
-				workflowTools.find((tool) => tool.name === "task")!.parameters]),
+			// Chat Completions gateways require an object at the schema root. The
+			// handoff runtime validates compact/resume/full contracts, not a root union.
+			parameters: Type.Object(Object.fromEntries(Object.entries({
+				...(workflowTools.find((tool) => tool.name === "task")!.parameters as { properties: Record<string, any> }).properties,
+				...FUSION_COMPACT_HANDOFF_SCHEMA.properties, ...FUSION_RESUME_HANDOFF_SCHEMA.properties,
+			}).map(([name, schema]) => [name, Type.Optional(schema)])), { additionalProperties: false }),
 			name: "fusion_implement", label: "Fusion implementation",
-			description: "Hand implementation to Sidekick in this same conversation. Short known edits: instruction, path, acceptanceCriterion and exactly one check or skipReason; runtime builds the plan. Corrections: resume=true, instruction and resolution; reuse previous scope, acceptance and verification without repeating the plan. Complex/new scope: full worker executionPlan and writablePaths. Bundle related changes and decisions into one handoff. Do not repeat an unchanged failing plan. Shared history contains requirements and files. End this step; Sidekick executes next and returns via fusion_review.",
+			description: "Hand implementation to Sidekick in this same conversation. Prefer one compact handoff for related multi-file edits: instruction, paths (or path for one file), acceptanceCriterion and exactly one check or skipReason; runtime builds the plan. Corrections: resume=true, instruction and resolution; reuse previous scope, acceptance and verification without repeating the plan. Complex/new scope: full worker executionPlan and writablePaths. Bundle related changes and decisions into one handoff. Do not repeat an unchanged failing plan. Shared history contains requirements and files. End this step; Sidekick executes next and returns via fusion_review.",
 		};
 		implement.execute = async (_id, args, signal) => {
 			if (!this.fusionConfig || this.mainModelRole !== "lead" || this.pendingMainRole || this.closed || signal?.aborted)
@@ -586,28 +594,64 @@ export class WorkflowRuntime {
 				message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.id === this.mainPlanSourceCall));
 			if (!resume || !sourceInContext) this.mainPlanSourceCall = _id;
 			this.inlineHandoffs.accept(input);
+			this.progressGuard.transition("implementation", JSON.stringify(input));
 			this.pendingMainRole = "sidekick";
 			this.saveFusionRun();
-			return { content: [{ type: "text", text: "Handoff accepted. Execute the instruction/plan above in this same conversation. Compact: path is the write scope, acceptanceCriterion is the single criterion; check runs the named check, skipReason forbids verification. Resume: inherit previous scope, acceptance and verification, apply only the new correction/resolution. Return via fusion_review; do not redesign or give the final answer." +
+			return { content: [{ type: "text", text: (input.executionPlan?.verification.mode === "skip" && (args as { check?: unknown }).check ? "Both check and skipReason were supplied: skipReason takes precedence; verification is SKIPPED, do not execute checks. " : "") + "Handoff accepted. Execute the instruction/plan above in this same conversation. Compact: path is the write scope, acceptanceCriterion is the single criterion; check runs the named check, skipReason forbids verification. Resume: inherit previous scope, acceptance and verification, apply only the new correction/resolution. Return via fusion_review; do not redesign or give the final answer." +
 				(resume && !sourceInContext ? "\nOriginal plan was compacted; restored execution contract:\n" + taskHandoffPrompt(input) : "") }], details: input };
+		};
+		const investigate: ToolDefinition = {
+			name: "fusion_investigate", label: "Fusion investigation",
+			description: "Hand bounded read-only investigation to Sidekick in this same conversation, not a subagent. Give evidence questions and scope; Lead owns decisions and acceptance. End this batch; Sidekick reads shared history and returns evidence via fusion_review with acceptance=[].",
+			parameters: Type.Object({ instruction: Type.String({ minLength: 1, maxLength: 6000 }) }, { additionalProperties: false }),
+			executionMode: "sequential",
+			execute: async (_id, args, signal) => {
+				if (!this.fusionConfig || this.mainModelRole !== "lead" || this.pendingMainRole || this.closed || signal?.aborted ||
+					!toolsForMode(this.context()).includes("fusion_investigate")) throw new Error("Fusion investigation handoff unavailable");
+				if (this.state.hasRunningTasks) throw new Error("Wait for background tasks before inline investigation");
+				const instruction = (args as { instruction: string }).instruction;
+				if (typeof instruction !== "string" || !instruction.trim() || instruction.length > 6000) throw new Error("Provide a bounded evidence request");
+				this.mainHandoff = undefined;
+				this.mainInvestigation = instruction;
+				this.progressGuard.transition("investigation", instruction);
+				this.investigationBudget.reset();
+				this.pendingMainRole = "sidekick";
+				this.saveFusionRun();
+				return { content: [{ type: "text", text: "Read-only investigation accepted in this same conversation. Collect requested locations, decisive excerpts, observations and unknowns. Do not edit, run shell commands, decide the solution or create a subagent. Return via fusion_review with acceptance=[]. Requirements and evidence are in shared history." }], details: { instruction } };
+			},
 		};
 		const review = createFusionReportTool((report) => {
 			if (!this.fusionConfig || this.mainModelRole !== "sidekick" || this.pendingMainRole)
 				throw new Error("No active inline Sidekick implementation");
-			if (report.acceptance.length !== this.mainHandoff?.executionPlan?.acceptanceCriteria.length ||
-				report.acceptance.some((item, index) => item.criterion !== this.mainHandoff?.executionPlan?.acceptanceCriteria[index]))
+			const criteria = this.mainInvestigation ? [] : this.mainHandoff?.executionPlan?.acceptanceCriteria;
+			if (!criteria || report.acceptance.length !== criteria.length ||
+				report.acceptance.some((item, index) => item.criterion !== criteria[index]))
 				throw new Error("Report the original Lead acceptance criteria in order");
-			this.inlineHandoffs.report(report);
+			if (!this.mainInvestigation) this.inlineHandoffs.report(report);
+			this.progressGuard.transition(this.mainInvestigation ? "investigation_report" : "implementation_report", JSON.stringify(report));
 			if (report.outcome !== "completed" && report.decision?.trim() && report.acceptance.some((item) => item.status !== "met"))
 				this.documentReviewBudget.supplement();
 			this.pendingMainRole = "lead";
 			this.saveFusionRun();
-		});
+		}, true);
+		// Inline reports can omit repeated criterion text. Runtime fills the original
+		// criteria as unverified, never upgrades a claim to met.
+		const reviewParameters = review.parameters as { properties: Record<string, any> };
+		review.parameters = Type.Object({ ...reviewParameters.properties,
+			acceptance: Type.Optional(reviewParameters.properties.acceptance),
+			summary: Type.String({ minLength: 1, maxLength: 6000 }) }, { additionalProperties: false });
+		const reportExecute = review.execute;
+		review.execute = async (id, args, signal, onUpdate, context) => {
+			const value = args as { acceptance?: FusionTaskReport["acceptance"]; summary: string };
+			const criteria = this.mainInvestigation ? [] : this.mainHandoff?.executionPlan?.acceptanceCriteria ?? [];
+			return reportExecute(id, { ...value, acceptance: value.acceptance ?? criteria.map(criterion => ({
+				criterion, status: "unverified", evidence: "Not individually verified; see report summary." })) }, signal, onUpdate, context);
+		};
 		review.name = "fusion_review";
 		review.executionMode = "sequential";
 		review.label = "Fusion review";
-		review.description = "Sidekick returns implementation results, evidence, unverified acceptance or a specific design question to Lead in this same conversation. Stop editing after calling. Lead reviews on the next model request and owns the final answer.";
-		return [...workflowTools, implement, review, createFusionModelRouteTool(async (value, signal) => {
+		review.description = "Return to Lead now in this same conversation. Provide outcome and a concise summary of paths, actual checks and unknowns; decision for blockers. Omit acceptance to avoid repeating the plan (runtime marks original criteria unverified). Optional acceptance must match the original criteria exactly, in order. completed is ready for Lead review, not acceptance. Stop this batch; the next model is Lead, not another Sidekick response.";
+		return [...workflowTools, implement, investigate, review, createFusionModelRouteTool(async (value, signal) => {
 			if (!this.fusionConfig || this.fusionConfig.adaptiveRouting === false || this.closed || signal?.aborted)
 				throw new Error("Fusion routing is unavailable or cancelled");
 			this.syncMainRouting();
@@ -652,7 +696,7 @@ export class WorkflowRuntime {
 			this.pendingDocumentNotice = undefined;
 			return { ...update, model: session.model, thinkingLevel: session.thinkingLevel,
 				...(notice ? { messages: [...update?.messages ?? [], { role: "custom" as const,
-					customType: FUSION_DOCUMENT_RETURN, content: notice, display: false, timestamp: Date.now() }] } : {}) };
+					customType: notice.startsWith("Runtime role transition:") ? "nekocode.fusion.role.v1" : FUSION_DOCUMENT_RETURN, content: notice, display: false, timestamp: Date.now() }] } : {}) };
 		};
 		const prepareRequest = session.agent.prepareRequest;
 		session.agent.prepareRequest = async (request, signal) => {
@@ -669,6 +713,9 @@ export class WorkflowRuntime {
 		session.agent.finishTurn = async (turn, signal) => {
 			this.requestDeadline?.clear();
 			await Promise.all([...this.progressObservations]);
+			if (this.mainInvestigation && this.mainModelRole === "sidekick" && !this.pendingMainRole && !signal?.aborted) {
+				this.investigationBudget.finish();
+			}
 			const result = await finishTurn?.(turn, signal);
 			if (this.stopped) { this.saveFusionRun(); return { action: "end" }; }
 			if (this.fusionConfig) {
@@ -676,7 +723,8 @@ export class WorkflowRuntime {
 				if (halt && !signal?.aborted) {
 					this.fusionBlocker = halt; this.options.onError?.(halt);
 					if (this.mainModelRole === "sidekick" && !this.pendingMainRole) {
-						this.inlineHandoffs.report(); this.pendingMainRole = "lead";
+						if (!this.mainInvestigation) this.inlineHandoffs.report();
+						this.pendingMainRole = "lead";
 						this.pendingDocumentNotice = `Runtime halted Sidekick: ${halt} Lead must inspect the actual state and report the blocker; do not repeat implementation until the user supplies new direction.`;
 						this.saveFusionRun(); return { action: "continue" };
 					}
@@ -691,7 +739,7 @@ export class WorkflowRuntime {
 				if (wanted.length !== current.length || wanted.some((name) => !current.includes(name))) this.refresh();
 			}
 			if (this.fusionConfig && !signal?.aborted && this.mainModelRole === "sidekick" &&
-				!this.pendingMainRole && this.documentBudget.exhausted &&
+				!this.pendingMainRole && !this.mainInvestigation && this.documentBudget.exhausted &&
 				!["error", "aborted"].includes(turn.message.stopReason)) {
 				this.inlineHandoffs.report();
 				this.pendingMainRole = "lead";
@@ -706,7 +754,7 @@ export class WorkflowRuntime {
 				!turn.message.content.some((item) => item.type === "toolCall") &&
 				!["error", "aborted"].includes(turn.message.stopReason)) {
 				// A missing report still needs Lead review; Sidekick cannot end the user turn.
-				this.inlineHandoffs.report();
+				if (!this.mainInvestigation) this.inlineHandoffs.report();
 				this.pendingMainRole = "lead";
 				this.saveFusionRun();
 				return { action: "continue" };
@@ -765,12 +813,18 @@ export class WorkflowRuntime {
 			// Snapshot authority before reserving a budget slot: the last allowed slot
 			// must not deactivate its own tool midway through this gate.
 			const allowedTools = toolsForMode(this.context());
+			if (this.fusionConfig && this.mainInvestigation && this.mainModelRole === "sidekick" && !this.pendingMainRole && allowedTools.includes(context.toolCall.name)) {
+				const reason = this.investigationBudget.before(context.toolCall.name, context.args);
+				if (reason) return { block: true, reason };
+			}
 			if (this.fusionConfig && this.mainModelRole === "lead" && !this.pendingMainRole) {
 				const reason = this.documentReviewBudget.before(context.toolCall.name);
 				if (reason) return { block: true, reason };
 			}
 			if (this.fusionConfig && this.mainModelRole === "sidekick" && !this.pendingMainRole) {
-				const reason = this.documentBudget.before(context.toolCall.name);
+				const reason = this.mainInvestigation
+					? this.documentReviewBudget.before(["grep", "find", "ls", "stat", "ast_grep", "semantic_search"].includes(context.toolCall.name) ? "read" : context.toolCall.name)
+					: this.documentBudget.before(context.toolCall.name);
 				if (reason) return { block: true, reason };
 			}
 			if (
@@ -917,7 +971,8 @@ export class WorkflowRuntime {
 			this.options.sessionManager.appendCustomEntry(FUSION_RUN_ENTRY, {
 				version: 1, config: this.fusionStateKey(), objective: this.fusionObjective, user: this.mainRoutingTurn,
 				role: this.mainModelRole, pending: this.pendingMainRole, activePlan: !!this.mainHandoff,
-				source: this.mainPlanSourceCall, notice: this.pendingDocumentNotice, blocker: this.fusionBlocker,
+				investigationBudget: this.investigationBudget.snapshot(),
+				source: this.mainPlanSourceCall, investigation: this.mainInvestigation, notice: this.pendingDocumentNotice, blocker: this.fusionBlocker,
 				inline: this.inlineHandoffs.snapshot(), document: this.documentBudget.snapshot(),
 				review: this.documentReviewBudget.snapshot(), progress: this.progressGuard.snapshot(),
 			});
@@ -930,15 +985,19 @@ export class WorkflowRuntime {
 		if (!entry || entry.type !== "custom") return;
 		try {
 			const v = entry.data as { version: number; config: string; objective: string; user: string; role: "lead" | "sidekick";
-				pending?: "lead" | "sidekick"; activePlan: boolean; source?: string; notice?: string; blocker?: string;
+				investigationBudget?: unknown;
+				pending?: "lead" | "sidekick"; activePlan: boolean; source?: string; investigation?: string; notice?: string; blocker?: string;
 				inline: ReturnType<FusionInlineHandoffState["snapshot"]>; document: unknown; review: unknown; progress: unknown };
 			if (!v || v.version !== 1 || v.config !== this.fusionStateKey() || JSON.stringify(v).length > 200_000 ||
 				!["lead", "sidekick"].includes(v.role) || (v.pending !== undefined && !["lead", "sidekick"].includes(v.pending)) ||
+				(v.investigation !== undefined && (typeof v.investigation !== "string" || !v.investigation.trim() || v.investigation.length > 6000 || v.activePlan)) ||
 				typeof v.activePlan !== "boolean" || (v.source !== undefined && (typeof v.source !== "string" || v.source.length > 400)) ||
 				(v.notice !== undefined && (typeof v.notice !== "string" || v.notice.length > 4000)) ||
 				(v.blocker !== undefined && (typeof v.blocker !== "string" || v.blocker.length > 4000))) return;
 			const users = branch.filter((item) => item.type === "message" && item.message.role === "user").map((item) => item.id);
 			if (!users.includes(v.objective) || !users.includes(v.user) || users.indexOf(v.objective) > users.indexOf(v.user)) return;
+			const budget = new FusionInvestigationBudget();
+			if (v.investigationBudget !== undefined && !budget.restore(v.investigationBudget)) return;
 			const inline = new FusionInlineHandoffState(); const doc = new FusionDocumentBudget();
 			const review = new FusionDocumentReviewBudget(); const progress = new FusionProgressGuard();
 			if (!inline.restore(v.inline) || !doc.restore(v.document) || !review.restore(v.review) || !progress.restore(v.progress)) return;
@@ -949,7 +1008,9 @@ export class WorkflowRuntime {
 			this.inlineHandoffs.restore(v.inline); this.documentBudget.restore(v.document); this.documentReviewBudget.restore(v.review);
 			this.progressGuard = progress; this.fusionObjective = v.objective; this.mainRoutingTurn = v.user;
 			this.mainHandoff = v.activePlan ? plan : undefined; this.mainPlanSourceCall = v.source;
-			this.mainModelRole = v.role === "sidekick" && !this.mainHandoff ? "lead" : v.role;
+			this.mainInvestigation = v.investigation;
+			this.investigationBudget.restore(budget.snapshot());
+			this.mainModelRole = v.role === "sidekick" && !this.mainHandoff && !this.mainInvestigation ? "lead" : v.role;
 			this.pendingMainRole = v.pending ?? this.mainModelRole; this.pendingDocumentNotice = v.notice;
 			this.fusionBlocker = v.blocker;
 		} catch { /* Invalid or older snapshots grant no authority; rebuild from the user task. */ }
@@ -968,6 +1029,7 @@ export class WorkflowRuntime {
 			this.mainRoutingTurn = key;
 			this.mainRouting = new FusionRoutingState("main", textOf(entry.message.content));
 			this.mainHandoff = undefined;
+			this.mainInvestigation = undefined;
 			this.pendingDocumentNotice = undefined;
 			this.fusionBlocker = undefined;
 			if (continuing) this.progressGuard.resume();
@@ -995,10 +1057,15 @@ export class WorkflowRuntime {
 		session.setThinkingLevel(role === "lead" ? config.leadThinkingLevel : config.sidekickThinkingLevel);
 		this.mainModelRole = role;
 		this.pendingMainRole = undefined;
-		if (role === "lead") this.mainHandoff = undefined;
+		if (role === "lead") { this.mainHandoff = undefined; this.mainInvestigation = undefined; }
 		this.refresh();
+		this.pendingDocumentNotice = role === "lead" && this.pendingDocumentNotice ? this.pendingDocumentNotice : role === "lead"
+			? "Runtime role transition: YOU ARE NOW LEAD. Sidekick has returned in this same session; no other Lead or worker is waiting. Review the evidence. If the user requested implementation and only investigation is complete, decide and call fusion_implement now. If implementation returned, verify the actual result and correct or deliver. Do not answer as Sidekick or end with a promise of handoff."
+			: this.mainInvestigation
+				? "Runtime role transition: YOU ARE NOW SIDEKICK, read-only investigation. Read only the concrete paths needed by this request, return a short factual summary via fusion_review immediately when sufficient; do not design, repeatedly rediscover the workspace, or look for package/auth configuration. Request: " + this.mainInvestigation
+				: "Runtime role transition: YOU ARE NOW SIDEKICK, implementing Lead's decision in this same session. Execute the shared plan; return via fusion_review(outcome, summary), acceptance may be omitted and will remain unverified for Lead. Do not repeat investigation or the full plan.";
 		this.options.sessionManager.appendCustomEntry("nekocode.fusion.route.v1", {
-			agent: "main", role, model: `${target.provider}/${target.id}`, boundary: "implementation_handoff", timestamp: Date.now(),
+			agent: "main", role, model: `${target.provider}/${target.id}`, boundary: "implementation_handoff", ...(this.mainInvestigation ? { handoff: "investigation" } : {}), timestamp: Date.now(),
 		});
 		this.saveFusionRun();
 	}
@@ -1106,6 +1173,7 @@ export class WorkflowRuntime {
 		this.leadContextProjection.reset();
 		this.mainModelRole = "lead";
 		this.mainHandoff = undefined;
+		this.mainInvestigation = undefined;
 		this.pendingMainRole = "lead";
 		this.mainRouting = new FusionRoutingState("main");
 		this.mainRoutingTurn = undefined;

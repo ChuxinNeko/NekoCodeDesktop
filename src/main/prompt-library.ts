@@ -143,6 +143,7 @@ const readOnlyNames = new Set([
 	// Changes only the session model, never project files or worker scopes.
 	"fusion_route_model",
 	"fusion_review",
+	"fusion_investigate",
 ]);
 
 export interface DelegatedMcpToolSummary {
@@ -154,6 +155,7 @@ export interface PromptContext {
 	/** Agent identity is independent of the currently selected model role. */
 	fusionAgent?: FusionAgentIdentity;
 	fusionModelRole?: FusionModelRole;
+	fusionInvestigation?: boolean;
 	fusionDocumentAssembly?: boolean;
 	fusionDocumentReview?: boolean;
 	fusionDocumentPolicy?: string;
@@ -261,7 +263,7 @@ export function toolsForMode(context: PromptContext): string[] {
 	const attended = !context.child && !context.headless;
 	const withMemory = [
 		...names,
-		...(context.fusionAgent === "main" ? [context.fusionModelRole === "sidekick" ? "fusion_review" : "fusion_implement"] : []),
+		...(context.fusionAgent === "main" ? (context.fusionModelRole === "sidekick" ? ["fusion_review"] : ["fusion_investigate", "fusion_implement"]) : []),
 		...(context.fusionModelRouting ? ["fusion_route_model"] : []),
 		...(context.child && context.fusionAgent === "auxiliary" && context.mode === "agent"
 			? ["fusion_report", ...(context.fusionAdaptiveRouting ? ["fusion_request_upgrade"] : [])] : []),
@@ -272,7 +274,10 @@ export function toolsForMode(context: PromptContext): string[] {
 	];
 	return withMemory.filter((name) => {
 		if (context.fusionAgent === "main") {
-			if (context.fusionImplementationBlocked && name === "fusion_implement") return false;
+			if (context.fusionImplementationBlocked && ["fusion_implement", "fusion_investigate"].includes(name)) return false;
+			if (["task", "task_status", "task_cancel", "code_search"].includes(name) && phase !== "delegate" && context.mode !== "multitask") return false;
+			if (context.fusionModelRole === "sidekick" && context.fusionInvestigation &&
+				(!readOnlyNames.has(name) || ["todo_write", "task_status", "task_cancel"].includes(name))) return false;
 			if (context.fusionModelRole !== "sidekick" && context.fusionDocumentReview &&
 				(name === "task" || (name === "code_search" && context.fusionDocumentCanSearch === false) ||
 					(name === "read" && context.fusionDocumentCanRead === false))) return false;
@@ -438,7 +443,7 @@ export function buildModePrompt(context: PromptContext): string {
 		prefix,
 		custom !== null || (phase && !automatic) || (context.fusionAgent === "main" && context.mode === "multitask") ? "" : prompts[context.mode],
 		phase && custom === null ? phasePrompts[phase] : "",
-		context.fusionAgent === "main" ? context.fusionModelRole === "sidekick" ? FUSION_MAIN_SIDEKICK_PROMPT : FUSION_LEAD_PROMPT : "",
+		context.fusionAgent === "main" ? context.fusionModelRole === "sidekick" ? context.fusionInvestigation ? FUSION_INVESTIGATION_PROMPT : FUSION_MAIN_SIDEKICK_PROMPT : tools.includes("task") ? FUSION_LEAD_PROMPT : FUSION_COMPACT_LEAD_PROMPT : "",
 		context.fusionImplementationBlocked ? "## Fusion 无进展熔断\n本轮已停止重复实施。核对已观察到的文件状态与失败，诚实告知用户未完成/未验证项及需要的具体新信息；不能重复派发或声称验收完成。用户给出新方向后才接续原任务，累计预算仍保留。" : "",
 		context.fusionDocumentReview ? `## 代码审查文档的任务预算\n${context.fusionDocumentPolicy ?? "Investigation is bounded across this user objective."}\n第一次定位应合并审查项，后续只补具体缺口；不要每个符号都启动独立搜索。定位报告已有位置与原文时复用，不搜索无关 README、架构或目录。达到预算后调查工具会移除，必须使用 fusion_implement 给出结论框架、场景、优先级和证据位置，让 Sidekick 写文档；真实 API、费用、缓存效果没有数据就写未验证，不能以此继续探索。验收只检查成文内容和疑点；具体未解决的结构化报告可获得一次有限补充调查，不因 resume 或“继续”无限刷新预算。预算限制不代表证据充分，缺失项必须诚实写入文档。` : "",
 		context.fusionDocumentAssembly ? `## 文档成文阶段\n你已接到文档实施交接，复用共享历史与 Lead 的结论、提纲和证据位置，尽快 write 第一版文档。只补读缺失的决定性范围，不重新完整审查项目，不为已有引用重复搜索行号，不额外探索缓存厂商实现。连续 12 次调查工具尝试仍无实际文件内容进展，或本任务累计 36 次调查，运行时会交回 Lead；写入同样内容、resume 和重新交接不能清零累计预算。这不是要求用满预算。关键结论或证据不足时立即 fusion_review(needs_decision)，一次列全缺口；不能把“创建完成”的交接描述当作文件实际存在。成文后仅核对引用与结论，缺少真实 API 数据明确写未验证，不为此反复调查。` : "",
@@ -464,30 +469,45 @@ export function buildModePrompt(context: PromptContext): string {
 		.trim();
 }
 
+export const FUSION_COMPACT_LEAD_PROMPT = `## Fusion · Lead 决策与验收
+Lead/Sidekick 是同一主会话无感交替的模型，不是子代理。不创建后台任务，不等待另一个 Lead。你负责需求、根因、算法、不变量、设计和最终验收；所有文件编辑都交给 Sidekick。
+代码查找固定由 Sidekick 完成：优先 fusion_investigate，给出已有路径、具体证据问题和停止条件；不能原样转发用户问题让它决定方案。只需要机械修改且已有充分证据时直接 fusion_implement，避免额外调查往返。你可 read 决定性范围核对，不重复读完整源码。
+调查返回后你现在就是 Lead：证据足够且用户要实施，立即决定并 fusion_implement；不能仅复述事实并承诺“交给Lead”。常规连贯修改优先在同一主会话交接。即使只改一行，也必须通过 fusion_implement，不绕过shell/MCP编辑。
+连贯多文件任务也优先简写：instruction给出你已决定的算法与边界，paths列出全部授权文件（单文件用path），acceptanceCriterion指向原需求中的可观察验收，以及check或skipReason二选一。不要重复整个用户需求或生成完整验收表。只有新增复杂约束无法简写时用完整executionPlan与writablePaths。高风险改动先由 Lead 决定算法、不变量和stopConditions。一次汇总相关改动，不逐文件交接。需要shell验证须明确writablePaths=["."]，不能突破用户权限；用户禁止验证则verification=skip且传递该限制。
+Sidekick返回后核对实际文件、指定检查和未知项。报告completed和tool success都不是验收；未验证不伪装通过。缺报告或失败先明确证据、具体纠正决定，不原样重派。已有可信检查通过且没有新改动或疑点，不再重复检查。最终答复由你给出，不以等待/交接承诺结束任务。
+文档任务先形成结论—位置—未知项索引，再让Sidekick成文；不因缺真实API数据无限调查。视觉任务由你决定具体样式与几何，Sidekick实施，不让其自行设计。
+成本纪律：调查与报告精炼，避免重复计划、长日志和全面审计。不轮询task_status；worker运行时不要对其任务范围重复搜索或逐文件预审（仅独立并行阶段适用）。不能保证固定降本比例，实际按token、缓存、单价与成功质量测量。`;
+
+export const FUSION_INVESTIGATION_PROMPT = `## Fusion · 同会话 Sidekick 只读调查
+你与 Lead 是同一主会话中的两个模型，不是子代理，没有后台任务。按 fusion_investigate 的具体问题读取工作区代码、收集位置、决定性原文、实际观察、反例和未知项。需求和证据在共享历史中，不重新全面调查。此交接只读：不编辑，不运行 shell、插件或 MCP，不创建子任务，不替 Lead 决定方案或最终验收。
+已知路径直接read，可一次并行读取相关文件；不搜索无关src/package/auth。最多一次列目录找入口；同一工具参数不得重复（已有结果直接复用）。没有固定调查调用数或轮数上限；持续收集确实需要的新证据，证据足够再交回Lead，缺失事实诚实标未知。不推导完整方案。证据足够立即调用 fusion_review，省略acceptance，summary 给出精炼的证据索引和未确定项；需要决定时说明具体问题。completed 仅表示调查返回，不表示实施或验收完成。summary仅列证据和未知项，目标800字符以内，不复述类型表、全部验收场景或方案。调用后结束本步，运行时无感切回 Lead；最终答复由 Lead 完成。`;
+
 export const FUSION_MAIN_SIDEKICK_PROMPT = `## Fusion · 主代理内的 Sidekick 实施
 你仍在同一主会话中，当前职责是执行 Lead 刚通过 fusion_implement 给出的具体计划。沿用共享历史中的需求、证据、设计决定及用户限制，不重新规划，不创建子任务。所有文件编辑由你执行，包括短编辑和高风险方案的实现；只修改 writablePaths，保护用户未提交修改。verification.mode=skip 时跳过测试、构建和浏览器验证。主会话权限和工作阶段仍是硬性限制。
 长文件与测试按小批次 write/edit，单次只生成一个模块或一组相关测试；不要在一次超长工具调用中生成整套边界测试。先完成计划中的相关源代码，再运行必要检查，不在每个文件尚未实施时重复运行同一整套失败检查。
-发现规格冲突、设计歧义、错误反复出现或不能安全推进时，停止相关修改，通过 fusion_review(needs_decision/needs_escalation/blocked) 把具体证据和待决问题交回 Lead。完成后调用 fusion_review，按原顺序逐项报告 Lead 原始 acceptanceCriteria、实际检查和未验证项；completed 只表示供 Lead 审查。调用后结束这一步，不能继续编辑。最终用户答复和验收由 Lead 完成。缺少报告的文本结束也会自动交回 Lead，不能把它视为验收通过。`;
+发现规格冲突、设计歧义、错误反复出现或不能安全推进时，停止相关修改，通过 fusion_review(needs_decision/needs_escalation/blocked) 把具体证据和待决问题交回 Lead。完成后调用 fusion_review，默认省略acceptance（运行时保留原验收条件且标记未验证），summary精炼报告修改路径、实际检查和未知项，不重复计划或完整源码；需要逐项报告时按原顺序使用 Lead 原始 acceptanceCriteria；completed 只表示供 Lead 审查。调用后结束这一步，不能继续编辑。最终用户答复和验收由 Lead 完成。缺少报告的文本结束也会自动交回 Lead，不能把它视为验收通过。`;
 
 export const FUSION_LEAD_PROMPT = `## Fusion · 主代理
-你是 Fusion 主会话，负责理解需求、拆解问题、规划、设计决策、实施与最终交付。Lead/Sidekick 是用户配置的两个模型（模型及思考等级不能自行替换），不是主代理/子代理的身份。主会话由 Lead 理解、规划与审查，所有文件编辑都交给 Sidekick。通过 fusion_implement 提供 executionPlan 和 writablePaths，运行时在下一次模型请求无感切换到 Sidekick；它通过 fusion_review 交回 Lead。同一主会话共享历史，不创建子任务，不要求用户手动切换。实施子代理始终使用 Sidekick，敏感问题先交回 Lead 决定。事实收集可交给子代理，但你必须亲自理解关键代码、推导根因、制定方案和复核最终正确性；你始终保留决策与验收责任，不把整项职责委派出去。
+你是 Fusion 主会话中的 Lead，负责理解需求、工作决策、规划、设计与最终验收和交付；代码读取调查和任务执行默认交给同会话 Sidekick。Lead/Sidekick 是用户配置的两个模型（模型及思考等级不能自行替换），不是主代理/子代理的身份。主会话由 Lead 理解、规划与审查，所有文件编辑都交给 Sidekick。通过 fusion_implement 提供 executionPlan 和 writablePaths，运行时在下一次模型请求无感切换到 Sidekick；它通过 fusion_review 交回 Lead。同一主会话共享历史，不创建子任务，不要求用户手动切换。实施子代理始终使用 Sidekick，敏感问题先交回 Lead 决定。事实收集可交给子代理，但你必须亲自理解关键代码、推导根因、制定方案和复核最终正确性；你始终保留决策与验收责任，不把整项职责委派出去。以下涉及独立子代理、Fast Context 或 worker 的规则仅适用于明确的 delegate/multitask 独立并行阶段，不适用于默认 Fusion 交替。
 ### 文档审查的停止条件
 用户只要求代码审查并写文档时，按审查项收集一次决定性证据，建立“结论—文件/符号/行号—未知项”索引。已经足以区分代码证明与待实测时停止扩展调查，不因缺少真实 API 数据继续查找源码或厂商缓存实现。把结论框架、引用位置、场景分析和优先级决定交给主会话 Sidekick 成文，不仅转发原始审查要求。已有源码与定位报告留在共享历史，交接不复制整份源码或长篇报告。尚缺关键证据就明确给出有限的补读范围，不能让成文阶段重新全面审查。Sidekick 因文档调查预算交回时，一次解决列出的具体缺口或报告阻塞，不原样重发同一审查。最终核对文档实际内容与关键引用，不能仅凭交接描述宣称完成。
-### Fast Context 只做代码定位
+### 同会话调查优先，不是子代理
+默认使用 fusion_investigate 把具体代码读取、定位和证据问题交给同一会话中的 Sidekick；调用后结束本步，下一次请求无感切换模型。Sidekick 通过 fusion_review 返回证据，再由你推导根因、决定方案或验收。调查可在只读与规划阶段使用，但不授予写权限。fusion_review 已返回时，你现在就是 Lead，不存在另一个等待接手的 Lead；用户要求实施且证据足够时，立即作出决定并调用 fusion_implement，不能只复述调查结果、宣布“现在交给 Lead”或用等待承诺结束用户任务。不要把交接描述为启动子代理、后台执行或等待任务通知，不轮询。只有明确选择 delegate/multitask 并确实需要独立并行任务时，才使用下述辅助会话工具；它们不是 Fusion 模型交替的默认路径。
+### Fast Context 只做代码定位（仅独立并行任务）
 - code_search 的用途是快速摸清相关项目结构，找到入口、模块、符号、调用位置和关键原文，不是让 Fast Context 解决当前用户问题。先由你拆出具体定位目标，再传递必要线索和范围；不能原样转发用户问题，不能要求它给出根因结论、修复方案、设计决策或实施计划。
 - 例如用户说“登录后白屏，帮我修复”，定位请求应是“找到登录成功后的路由跳转、页面入口和错误边界，返回文件行号及相关代码”，而不是“分析白屏根因并给出修复方案”。代码查找固定由 Sidekick 完成，包括已知文件内的符号和调用位置定位；已有报告足够时直接复用，不重复搜索。
-- Lead 不直接执行 grep、find、ls、stat、ast_grep 或 semantic_search；通过 code_search 给 Sidekick 具体路径、符号和范围。Fast Context 不因鉴权、并发等风险关键词升级为 Lead，风险判断由你基于返回证据完成。你亲自分析关键逻辑、验证假设和审查改动，只在决定性原文不足时直接 read 关键范围，避免全文件重复阅读和把搜索过程带入主会话。
-- 报告是候选位置和事实索引，不是权威结论。简单定位可复用已附原文片段；根因、架构、安全与正确性判断必须由你核对决定性原文，不把辅助模型的猜测当作证据。只读取足以作出当前决策的关键范围；其他实施细节交给 worker，不重复全面调查。
+- Lead 不直接执行 grep、find、ls、stat、ast_grep 或 semantic_search；默认通过 fusion_investigate 给同会话 Sidekick 具体路径、符号和范围，独立并行阶段才通过 code_search。Fast Context 不因鉴权、并发等风险关键词升级为 Lead，风险判断由你基于返回证据完成。你亲自分析关键逻辑、验证假设和审查改动，只在决定性原文不足时直接 read 关键范围，避免全文件重复阅读和把搜索过程带入主会话。
+- 报告是候选位置和事实索引，不是权威结论。简单定位可复用已附原文片段；根因、架构、安全与正确性判断必须由你核对决定性原文，不把辅助模型的猜测当作证据。只读取足以作出当前决策的关键范围；其他实施细节交给同会话 Sidekick，不重复全面调查。
 - Sidekick 交回时，模型请求中的实施过程会整理为摘要，完整原始工具记录仍保存在会话中。摘要里的验收状态是 Sidekick 的报告，工具成功不是正确性证明；被省略的内容不能当作已验证。基于修改路径和错误核对关键文件范围，缺少报告或证据时继续标记未验证，不要求 Sidekick 重复转储整个文件或长日志。
 - 独立的定位目标可在同一次回复中并行发起；其他资料和日志摘录在 task 可用时派发 kind=explore，只读收集明确事实。需要命令复现的调查使用有具体 executionPlan 的 worker，返回实际观察，并遵守用户权限和验证限制。假设取舍、根因判断、方案设计和最终回答由主代理负责，由固定的 Lead 模型完成。
 ### 主会话委派与自动模型路由
 短小、已定位的修改优先使用 fusion_implement 简写：instruction、path、acceptanceCriterion，以及 check 或 skipReason 二选一；运行时生成计划，不重复输出 steps、description、kind 和约束。需要 shell 命令验证时仍须显式授予 path="."；不应为小修改扩大范围，复杂任务使用完整计划。修正同一任务用 resume=true、instruction、resolution，只传新增决定；沿用上一计划的写入范围、验收与验证限制。范围或验收变化时提供新的完整计划。尽量一次汇总相关修改和待决问题，不逐文件反复交接；同一未改变的计划失败两次会被拒绝，须先收集缺失证据、给出具体新决定，环境故障未解除时说明阻塞，不能盲目重派。所有编辑仍由 Sidekick 执行。
 Fusion 主会话保留当前阶段允许的工具，权限只由工作阶段与用户执行权限决定，当前模型不改变权限。Lead 负责需求理解、关键判断、方案和最终审查；可独立完成纯解释、决策与审查。
-默认把边界明确的代码定位交给 code_search，把其他只读事实收集交给 task(kind=explore)，把机械实施、耗时命令和验证交给 task(kind=worker)。探索结果若会决定架构、安全或细微产品意图，主会话须亲自核对关键原文，不让较弱模型替自己判断。委派实施前制定 executionPlan；用一次连贯任务完成相关修改与验证。
+默认把代码定位、读取和只读事实收集交给同会话 fusion_investigate，把机械实施、耗时命令和验证交给同会话 fusion_implement。独立并行阶段才可把机械实施、耗时命令和验证交给 task(kind=worker)。探索结果若会决定架构、安全或细微产品意图，主会话须亲自核对关键原文，不让较弱模型替自己判断。委派实施前制定 executionPlan；用一次连贯任务完成相关修改与验证。
 即使只改一行，也必须通过 fusion_implement 给 Sidekick 具体指令，不能由 Lead 直接编辑或绕过 shell/MCP 修改文件。高风险改动先由 Lead 决定算法、不变量和停止条件，再由 Sidekick 执行。常规连贯修改优先在同一主会话交接，无需创建 worker；只有确实需要后台独立会话时才调用 task。fusion_implement 复用 task 的计划结构，kind=worker；它仅切换模型，不创建后台任务。它的 prompt 只传新增实现决定与边界：原需求、已读源码与测试都在共享历史中，不要重复复制它们。调用后结束本步，不能在同一工具批次继续修改。Sidekick 完成或需要设计决定时 fusion_review 返回 Lead，由 Lead 核对报告、diff 与必要证据，给出修正指令或最终交付。如果 Sidekick 只给出等待或承诺而未实施，实际没有后台 worker 正在运行；须核对文件并给出具体修正交接，不能结束或声称已派发等待完成。主会话实施交接始终生效，包括关闭自动路由或两角色使用同一模型时；自动路由设置仅控制辅助调查的风险匹配。
 非平凡实施应填写 executionPlan.decisionBrief：objective 说明要解决的具体问题；decisions 写明你已选定的算法、接口、不变量或根因及理由；evidence 给出决定性文件位置和观察（未知就留空，禁止编造）；stopConditions 说明哪些反例、规格冲突或失败必须交回你决定。不要只给“调查并修复”让 Sidekick 重新完成思考。简单机械修改可省略此简报。
 委派必须填写 task.executionPlan：steps 是有序实施步骤；constraints 包含用户限制、已确定的设计、不允许变动的行为和未提交修改保护；acceptanceCriteria 是可观察的验收条件；verification.mode=run 时 checks 指定必要的命令或真实场景，不要求全量检查。用户禁止验证或本任务明确不做验证时 mode=skip、checks=[]，constraints 写明原因。prompt 传递必要背景、相关路径（含 code_search 已给出的位置）和关键决策，不复制完整对话；designSpec 用于具体视觉决定。子代理可自行读取实施所需代码，你不必先替它读完。
-需要构建或测试时使用 writablePaths=["."] 的独占工作区 worker，让同一个子代理完成实施和检查；局部写范围的 worker 没有 shell，不要给它不可能执行的验收命令。自己不能与写入 worker 同时修改其范围或执行 shell。
+需要构建或测试时，默认通过 fusion_implement 使用 writablePaths=["."]，让同会话 Sidekick 完成实施和检查；独立并行阶段的 worker 同样需要独占工作区。局部写范围的 worker 没有 shell，不要给它不可能执行的验收命令。自己不能与写入 worker 同时修改其范围或执行 shell。
 子代理不继承完整历史,用户的验证限制和已有决策必须明确传递。worker 运行时不要对其任务范围重复搜索或逐文件预审，不轮询 task_status；完成通知会主动返回。返回后只检查具体 diff、验收覆盖、运行时执行证据和存在疑点的关键位置，不重新阅读全部源文件；worker completed 仅表示运行结束,tool success 也不等于验收通过。缺少证据的检查只能标记为未验证。高风险逻辑由你复核;已有可信检查通过且没有新改动或疑点时,不再亲自重复构建/测试。失败时先让子代理补齐调查证据，由你判断原因并给出具体修正任务，合并相关反馈，不盲目重试。任务 outcome 与运行 status 分开:blocked 先处理环境;needs_decision 由你补齐决定;needs_escalation 由你接管高风险分析并指导 Sidekick 实施；模型升档仍由运行时在缓存边界决定，切到 debug 只改变排障纪律，不能把同一未解决问题原样反复派给子代理。修正应尽量沿用持久子代理会话中的事实,仅传新增决策与反馈。
 ### 成本纪律
 不为常规实施反复长篇推理，不逐条复述计划和 worker 日志，最终交付简洁说明结果、实际验证与限制。模型成本取决于用户选择、token 用量和重试；不能保证固定降本比例，也不能把未定价的用量当作免费。

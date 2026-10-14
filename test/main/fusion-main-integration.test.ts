@@ -14,6 +14,54 @@ import { cellIdForMessage, findTurnEntry } from "../../src/main/checkpoint-ancho
 import { FUSION_RUN_ENTRY } from "../../src/main/fusion-resilience";
 
 describe("Fusion inline main conversation", () => {
+	for (const permission of ["auto", "read-only"] as const) test(`investigation -> Lead decision -> scoped execution -> Lead acceptance (${permission})`, async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "fusion-investigate-"));
+		let created: Awaited<ReturnType<typeof createWorkflowSession>> | undefined;
+		try {
+			await writeFile(join(cwd, "source.txt"), "observed source");
+			const runtime = await ModelRuntime.create({ authPath: join(cwd, "auth.json"), modelsPath: null, modelsStorePath: join(cwd, "models.json"), allowModelNetwork: false });
+			await runtime.setRuntimeApiKey("anthropic", "test-only");
+			const lead = getModel("anthropic", "claude-opus-4-5")!;
+			const side = getModel("anthropic", "claude-sonnet-4-5")!;
+			const selected: string[] = []; const sessionIds: string[] = []; let round = 0;
+			runtime.streamSimple = (model, context, options) => {
+				const n = ++round; selected.push(model.id); sessionIds.push(options?.sessionId ?? "missing");
+				expect(n).toBeLessThanOrEqual(permission === "auto" ? 8 : 5);
+				if (n === 2) {
+					for (const name of ["write", "bash", "task", "code_search"]) expect(created!.session.getActiveToolNames()).not.toContain(name);
+					expect(getCurrentSystemPrompt(context.messages)).toContain("同会话 Sidekick 只读调查");
+				}
+				if (n === 6) expect(JSON.stringify(context.messages)).toContain("skipReason takes precedence");
+				if (n === 5) {
+					expect(JSON.stringify(context.messages)).toContain("source.txt: observed source");
+					expect(JSON.stringify(context.messages)).toContain("YOU ARE NOW LEAD");
+					expect(getCurrentSystemPrompt(context.messages)).not.toContain("同会话 Sidekick 只读调查");
+				}
+				const calls: ToolCall[] | undefined = n === 1 ? [{ type: "toolCall", id: "investigate", name: "fusion_investigate", arguments: { instruction: "Read source.txt and return the observed literal; do not choose a replacement" } }] :
+					n === 2 ? [{ type: "toolCall", id: "read-source", name: "read", arguments: { path: "source.txt" } }] :
+					n === 3 ? [{ type: "toolCall", id: "denied-write", name: "write", arguments: { path: "source.txt", content: "unauthorized" } }] :
+					n === 4 ? [{ type: "toolCall", id: "facts", name: "fusion_review", arguments: { outcome: "completed", summary: "source.txt: observed source", acceptance: [] } }] :
+					n === 5 && permission === "auto" ? [{ type: "toolCall", id: "implement", name: "fusion_implement", arguments: { instruction: "Lead chooses the literal decided", path: "result.txt", acceptanceCriterion: "Lead literal", check: "Do not execute this conflicting check", skipReason: "No test execution needed" } }] :
+					n === 6 ? [{ type: "toolCall", id: "write-result", name: "write", arguments: { path: "result.txt", content: "decided" } }] :
+					n === 7 ? [{ type: "toolCall", id: "review", name: "fusion_review", arguments: { outcome: "completed", summary: "result.txt written" } }] : undefined;
+				const stream = createAssistantMessageEventStream(); queueMicrotask(() => stream.push({ type: "done", reason: calls ? "toolUse" : "stop", message: {
+					...fauxAssistantMessage("Lead reviewed"), provider: model.provider, model: model.id, api: model.api, stopReason: calls ? "toolUse" : "stop", content: calls ?? [{ type: "text", text: "Lead reviewed" }],
+				} })); return stream;
+			};
+			created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
+				sessionManager: SessionManager.inMemory(cwd), initialMode: "agent", getPermission: () => permission,
+				initialFusion: { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
+				onChange: () => undefined, onModeChange: () => undefined });
+			await created.session.prompt("Inspect source.txt; Lead decides whether to create result.txt.");
+			expect(selected).toEqual(permission === "auto" ? [lead.id, side.id, side.id, side.id, lead.id, side.id, side.id, lead.id] : [lead.id, side.id, side.id, side.id, lead.id]);
+			expect(new Set(sessionIds).size).toBe(1);
+			expect(created.workflow.state.snapshot().tasks).toEqual([]);
+			expect(await readFile(join(cwd, "source.txt"), "utf8")).toBe("observed source");
+			if (permission === "auto") expect(await readFile(join(cwd, "result.txt"), "utf8")).toBe("decided");
+			else await expect(readFile(join(cwd, "result.txt"))).rejects.toThrow();
+			expect(created.session.messages.some((m) => m.role === "toolResult" && m.toolCallId === "denied-write" && m.isError)).toBe(true);
+		} finally { created?.workflow.dispose(); created?.session.dispose(); await rm(cwd, { recursive: true, force: true }); }
+	}, 30000);
 	test("repeated requests for unavailable Lead write tools terminate with an explicit blocker", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "fusion-breaker-"));
 		let created: Awaited<ReturnType<typeof createWorkflowSession>> | undefined;
@@ -101,7 +149,7 @@ describe("Fusion inline main conversation", () => {
 				}
 				const calls: ToolCall[] | undefined = n === 1 ? [
 					...Array.from({ length: 2 }, (_, i) => ({ type: "toolCall" as const, id: `locate-${i}`, name: "code_search", arguments: { query: "Locate source.ts value" } })),
-					...Array.from({ length: 11 }, (_, i) => ({ type: "toolCall" as const, id: `lead-read-${i}`, name: "read", arguments: { path: "source.ts" } })),
+					...Array.from({ length: 13 }, (_, i) => ({ type: "toolCall" as const, id: `lead-read-${i}`, name: "read", arguments: { path: "source.ts" } })),
 					{ type: "toolCall", id: "excess-search", name: "code_search", arguments: { query: "Locate README architecture" } },
 				] : n === 2 ? [{ type: "toolCall", id: "handoff", name: "fusion_implement", arguments: {
 					instruction: "Write review.md using shared evidence", path: "review.md", acceptanceCriterion: "Cited review", skipReason: "No tests requested" } }] :
@@ -127,14 +175,14 @@ describe("Fusion inline main conversation", () => {
 				onChange: () => undefined, onModeChange: () => undefined });
 			created.workflow.searchCode = async () => { searches++; return "source.ts:1 export const value = 1;"; };
 			await created.session.prompt("Review source.ts and write only review.md. No tests.");
-			expect(searches).toBe(2);
+			expect(searches).toBe(0); // Independent helpers are unavailable in default Fusion execution.
 			expect(created.session.messages.filter((message) => message.role === "assistant" && message.stopReason === "error")
 				.map((message) => message.role === "assistant" ? message.errorMessage : "")).toEqual([]);
 			expect(selected).toEqual([lead.id, lead.id, side.id, lead.id, side.id, side.id, lead.id]);
 			expect(await readFile(join(cwd, "review.md"), "utf8")).toContain("API savings unverified");
 			expect(await readFile(join(cwd, "source.ts"), "utf8")).toBe("export const value = 1;\n");
 			expect(created.session.messages.some((message) => message.role === "toolResult" && message.toolCallId === "read-12" && message.isError)).toBe(true);
-			for (const id of ["lead-read-10", "excess-search"]) expect(created.session.messages.some((message) =>
+			for (const id of ["lead-read-12", "excess-search"]) expect(created.session.messages.some((message) =>
 				message.role === "toolResult" && message.toolCallId === id && message.isError)).toBe(true);
 			expect(created.session.sessionManager.getBranch().some((entry) => entry.type === "custom_message" &&
 				entry.customType === "nekocode.fusion.document-return.v1")).toBe(true);

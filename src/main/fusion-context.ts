@@ -7,7 +7,7 @@ const excerpt = (text: string, limit: number) => text.length <= limit ? text :
 const textOf = (message: AgentMessage): string => "content" in message ? typeof message.content === "string" ? message.content :
 	message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") : "";
 
-function implementationSummary(messages: AgentMessage[]): string {
+function implementationSummary(messages: AgentMessage[], investigation = false): string {
 	const calls = new Map<string, ToolCall>();
 	const observations: string[] = [];
 	const changed = new Set<string>();
@@ -41,6 +41,8 @@ function implementationSummary(messages: AgentMessage[]): string {
 				call.name === "write" ? ` (${String(args.content ?? "").length} characters written; content omitted)` :
 				`\narguments: ${excerpt(JSON.stringify(args), 700)}`;
 			observations.push(`${message.isError ? "ERROR" : "OK"} ${call.name} ${path}${detail}\n${excerpt(textOf(message), 400)}`);
+		} else if (investigation && ["read", "grep", "ast_grep", "ls", "find", "stat", "semantic_search"].includes(call.name) && !message.isError) {
+			observations.push(`EVIDENCE ${call.name} ${excerpt(JSON.stringify(args), 200)}\n${excerpt(textOf(message), 1000)}`);
 		} else if (message.isError || ["bash", "powershell"].includes(call.name) || call.name.startsWith("mcp__")) {
 			observations.push(`${message.isError ? "ERROR" : "OBSERVED"} ${call.name} ${excerpt(JSON.stringify(args), 400)}\n${excerpt(textOf(message), 900)}`);
 		}
@@ -54,7 +56,7 @@ function implementationSummary(messages: AgentMessage[]): string {
 			items.map((item) => `${item.status}: ${excerpt(String(item.criterion), 250)} — ${excerpt(String(item.evidence), 400)}`).join("\n") +
 			(args.decision ? `\nDecision requested: ${excerpt(String(args.decision), 1800)}` : "");
 	}
-	return "Fusion implementation context summary. Full raw messages remain in the session history. " +
+	return (investigation ? "Fusion investigation context summary. " : "Fusion implementation context summary. ") + "Full raw messages remain in the session history. " +
 		"Intermediate reads, generated file bodies and verbose logs are omitted from this Lead request. " +
 		"Read decisive file ranges before acceptance; excerpts cannot prove omitted checks.\n" +
 		excerpt(acceptance, 8500) + "\nSuccessful write/edit tool paths (content changes require verification): " + excerpt([...changed].join(", ") || "none observed", 1200) +
@@ -69,7 +71,7 @@ export function projectFusionLeadContext(messages: AgentMessage[]): AgentMessage
 		const message = messages[i]!;
 		projected.push(message);
 		if (message.role !== "assistant") continue;
-		const handoff = message.content.find((part) => part.type === "toolCall" && part.name === "fusion_implement");
+		const handoff = message.content.find((part) => part.type === "toolCall" && ["fusion_implement", "fusion_investigate"].includes(part.name));
 		if (!handoff || handoff.type !== "toolCall") continue;
 		// Preserve the entire handoff tool batch, including denied same-batch effects.
 		let start = i + 1;
@@ -91,7 +93,7 @@ export function projectFusionLeadContext(messages: AgentMessage[]): AgentMessage
 			}
 			if (current.role === "user" || current.role === "compactionSummary" || current.role === "branchSummary") break;
 			if (current.role === "assistant") {
-				if (current.content.some((part) => part.type === "toolCall" && part.name === "fusion_implement")) break;
+				if (current.content.some((part) => part.type === "toolCall" && ["fusion_implement", "fusion_investigate"].includes(part.name))) break;
 				const review = current.content.find((part) => part.type === "toolCall" && part.name === "fusion_review");
 				if (review?.type === "toolCall") reviewId = review.id;
 				// A text-only finish returns control to Lead even when the report is missing.
@@ -114,7 +116,7 @@ export function projectFusionLeadContext(messages: AgentMessage[]): AgentMessage
 				i = end - 1;
 				continue;
 			}
-			const summary = implementationSummary(segment);
+			const summary = implementationSummary(segment, handoff.name === "fusion_investigate");
 			const implementation = segment.filter((entry) => entry.role !== "system");
 			// Short tasks should not become more expensive solely because of summary framing.
 			if (summary.length >= JSON.stringify(implementation).length) {

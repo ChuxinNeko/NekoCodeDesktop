@@ -13,6 +13,35 @@ const task = (): TaskInput => ({
 });
 
 describe("Fusion handoff", () => {
+	test("multi-file decisions up to 6000 characters preserve instruction and valid plan bounds", () => {
+		const instruction = "Concrete algorithm. ".repeat(200);
+		const state = new FusionInlineHandoffState();
+		const input = state.prepare({instruction,paths:["a.ts","b.ts"],acceptanceCriterion:"Correct result",skipReason:"No tests"});
+		expect(input.prompt).toBe(instruction);
+		expect(input.executionPlan?.steps.join("")).toBe(instruction);
+		expect(input.executionPlan?.steps.every(step=>step.length<=2000)).toBe(true);
+		expect(fusionTaskError(input)).toBeUndefined();
+		state.accept(input);
+		expect(state.prepare({resume:true,instruction,resolution:"Keep algorithm"}).executionPlan?.steps.join("")).toBe(instruction);
+		expect(()=>state.prepare({instruction:"x".repeat(6001)})).toThrow("6000");
+	});
+	test("compact multi-file handoff preserves exact scope and verification restrictions", () => {
+		const state = new FusionInlineHandoffState();
+		const args = { instruction: "Apply the decided integer-money algorithm", paths: ["money.ts", "quote.ts"],
+			acceptanceCriterion: "All original quote requirements", skipReason: "User forbids test execution" };
+		const plan = state.prepare(args);
+		expect(plan.writablePaths).toEqual(args.paths);
+		expect(plan.executionPlan?.verification).toEqual({mode:"skip",checks:[]});
+		expect(() => state.prepare({...args,path:"."})).toThrow("not both");
+		expect(() => state.prepare({...args,paths:[""]})).toThrow("requires");
+	});
+	test("explicit full contract takes precedence over compact-looking fields", () => {
+		const full = task();
+		const prepared = new FusionInlineHandoffState().prepare({ ...full, instruction: "Fix", path: "wrong.ts" });
+		expect(prepared.writablePaths).toEqual(["."]);
+		expect(prepared.executionPlan).toEqual(full.executionPlan);
+		expect(prepared.prompt).toBe(full.prompt);
+	});
 	test("restored contracts preserve scope and failure counts and reject malformed authority", () => {
 		const original = new FusionInlineHandoffState(); original.accept(original.prepare(task())); original.report();
 		const restored = new FusionInlineHandoffState(); expect(restored.restore(original.snapshot())).toBe(true);
@@ -29,7 +58,9 @@ describe("Fusion handoff", () => {
 		expect(plan.writablePaths).toEqual(["src/a.ts"]);
 		expect(plan.executionPlan?.acceptanceCriteria).toEqual([compact.acceptanceCriterion]);
 		expect(plan.executionPlan?.verification).toEqual({ mode: "skip", checks: [] });
-		expect(() => state.prepare({ ...compact, check: "bun test" })).toThrow("exactly one");
+		const conflict = state.prepare({ ...compact, check: "bun test" });
+		expect(conflict.executionPlan?.verification).toEqual({ mode: "skip", checks: [] });
+		expect(conflict.executionPlan?.constraints).toContain("User forbids tests");
 		expect(() => state.prepare({ ...compact, skipReason: "" })).toThrow("exactly one");
 	});
 	test("resume preserves verification and scope, and cannot survive a new task reset", () => {

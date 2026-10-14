@@ -23,7 +23,7 @@ describe("Fusion task runtime gate", () => {
 	const setup = (enabled: boolean, permission: "auto" | "read-only" = "auto") => {
 		const options = {
 			cwd: process.cwd(), initialFusion: enabled ? fusion.config : null,
-			initialMode: enabled ? "agent" : "multitask", getPermission: () => permission, debugRoot: process.cwd(),
+			initialMode: "multitask", getPermission: () => permission, debugRoot: process.cwd(),
 			sessionManager: { getBranch: () => [], appendCustomEntry: () => undefined },
 			modelRuntime: {}, onChange: () => undefined, onModeChange: () => undefined,
 		} as unknown as ConstructorParameters<typeof WorkflowRuntime>[0];
@@ -37,6 +37,14 @@ describe("Fusion task runtime gate", () => {
 		} as Parameters<NonNullable<typeof session.agent.beforeToolCall>>[0]);
 		return { runtime, gate };
 	};
+	test("Fusion implementation exposes an object-root schema to Chat Completions gateways", () => {
+		const { runtime } = setup(true);
+		const schema = runtime.tools().find(tool => tool.name === "fusion_implement")!.parameters as { type?: string; anyOf?: unknown; properties?: Record<string, unknown> };
+		expect(schema.type).toBe("object");
+		expect(schema.anyOf).toBeUndefined();
+		for (const name of ["instruction", "path", "resume", "executionPlan", "writablePaths"]) expect(schema.properties).toHaveProperty(name);
+		runtime.dispose();
+	});
 	test("Fast Context wraps a forwarded problem as a location-only request", async () => {
 		const { runtime } = setup(false);
 		const query = "登录后白屏，分析根因并给出修复方案";

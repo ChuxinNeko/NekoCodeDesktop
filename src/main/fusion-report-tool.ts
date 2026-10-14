@@ -43,7 +43,7 @@ export function createFusionUpgradeTool(request: (value: FusionUpgradeRequest) =
 	};
 }
 
-export function createFusionReportTool(report: (value: FusionTaskReport) => void): ToolDefinition {
+export function createFusionReportTool(report: (value: FusionTaskReport) => void, allowEmptyAcceptance = false): ToolDefinition {
 	return {
 		name: FUSION_REPORT_TOOL, label: "Report Fusion outcome",
 		description: "Before finishing a Fusion implementation task, report acceptance coverage and whether the parent agent must decide or take over. The worker may itself use either Lead or Sidekick; model selection does not grant parent decision authority. completed means implementation is ready for review, not that tool success proves acceptance. blocked is environmental; needs_escalation is a capability/correctness issue, not any failed test. Never invent checks.",
@@ -54,7 +54,7 @@ export function createFusionReportTool(report: (value: FusionTaskReport) => void
 				criterion: Type.String({ minLength: 1, maxLength: 2000 }),
 				status: Type.Union([Type.Literal("met"), Type.Literal("unverified"), Type.Literal("not_met")]),
 				evidence: Type.String({ maxLength: 2000 }),
-			}, { additionalProperties: false }), { minItems: 1, maxItems: 20 }),
+			}, { additionalProperties: false }), { minItems: allowEmptyAcceptance ? 0 : 1, maxItems: 20 }),
 			decision: Type.Optional(Type.String({ minLength: 1, maxLength: 2000 })),
 		}, { additionalProperties: false }),
 		async execute(_id, args) {
