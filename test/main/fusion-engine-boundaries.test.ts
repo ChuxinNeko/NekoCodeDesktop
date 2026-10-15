@@ -21,7 +21,7 @@ async function fixture(run: (runtime: ModelRuntime, created: Awaited<ReturnType<
 		const manager = SessionManager.inMemory(cwd);
 		created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
 			sessionManager: manager, initialMode: "agent", getPermission: () => "auto", initialFusion: {
-				leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
+				strategy: "parallel", leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 			onChange: () => undefined, onModeChange: () => undefined });
 		await run(runtime, created, manager);
 	} finally { created?.workflow.dispose(); created?.session.dispose(); await created?.workflow.whenSettled(); await rm(cwd, { recursive: true, force: true }); }

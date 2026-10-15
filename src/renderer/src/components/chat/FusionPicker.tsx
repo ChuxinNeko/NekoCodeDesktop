@@ -20,7 +20,8 @@ export function FusionPicker(props: Props) {
 	const initial = (): FusionConfig => {
 		const lead = props.models.find((m) => m.key === props.modelKey) ?? props.models[0];
 		const sidekick = props.models.find((m) => m.key !== lead?.key) ?? lead;
-		return props.fusion ? { ...props.fusion, orchestration: "engine" } : {
+		// The team is its own choice; opening Fusion from it starts a fresh pair.
+		return props.fusion && props.fusion.strategy !== "team" ? { ...props.fusion, orchestration: "engine" } : {
 			orchestration: "engine",
 			leadModelKey: lead?.key ?? "",
 			leadThinkingLevel: preferredLevel(lead, "high"),
@@ -36,7 +37,7 @@ export function FusionPicker(props: Props) {
 		<MenuSub keepOpenOnFocusOut onOpenChange={(open) => { if (open) setDraft(initial()); }}>
 			<MenuSubTrigger disabled={!props.models.length}>
 				<span className="flex-1">Fusion</span>
-				{props.fusion ? <span aria-label={t("fusion.active")}>✓</span> : null}
+				{props.fusion && props.fusion.strategy !== "team" ? <span aria-label={t("fusion.active")}>✓</span> : null}
 			</MenuSubTrigger>
 			<ComposerPickerMenuSubPopup className="w-80" side="inline-end">
 				<div className="space-y-3 px-3 py-2 text-[length:var(--app-font-size-ui,12px)] leading-5">

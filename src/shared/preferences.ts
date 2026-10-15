@@ -5,6 +5,8 @@
  * what main does on its own — it announces a finished task and isolates a
  * background one whether or not a window is up to be asked.
  */
+import { DEFAULT_TEAM, type TeamSettings } from "./team";
+
 export interface AppPreferences {
 	/** Announce a task finishing when it is not the one on screen. */
 	notifyOnTaskFinish: boolean;
@@ -28,6 +30,8 @@ export interface AppPreferences {
 	 * started after.
 	 */
 	commandShell: CommandShellId;
+	/** The AI team used when the chat's model picker is set to Team. */
+	team: TeamSettings;
 }
 
 /**
@@ -53,4 +57,5 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
 	isolateBackgroundTasks: true,
 	computerUse: false,
 	commandShell: "auto",
+	team: DEFAULT_TEAM,
 };

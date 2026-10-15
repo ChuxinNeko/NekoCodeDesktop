@@ -101,6 +101,7 @@ import type {
 } from "../shared/skills";
 import type { AppPreferences, CommandShellOption } from "../shared/preferences";
 import { configureCommandShell, listCommandShells } from "./command-shell";
+import { configureTeamSettings } from "./team-settings";
 import { listSystemFonts } from "./system-fonts";
 import type { SystemFont } from "../shared/font-names";
 import { configureWebTools, createWebTools, webToolsEnabled } from "./web-tools";
@@ -802,6 +803,7 @@ function createWindow(): void {
 	preferences ??= new AppPreferencesStore(app.getPath("userData"));
 	// Read per session, so a change applies to the next one without a restart.
 	configureCommandShell(() => preferences?.get().commandShell ?? "auto");
+	configureTeamSettings(() => preferences?.get().team);
 	// The account search engines borrow the model sign-ins; see native-search.ts.
 	const codexSearchAuth = async (): Promise<CodexSearchAuth | null> => {
 		const runtime = await taskManager?.active.getModelRuntime();

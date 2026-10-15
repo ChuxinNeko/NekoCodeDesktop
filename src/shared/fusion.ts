@@ -4,6 +4,13 @@ import type { ThinkingLevel } from "./agent";
 export interface FusionConfig {
 	/** Public configurations use the shared engine; old literals support internal legacy tests. */
 	orchestration?: "engine" | "parallel" | "inline";
+	/**
+	 * Engine strategy. "delegate" (default): Lead briefs, Sidekick implements and tests,
+	 * Lead reviews the diff and accepts, requests fixes, or takes over. "parallel": the
+	 * reference plan → parallel lanes → Lead synthesis engine. "team": the AI team from
+	 * Settings → Team; the admin answers or assigns work to members (see docs/team.md).
+	 */
+	strategy?: "delegate" | "parallel" | "team";
 	/** Shared engine defaults to 24 messages per lane. */
 	contextMessageLimit?: number;
 	budget?: { maxTurns?: number; maxTokens?: number; timeoutMs?: number };
@@ -30,6 +37,7 @@ export function isFusionConfig(value: unknown): value is FusionConfig {
 		levels.has(config.leadThinkingLevel) && levels.has(config.sidekickThinkingLevel) &&
 		(config.adaptiveRouting === undefined || typeof config.adaptiveRouting === "boolean") &&
 		(config.orchestration === undefined || ["engine", "parallel", "inline"].includes(config.orchestration)) &&
+		(config.strategy === undefined || ["delegate", "parallel", "team"].includes(config.strategy)) &&
 		(config.contextMessageLimit === undefined || (Number.isInteger(config.contextMessageLimit) && config.contextMessageLimit > 0)) &&
 		(config.budget === undefined || (!!config.budget && typeof config.budget === "object" &&
 			Object.entries(config.budget).every(([key, limit]) => ["maxTurns", "maxTokens", "timeoutMs"].includes(key) &&

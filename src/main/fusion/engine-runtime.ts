@@ -6,6 +6,10 @@ import type { FusionMessage, FusionWorkerProfile } from "./reference/core/types"
 import { PiFusionSessionStore } from "./pi-session-store";
 import { PiFusionRunner } from "./pi-runner";
 import { PiFusionStageDriver, type PiFusionStageHost } from "./pi-stage-driver";
+import { FusionDelegateEngine } from "./delegate-engine";
+import { FusionTeamEngine } from "./team-engine";
+import { currentTeamSettings } from "../team-settings";
+import { piAi } from "../pi";
 
 export const FUSION_ENGINE_TRACE_ENTRY = "nekocode.fusion.engine-trace.v1";
 
@@ -20,11 +24,13 @@ export class FusionEngineRuntime {
 	startedAt = 0;
 	private fresh = false;
 	private engine?: FusionEngine;
+	/** Team members keep their context across turns, so the team engine outlives a run. */
+	private team?: { engine: FusionTeamEngine; key: string };
 	private listeners = new Set<(event: AgentSessionEvent) => void>();
 	private readonly nativePrompt: AgentSession["prompt"];
 	private readonly nativeAbort: AgentSession["abort"];
 	private readonly isNativeStreaming: () => boolean;
-	constructor(private readonly host: PiFusionStageHost & { manager: SessionManager; config(): FusionConfig | null;
+	constructor(private readonly host: PiFusionStageHost & { manager: SessionManager; config(): FusionConfig | null; cwd?: string;
 		enabled(): boolean; instructions?: string; workerProfiles?: FusionWorkerProfile[] }) {
 		const parent = host.parent;
 		this.driver = new PiFusionStageDriver(host);
@@ -55,9 +61,10 @@ export class FusionEngineRuntime {
 			await Promise.all([this.nativeAbort(), this.driver.abort()]); };
 	}
 	get running(): boolean { return !!this.controller; }
-	reset(): void { this.fresh = true; this.engine = undefined; this.state = createInitialState(); }
+	reset(): void { this.fresh = true; this.engine = undefined; this.dropTeam(); this.state = createInitialState(); }
+	private dropTeam(): void { this.team?.engine.dispose(); this.team = undefined; }
 	stop(): void { this.controller?.abort(new Error("Fusion cancelled")); void this.driver.abort(); }
-	dispose(): void { this.closed = true; this.stop(); }
+	dispose(): void { this.closed = true; this.stop(); this.dropTeam(); }
 	async whenSettled(): Promise<void> { await this.pending?.catch(() => undefined); }
 	private async run(prompt: string, options?: Parameters<AgentSession["prompt"]>[1]): Promise<void> {
 		if (this.closed) throw new Error("Fusion runtime disposed");
@@ -80,7 +87,13 @@ export class FusionEngineRuntime {
 			this.host.manager.appendMessage(user);
 			this.host.parent.agent.state.messages = [...this.host.parent.agent.state.messages, user];
 			this.emit({ type: "message_start", message: user }); this.emit({ type: "message_end", message: user });
-			const engine = this.engine ??= new FusionEngine({ runner: new PiFusionRunner(request => this.driver.run(request), this.host.instructions),
+			const strategy = config.strategy ?? "delegate";
+			const delegate = strategy === "delegate";
+			if (strategy !== "team") this.dropTeam();
+			const engine = strategy === "team" ? this.teamEngine(config) : delegate ? new FusionDelegateEngine({ run: request => this.driver.run(request), release: handle => this.driver.release(handle),
+				appendFinal: text => this.appendLeadMessage(text, config.leadModelKey), store: this.store, cwd: this.host.cwd ?? process.cwd(),
+				models: { main: config.leadModelKey, sidekick: config.sidekickModelKey }, ...(this.host.instructions ? { instructions: this.host.instructions } : {}),
+				...(config.contextMessageLimit ? { contextMessageLimit: config.contextMessageLimit } : {}) }) : this.engine ??= new FusionEngine({ runner: new PiFusionRunner(request => this.driver.run(request), this.host.instructions),
 				store: this.store, contextMessageLimit: config.contextMessageLimit,
 				models: { main: [config.leadModelKey], sidekick: config.adaptiveRouting === false ? [config.sidekickModelKey] : [config.sidekickModelKey, config.leadModelKey] } });
 			const saved = this.fresh ? undefined : this.store.latest();
@@ -113,6 +126,27 @@ export class FusionEngineRuntime {
 				}
 			}
 		}
+	}
+	private teamEngine(config: FusionConfig): FusionTeamEngine {
+		const key = JSON.stringify([config.leadModelKey, config.contextMessageLimit]);
+		if (this.team?.key === key) return this.team.engine;
+		this.dropTeam();
+		const engine = new FusionTeamEngine({ run: request => this.driver.run(request), release: handle => this.driver.release(handle),
+			appendFinal: (text, modelKey) => this.appendLeadMessage(text, modelKey), store: this.store,
+			team: () => currentTeamSettings(), defaultModelKey: config.leadModelKey,
+			...(this.host.instructions ? { instructions: this.host.instructions } : {}),
+			...(config.contextMessageLimit ? { contextMessageLimit: config.contextMessageLimit } : {}) });
+		this.team = { engine, key };
+		return engine;
+	}
+	/** Delegate reviews run in a side actor; put Lead's accepted answer on the parent transcript. */
+	private async appendLeadMessage(text: string, modelKey: string): Promise<void> {
+		const { fauxAssistantMessage } = await piAi();
+		const model = this.host.resolveModel(modelKey);
+		const message = { ...fauxAssistantMessage(text), provider: model.provider, model: model.id, api: model.api };
+		this.host.manager.appendMessage(message);
+		this.host.parent.agent.state.messages = [...this.host.parent.agent.state.messages, message];
+		this.emit({ type: "message_start", message }); this.emit({ type: "message_end", message });
 	}
 	private emit(event: AgentSessionEvent): void { for (const listener of this.listeners) listener(event); }
 }

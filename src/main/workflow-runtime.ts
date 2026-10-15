@@ -949,7 +949,7 @@ export class WorkflowRuntime {
 	}
 	/** Refresh definitions, not just names: activating an unregistered name does nothing in PI. */
 	private installSharedFusionEngine(parent: AgentSession): void {
-		this.engine = new FusionEngineRuntime({ parent, manager: this.options.sessionManager,
+		this.engine = new FusionEngineRuntime({ parent, manager: this.options.sessionManager, cwd: this.options.cwd,
 			config: () => this.fusionConfig, enabled: () => this.engineFusion,
 			createActor: stage => this.createEngineActor(stage),
 			resolveModel: key => {
@@ -998,7 +998,8 @@ export class WorkflowRuntime {
 			model: typeof stage.model === "string" ? this.options.modelRuntime.getAvailableSnapshot().find(model => `${model.provider}/${model.id}` === stage.model) : undefined,
 			modelRuntime: this.options.modelRuntime, resourceLoader, sessionManager: module.SessionManager.inMemory(this.options.cwd),
 			settingsManager: module.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off" }),
-			customTools: actorTools, tools: stage.kind === "plan" ? ["fusion_submit_plan"] : stage.kind === "compact" ? [] : toolsForMode(context()),
+			customTools: actorTools, tools: stage.kind === "plan" ? ["fusion_submit_plan"] : stage.kind === "compact" ? [] :
+				[...toolsForMode(context()), ...(stage.submitTool ? [stage.submitTool.name] : []), ...(stage.extraTools ?? []).map(tool => tool.name)],
 			toolOptions: this.shell.toolOptions });
 		const gate = session.agent.beforeToolCall;
 		session.agent.beforeToolCall = async (call, signal) => {
@@ -1007,6 +1008,8 @@ export class WorkflowRuntime {
 			const allowed = toolsForMode(context());
 			// The planner has its own sole output tool, which the driver installs after creation.
 			if (stage.kind === "plan" && call.toolCall.name === "fusion_submit_plan") return result;
+			if (stage.submitTool && call.toolCall.name === stage.submitTool.name) return result;
+			if (stage.extraTools?.some(tool => tool.name === call.toolCall.name)) return result;
 			if (this.closed || signal?.aborted || !allowed.includes(call.toolCall.name))
 				return { block: true, reason: "Tool is outside the engine actor's enabled capabilities" };
 			return await guardToolCall(call.toolCall.name, call.args, this.options.cwd, allowed) ?? result;

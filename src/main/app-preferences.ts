@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_APP_PREFERENCES, isCommandShellId, type AppPreferences } from "../shared/preferences";
+import { isTeamSettings } from "../shared/team";
 
 /** What each key may hold; anything else falls back to its default. */
 const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPreferences[K] } = {
@@ -8,6 +9,7 @@ const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPref
 	isolateBackgroundTasks: (value): value is boolean => typeof value === "boolean",
 	computerUse: (value): value is boolean => typeof value === "boolean",
 	commandShell: isCommandShellId,
+	team: isTeamSettings,
 };
 
 /** Only the keys and values a preference may take; the rest is dropped. */

@@ -1,3 +1,4 @@
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgentRunner, AgentTurn, CompactRequest, ExecuteRequest, FusionMessage, FusionPlan, PlanRequest, SynthesisRequest } from "./reference/core/types";
 
@@ -7,7 +8,7 @@ export const FUSION_PLAN_SCHEMA = Type.Object({
 		task: Type.String({ minLength: 1 }) }), { maxItems: 6 }),
 });
 export interface PiFusionStage {
-	kind: "plan" | "execute" | "synthesize" | "compact";
+	kind: "plan" | "execute" | "synthesize" | "compact" | "review";
 	role: "main" | "sidekick";
 	model: PlanRequest["model"];
 	messages: FusionMessage[];
@@ -16,8 +17,25 @@ export interface PiFusionStage {
 	signal?: AbortSignal;
 	onToolEvent?: ExecuteRequest["onToolEvent"];
 	onStreamPart?: ExecuteRequest["onStreamPart"];
+	/** Model-step cap; defaults to 1 for plan/compact and 20 otherwise. */
+	maxSteps?: number;
+	/**
+	 * When set, the last allowed step keeps only these tools (plus the submit tool) and the
+	 * model is told the budget is spent, so a capped stage still ends with a report or verdict.
+	 */
+	finalStepTools?: string[];
+	/** Structured output tool installed for this stage; the stage ends once it is called. */
+	submitTool?: { name: string; description: string; parameters: unknown };
+	/** Extra tools for this actor stage (e.g. team_assign); they do not end the stage. */
+	extraTools?: import("@earendil-works/pi-coding-agent").ToolDefinition[];
+	/** Per-stage thinking level; defaults to the host's level for the role. */
+	thinkingLevel?: import("../../shared/agent").ThinkingLevel;
+	/** Reuse one actor across stages so a follow-up keeps its cached context. Release with driver.release(). */
+	actor?: PiFusionActorHandle;
 }
-export type PiFusionStageResult = AgentTurn & { plan?: unknown };
+/** A persistent non-parent actor; the driver fills session and transform on first use. */
+export interface PiFusionActorHandle { session?: AgentSession; transform?: AgentSession["agent"]["transformContext"] }
+export type PiFusionStageResult = AgentTurn & { plan?: unknown; submitted?: unknown; steps?: number };
 
 /** PI transport adapter for the reference AiSdkAgentRunner's four operations and prompts. */
 export class PiFusionRunner implements AgentRunner {

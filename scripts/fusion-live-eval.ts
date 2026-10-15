@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createWorkflowSession } from "../src/main/workflow-runtime";
+import { configureTeamSettings } from "../src/main/team-settings";
+import { DEFAULT_TEAM } from "../src/shared/team";
 
 const key = process.env.NEKO_FUSION_EVAL_KEY;
 if (!key) throw new Error("Set NEKO_FUSION_EVAL_KEY for this process only");
@@ -15,6 +17,11 @@ const sideId = process.env.NEKO_FUSION_EVAL_SIDEKICK ?? "qwen3.8-flash";
 const requestedOrchestration = process.env.NEKO_FUSION_EVAL_ORCHESTRATION ?? "engine";
 if (!["engine", "parallel", "inline"].includes(requestedOrchestration)) throw new Error("Unknown Fusion orchestration");
 const orchestration = requestedOrchestration as "engine" | "parallel" | "inline";
+const strategy = process.env.NEKO_FUSION_EVAL_STRATEGY as "delegate" | "parallel" | "team" | undefined;
+if (strategy && !["delegate", "parallel", "team"].includes(strategy)) throw new Error("Unknown Fusion strategy");
+// Team: the admin follows the chat (Lead) model, workers use the Sidekick model.
+if (strategy === "team") configureTeamSettings(() => ({ ...DEFAULT_TEAM, members: DEFAULT_TEAM.members.map(member => ({ ...member, thinkingLevel: "off",
+  modelKey: member.id === DEFAULT_TEAM.adminId ? "" : `neko-live-eval/${sideId}` })) }));
 const output = process.env.NEKO_FUSION_EVAL_OUTPUT ?? await mkdtemp(join(tmpdir(), "neko-fusion-live-"));
 await mkdir(output, { recursive: true });
 console.log(JSON.stringify({ event: "output", path: output }));
@@ -165,7 +172,7 @@ for (const selected of ["lead", "fusion"] as const) {
   const errors: string[] = []; const tools: { name: string; model?: string; error?: boolean }[] = [];
   const created = await createWorkflowSession({ cwd, agentDir, debugRoot: join(output,"debug"), modelRuntime:runtime, sessionManager:manager,
     initialMode:"agent", getPermission:()=>"auto", model:lead, thinkingLevel:"off",
-    initialFusion:selected === "fusion" ? { orchestration, leadModelKey:`neko-live-eval/${leadId}`,sidekickModelKey:`neko-live-eval/${sideId}`, leadThinkingLevel:"off",sidekickThinkingLevel:"off",adaptiveRouting:true } : null,
+    initialFusion:selected === "fusion" ? { orchestration, ...(strategy ? { strategy } : {}), leadModelKey:`neko-live-eval/${leadId}`,sidekickModelKey:`neko-live-eval/${sideId}`, leadThinkingLevel:"off",sidekickThinkingLevel:"off",adaptiveRouting:true } : null,
     onChange:()=>{},onModeChange:()=>{},onError:(error)=>errors.push(error.replaceAll(key,"[redacted]")),
   });
   let requests = 0;
@@ -178,7 +185,7 @@ for (const selected of ["lead", "fusion"] as const) {
     if(event.type === "tool_execution_end" && event.isError) console.log(JSON.stringify({event:"tool_error",mode:selected,name:event.toolName}));
   });
   const started = Date.now(); let timedOut = false;
-  const timeout = setTimeout(()=> { timedOut = true; created.workflow.stop(); void created.session.abort(); }, 600000);
+  const timeout = setTimeout(()=> { timedOut = true; created.workflow.stop(); void created.session.abort(); }, Number(process.env.NEKO_FUSION_EVAL_TIMEOUT_MS ?? 600000));
   try {
     await created.session.prompt(prompt);
     // Background completion can start another Lead turn and then another assignment.

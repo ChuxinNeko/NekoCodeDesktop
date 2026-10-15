@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FusionConfig } from "../../../../shared/fusion";
 import { FusionPicker } from "./FusionPicker";
+import { TeamPicker } from "./TeamPicker";
 import {
 	DEFAULT_AGENT_PHASE,
 	WORK_MODES,
@@ -107,7 +108,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 		}, new Map<string, { id: string; name: string; models: ModelOption[] }>()),
 		([, group]) => group,
 	);
-	const triggerLabel = props.fusion ? "Fusion" : active ? modelLabel(active, models) : t("picker.noModel");
+	const triggerLabel = props.fusion?.strategy === "team" ? t("team.title") : props.fusion ? "Fusion" : active ? modelLabel(active, models) : t("picker.noModel");
 
 	const trigger = (label: string, icon: React.ReactNode, active = false) => (
 		<Button
@@ -257,6 +258,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 					</MenuGroup>
 					<MenuSeparator />
 					<FusionPicker models={models} modelKey={modelKey} fusion={props.fusion} onApply={props.onSetFusion} />
+					<TeamPicker models={models} modelKey={modelKey} fusion={props.fusion} onApply={props.onSetFusion} />
 				</ComposerPickerMenuPopup>
 			</Menu>
 

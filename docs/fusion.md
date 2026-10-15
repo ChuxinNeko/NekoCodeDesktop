@@ -2,7 +2,20 @@
 
 桌面端采用本地 `demo/fusion` 的共享 FusionEngine：**结构化计划 → 双通道并行执行 → Lead 整合**。参考提交为 `c4ecb1cc4b9d1ecdf4f3580991c8b5095fc8ece5`。七个核心、存储及 hook 文件逐字复制，来源和 SHA-256 记录在 `src/main/fusion/reference/provenance.json`。PI 适配层负责模型请求、工具、权限、持久化与桌面事件。
 
-## Lead 与 Sidekick 如何分工
+## 默认策略：delegate（Lead 指挥 + 审查，Sidekick 干活）
+
+`FusionConfig.strategy` 默认为 `"delegate"`，目标是在尽量接近前沿 Lead 效果的同时把 Lead Token 降到最低。实测发现原 parallel 流程会多花 Lead：Lead 计划把主任务留给自己、Sidekick 的“事后复核”与 Main 并行空转，整合阶段 Lead 又带全部工具重读、重测一遍。delegate 流程：
+
+1. **Brief（Lead，1 次无工具调用）**：`fusion_submit_brief` 返回路由（`delegate` / `lead`）、完整工作单（逐条编号复述所有需求与约束）、可选的 2–5 个有序工作项和仅供自己审查用的 `reviewFocus`。纯问答或两三步即可完成的小改动走 `lead`，由 Lead 单独完成。
+2. **执行（Sidekick）**：同一个 Sidekick actor 依次完成各工作项（上下文与缓存持续复用），自测后输出固定格式报告（改动 / 验证命令与结果 / 假设与未决项）。
+3. **审查（Lead，只读工具，默认 ≤5 步）**：Lead 拿到的是工作单、报告和 `FusionChangeTracker` 生成的**紧凑 diff**（写入前捕获原文），而不是重读整个工作区；通过 `fusion_submit_review` 给出 `accept`（附最终答复）、`revise`（具体问题清单，退回同一个 Sidekick 修复，最多 3 轮）或 `takeover`。
+4. **接管（Lead，仅在必要时）**：只有 Sidekick 修同一问题失败或需要它不具备的推理时才接管，且从 diff 和问题清单继续，不从零开始。
+
+所有受步数限制的阶段在最后一步会收到“预算用尽”提示并只保留提交工具（或无工具），保证一定产出报告或审查结论。Lead 的最终答复写回主会话；规划、执行、审查的用量都计入“本轮用量”。
+
+`strategy: "parallel"` 保留下面描述的参考引擎流程。`strategy: "team"` 是 AI 团队模式，见 [team.md](team.md)。
+
+## parallel 策略：Lead 与 Sidekick 如何分工
 
 1. Lead 生成结构化计划：`complexity`、`mainTask`、最多六项 `sidekickTasks`。每项含任务和可选 profile。规划阶段只有输出计划的 `fusion_submit_plan` 工具，不执行项目操作。
 2. 引擎通过 `Promise.all` 同时启动 Main 与 Sidekick 通道。Lead 执行主任务；Sidekick 顺序执行辅助任务。每项辅助任务创建新 worker 和 PI actor，工具循环独立，通道上下文由引擎保存。
@@ -38,7 +51,9 @@
 - `src/main/fusion/pi-runner.ts`：参考四阶段 runner 的 PI 传输适配和提示词。
 - `src/main/fusion/pi-stage-driver.ts`：工具循环、请求上下文、20 步上限与取消清理。
 - `src/main/fusion/pi-session-store.ts`：PI 会话树持久化。
-- `src/main/fusion/engine-runtime.ts`：桌面共享引擎客户端与单轮事件。
+- `src/main/fusion/engine-runtime.ts`：桌面共享引擎客户端与单轮事件；按 `strategy` 选择 delegate 或 parallel。
+- `src/main/fusion/delegate-engine.ts`：delegate 策略（brief → Sidekick 工作项 → Lead diff 审查 → 修复 / 接管）。
+- `src/main/fusion/change-tracker.ts`：写入前捕获原文并生成紧凑 diff 供 Lead 审查。
 - `src/shared/fusion-engine-state.ts`：参考网页 reducer，只调整导入路径。
 - `test/main/fusion-reference/`：参考核心回归测试；桌面适配另有真实 PI SDK 的确定性集成测试。
 

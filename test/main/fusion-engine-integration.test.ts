@@ -51,7 +51,7 @@ describe("Desktop reference FusionEngine", () => {
 			const manager = SessionManager.inMemory(cwd);
 			created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime,
 				sessionManager: manager, initialMode: "agent", getPermission: () => "auto", initialFusion: {
-					leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
+					strategy: "parallel", leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${side.provider}/${side.id}`, leadThinkingLevel: "off", sidekickThinkingLevel: "off" },
 				onChange: () => undefined, onModeChange: () => undefined });
 			expect(created.workflow.fusion?.orchestration).toBe("engine");
 			expect(created.session.getActiveToolNames()).toContain("write");

@@ -62,7 +62,7 @@ async function fixture(fusion: boolean) {
 	};
 	const { session, workflow } = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd,
 		modelRuntime, model: lead, sessionManager: SessionManager.inMemory(cwd), initialMode: "agent",
-		initialFusion: fusion ? { leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${model.provider}/${model.id}`,
+		initialFusion: fusion ? { strategy: "parallel", leadModelKey: `${lead.provider}/${lead.id}`, sidekickModelKey: `${model.provider}/${model.id}`,
 			leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: false } : null,
 		getPermission: () => permission, getMcpTools: () => service.tools(), getMcpToolsRevision: () => service.toolRevision,
 		getPluginTools: () => service.toolNames(), onChange: () => undefined, onModeChange: () => undefined });

@@ -12,6 +12,7 @@ import { ProviderModelSettings } from "./ProviderModelSettings";
 import { PluginSettings } from "./PluginSettings";
 import { McpSettings } from "./McpSettings";
 import { AcpSettings } from "./AcpSettings";
+import { TeamSettings } from "./TeamSettings";
 import { TokenUsageSettings } from "./TokenUsageSettings";
 import { SkillSettings } from "./SkillSettings";
 import { WebUiSettings } from "./WebUiSettings";
@@ -32,6 +33,7 @@ const SECTIONS = [
 	{ id: "general", labelKey: "settings.section.general", group: "app" },
 	{ id: "appearance", labelKey: "settings.section.appearance", group: "app" },
 	{ id: "providers", labelKey: "settings.section.providers", group: "models" },
+	{ id: "team", labelKey: "settings.section.team", group: "models" },
 	{ id: "agents", labelKey: "settings.section.agents", group: "models" },
 	{ id: "tokens", labelKey: "settings.section.tokens", group: "models" },
 	{ id: "prompts", labelKey: "settings.section.prompts", group: "capabilities" },
@@ -128,6 +130,7 @@ export function SettingsPage({
 					{section === "appearance" ? <AppearanceSettings /> : null}
 					{section === "providers" ? <ProviderModelSettings /> : null}
 					{section === "agents" && api.runtime !== "web" ? <AcpSettings /> : null}
+					{section === "team" ? <TeamSettings /> : null}
 					{section === "tokens" ? <TokenUsageSettings /> : null}
 					{section === "prompts" ? <PromptSettings /> : null}
 					{section === "context" ? <ContextSettings cwd={cwd} projects={projects} /> : null}
