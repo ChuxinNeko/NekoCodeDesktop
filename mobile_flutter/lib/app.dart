@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_miuix/miuix.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -66,11 +67,30 @@ class _NekoCodeAppState extends State<NekoCodeApp> {
       child: MaterialApp(
         title: 'NekoCode',
         debugShowCheckedModeBanner: false,
-        theme: GptTheme.light(),
-        darkTheme: GptTheme.dark(),
+        theme: nekoMaterialTheme(Brightness.light),
+        darkTheme: nekoMaterialTheme(Brightness.dark),
         themeMode: appearance == null
             ? ThemeMode.system
             : (isDark ? ThemeMode.dark : ThemeMode.light),
+        builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            systemNavigationBarColor: Colors.transparent,
+            systemNavigationBarContrastEnforced: false,
+            statusBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
+            statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+            systemNavigationBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
+          ),
+          // 页面背景层默认文字色，避免暗色下 MiuixText 回退到黑色。
+          child: MiuixContentColor(
+            color: MiuixTheme.of(context).colors.onSurface,
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
         home: MobileShell(
           controller: controller,
           initialize: widget.initialize,

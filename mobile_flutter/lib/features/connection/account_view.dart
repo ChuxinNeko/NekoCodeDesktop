@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_miuix/miuix.dart';
 
 import '../../core/protocol.dart';
+import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
 import '../mobile_controller.dart';
 
@@ -135,52 +137,150 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
     final value = await c.desktop.relay.devices();
     if (mounted) setState(() => devices = value);
   });
+  Widget _card(List<Widget> children) => MiuixCard(
+    cornerRadius: NekoShape.card,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    ),
+  );
+
+  Widget _link(String label, VoidCallback? onPressed) => MiuixPressable(
+    onPressed: onPressed,
+    enabled: onPressed != null,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      child: MiuixText(
+        label,
+        fontSize: 15,
+        fontWeight: FontWeight.w500,
+        color: onPressed == null
+            ? context.mx.onSurfaceVariantActions
+            : context.mx.primary,
+      ),
+    ),
+  );
+
+  Widget _note(String text, {Color? color}) => Padding(
+    padding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
+    child: MiuixText(
+      text,
+      fontSize: 12.5,
+      height: 1.5,
+      color: color ?? context.mx.onBackgroundVariant,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
+    final mx = context.mx;
     if (c.desktop.account.signedIn) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('已登录\n${c.desktop.account.email}'),
-          const SizedBox(height: 12),
-          ActionButton(busy ? '刷新中…' : '刷新', onPressed: busy ? null : load),
-          const SizedBox(height: 20),
-          const Text('选择要连接的电脑'),
-          if (devices == null) Text(busy ? '正在获取设备列表…' : '暂时无法获取设备列表'),
-          if (devices?.isEmpty == true)
-            const Text(
-              '还没有可连接的电脑。请先在电脑「设置 → 连接 → 连接至APP」里用同一个 NekoCode 账号登录公网连接。',
-            ),
-          for (final d in devices ?? <Json>[])
-            Card(
-              child: ListTile(
-                leading: Icon(
-                  Icons.circle,
-                  size: 12,
-                  color: d['online'] == true ? Colors.green : Colors.grey,
-                ),
-                title: Text(string(d['name'])),
-                subtitle: Text(
-                  '${d['online'] == true ? '在线' : '离线'} · 最近在线 ${d['lastSeenAt']}',
-                ),
-                trailing: ActionButton(
-                  '连接',
-                  onPressed: busy || c.busy || d['online'] != true
-                      ? null
-                      : () => c.selectRelay(d),
+          MiuixCard(
+            cornerRadius: NekoShape.card,
+            child: MiuixBasicComponent(
+              insideMargin: const EdgeInsets.all(16),
+              startAction: Padding(
+                padding: const EdgeInsets.only(right: 14),
+                child: IconTile(
+                  icon: MiuixIcons.os4.contactsCircle,
+                  color: mx.primary,
+                  size: 44,
                 ),
               ),
-            ),
-          ErrorNotice(error),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Text(
-              '公网连接与局域网配对相互独立。消息端到端加密，但设备公钥由账号服务分发；服务器主动替换公钥仍可能发起中间人攻击。',
-              style: TextStyle(fontSize: 12),
+              content: [
+                const MiuixText('已登录', fontSize: 13),
+                MiuixText(
+                  c.desktop.account.email ?? '',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+              endActions: [
+                ActionButton(
+                  busy ? '刷新中…' : '刷新',
+                  compact: true,
+                  onPressed: busy ? null : load,
+                ),
+              ],
             ),
           ),
+          const MiuixSmallTitle(
+            '选择要连接的电脑',
+            insideMargin: EdgeInsets.fromLTRB(16, 20, 16, 8),
+          ),
+          if (devices == null) _note(busy ? '正在获取设备列表…' : '暂时无法获取设备列表'),
+          if (devices?.isEmpty == true)
+            _card([
+              MiuixText(
+                '还没有可连接的电脑。请先在电脑「设置 → 连接 → 连接至APP」里用同一个 NekoCode 账号登录公网连接。',
+                fontSize: 14,
+                height: 1.5,
+                color: mx.onSurfaceVariantSummary,
+              ),
+            ]),
+          if (devices?.isNotEmpty == true)
+            MiuixCard(
+              cornerRadius: NekoShape.card,
+              child: Column(
+                children: [
+                  for (final d in devices!)
+                    MiuixBasicComponent(
+                      insideMargin: const EdgeInsets.all(16),
+                      startAction: Padding(
+                        padding: const EdgeInsets.only(right: 14),
+                        child: IconTile(
+                          icon: MiuixIcons.os4.layers,
+                          color: d['online'] == true
+                              ? NekoTone.success(context.isDark)
+                              : mx.onSurfaceVariantActions,
+                          size: 40,
+                        ),
+                      ),
+                      content: [
+                        MiuixText(
+                          string(d['name']),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        MiuixText(
+                          '${d['online'] == true ? '在线' : '离线'} · 最近在线 ${d['lastSeenAt']}',
+                          fontSize: 12.5,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          color: mx.onSurfaceVariantSummary,
+                        ),
+                      ],
+                      endActions: [
+                        ActionButton(
+                          '连接',
+                          compact: true,
+                          isPrimary: true,
+                          onPressed: busy || c.busy || d['online'] != true
+                              ? null
+                              : () => c.selectRelay(d),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ErrorNotice(error, margin: const EdgeInsets.only(top: 12)),
+          _note('公网连接与局域网配对相互独立。消息端到端加密，但设备公钥由账号服务分发；服务器主动替换公钥仍可能发起中间人攻击。'),
+          const SizedBox(height: 20),
           ActionButton(
             '退出登录',
+            danger: true,
+            expand: true,
             onPressed: busy || c.busy
                 ? null
                 : () async {
@@ -198,40 +298,69 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
       'forgot': '忘记密码',
       'reset': '重置密码',
     };
+    final subtitles = {
+      'signin': '登录后即可在任何网络下访问你的电脑',
+      'register': '使用邮箱创建 NekoCode 账号',
+      'verify': '输入发送到邮箱的 6 位验证码',
+      'forgot': '输入注册邮箱，我们会发送验证码',
+      'reset': '输入验证码并设置新密码',
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(titles[step]!, style: Theme.of(context).textTheme.titleLarge),
-        input(
-          '邮箱',
-          email,
-          keyboard: TextInputType.emailAddress,
-          enabled: !busy,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              MiuixText(
+                titles[step]!,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+              const SizedBox(height: 4),
+              MiuixText(
+                subtitles[step]!,
+                fontSize: 14,
+                color: mx.onSurfaceVariantSummary,
+              ),
+            ],
+          ),
         ),
-        if (['verify', 'reset'].contains(step))
+        _card([
           input(
-            '6 位验证码',
-            code,
-            keyboard: TextInputType.number,
-            maxLength: 6,
+            '邮箱',
+            email,
+            keyboard: TextInputType.emailAddress,
             enabled: !busy,
           ),
-        if (['signin', 'register', 'reset'].contains(step))
-          input(
-            step == 'reset' ? '新密码（至少 8 位）' : '密码（至少 8 位）',
-            password,
-            secret: true,
-            enabled: !busy,
-          ),
-        if (step == 'reset' || step == 'register')
-          input('确认密码', confirm, secret: true, enabled: !busy),
-        const SizedBox(height: 12),
+          if (['verify', 'reset'].contains(step))
+            input(
+              '6 位验证码',
+              code,
+              keyboard: TextInputType.number,
+              maxLength: 6,
+              enabled: !busy,
+            ),
+          if (['signin', 'register', 'reset'].contains(step))
+            input(
+              step == 'reset' ? '新密码（至少 8 位）' : '密码（至少 8 位）',
+              password,
+              secret: true,
+              enabled: !busy,
+            ),
+          if (step == 'reset' || step == 'register')
+            input('确认密码', confirm, secret: true, enabled: !busy),
+        ]),
+        const SizedBox(height: 16),
         ActionButton(
           busy
               ? '处理中…'
               : step == 'verify'
               ? '验证并登录'
               : titles[step]!,
+          isPrimary: true,
+          expand: true,
           onPressed: busy
               ? null
               : () {
@@ -242,45 +371,38 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
                   unawaited(submit());
                 },
         ),
-        if (notice != null)
-          Padding(padding: const EdgeInsets.all(8), child: Text(notice!)),
-        ErrorNotice(error),
+        if (notice != null) _note(notice!, color: mx.primary),
+        ErrorNotice(error, margin: const EdgeInsets.only(top: 12)),
+        const SizedBox(height: 8),
         if (step == 'verify' || step == 'reset')
-          TextButton(
-            onPressed: busy || cooldown > 0
-                ? null
-                : () => run(() async {
-                    if (step == 'verify') {
-                      await c.desktop.account.resend(email.text);
-                    } else {
-                      await c.desktop.account.forgot(email.text);
-                    }
-                    resetCooldown();
-                    notice = '验证码已重新发送';
-                  }),
-            child: Text(cooldown > 0 ? '$cooldown 秒后可重发' : '重新发送验证码'),
+          Center(
+            child: _link(
+              cooldown > 0 ? '$cooldown 秒后可重发' : '重新发送验证码',
+              busy || cooldown > 0
+                  ? null
+                  : () => run(() async {
+                      if (step == 'verify') {
+                        await c.desktop.account.resend(email.text);
+                      } else {
+                        await c.desktop.account.forgot(email.text);
+                      }
+                      resetCooldown();
+                      notice = '验证码已重新发送';
+                    }),
+            ),
           ),
         if (step == 'signin')
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              TextButton(
-                onPressed: busy ? null : () => go('register'),
-                child: const Text('注册账号'),
-              ),
-              TextButton(
-                onPressed: busy ? null : () => go('forgot'),
-                child: const Text('忘记密码？'),
-              ),
+              _link('注册账号', busy ? null : () => go('register')),
+              _link('忘记密码？', busy ? null : () => go('forgot')),
             ],
           ),
         if (step != 'signin')
-          TextButton(
-            onPressed: busy ? null : () => go('signin'),
-            child: const Text('返回登录'),
-          ),
+          Center(child: _link('返回登录', busy ? null : () => go('signin'))),
         if (step == 'verify')
-          const Text('验证码 10 分钟内有效。没收到？请检查垃圾邮件，或确认邮箱地址。验证码错误 5 次后需要重新获取。'),
+          _note('验证码 10 分钟内有效。没收到？请检查垃圾邮件，或确认邮箱地址。验证码错误 5 次后需要重新获取。'),
       ],
     );
   }

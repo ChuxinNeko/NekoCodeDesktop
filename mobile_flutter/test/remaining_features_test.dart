@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_miuix/miuix.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekocode_mobile/core/desktop_client.dart';
 import 'package:nekocode_mobile/features/mobile_controller.dart';
 import 'package:nekocode_mobile/features/chat/run_details.dart';
 import 'package:nekocode_mobile/features/chat/team_thread.dart';
 import 'package:nekocode_mobile/features/chat/configuration.dart';
-import 'package:nekocode_mobile/ui/theme.dart';
 
 import 'support.dart';
 
@@ -69,8 +69,8 @@ void main() {
       'working': '正在工作',
     };
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
+      themed(
+        Scaffold(
           body: Column(
             children: [
               ExtensionWidgets(ui: ui, below: false, streaming: true),
@@ -101,12 +101,9 @@ void main() {
       'thinkingLevels': ['off'],
     };
     await tester.pumpWidget(
-      MaterialApp(
-        theme: GptTheme.light(),
-        home: Scaffold(body: FusionDialog(controller: c)),
-      ),
+      themed(Scaffold(body: FusionSheet(controller: c))),
     );
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.byType(MiuixSwitchPreference));
     await tester.pumpAndSettle();
     await tester.tap(find.text('应用'));
     await tester.pumpAndSettle();

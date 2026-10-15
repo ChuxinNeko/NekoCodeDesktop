@@ -1,58 +1,68 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_miuix/miuix.dart';
 
 import '../../core/protocol.dart';
+import '../../ui/theme.dart';
+import '../../ui/widgets.dart';
 import 'extension_dialog.dart';
 
 String pretty(dynamic value) =>
     value is String ? value : const JsonEncoder.withIndent('  ').convert(value);
+
+Widget _card(Widget child) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 4),
+  child: MiuixCard(cornerRadius: NekoShape.card - 4, child: child),
+);
 
 class RunDetails extends StatelessWidget {
   const RunDetails({super.key, required this.run, this.title});
   final Json run;
   final String? title;
   @override
-  Widget build(BuildContext context) => ExpansionTile(
-    title: Text(
-      title ?? string(run['description'], string(run['query'], '运行详情')),
-    ),
-    subtitle: Text(
-      [
-        run['status'],
-        run['model'],
-        run['outcome'],
-      ].whereType<String>().join(' · '),
-    ),
-    childrenPadding: const EdgeInsets.all(12),
-    children: [
-      for (final field in ['id', 'writablePaths', 'startedAt', 'endedAt'])
-        if (run[field] != null)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SelectableText('$field: ${pretty(run[field])}'),
+  Widget build(BuildContext context) => _card(
+    NekoDisclosure(
+      title: Text(
+        title ?? string(run['description'], string(run['query'], '运行详情')),
+      ),
+      subtitle: Text(
+        [
+          run['status'],
+          run['model'],
+          run['outcome'],
+        ].whereType<String>().join(' · '),
+      ),
+      childrenPadding: const EdgeInsets.all(12),
+      children: [
+        for (final field in ['id', 'writablePaths', 'startedAt', 'endedAt'])
+          if (run[field] != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SelectableText('$field: ${pretty(run[field])}'),
+            ),
+        for (final step in records(run['steps']))
+          NekoDisclosure(
+            title: Text(string(step['toolName'], string(step['kind']))),
+            subtitle: Text(string(step['status'])),
+            children: [
+              for (final key in [
+                'text',
+                'args',
+                'output',
+                'startedAt',
+                'endedAt',
+              ])
+                if (step[key] != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: SelectableText('$key: ${pretty(step[key])}'),
+                  ),
+            ],
           ),
-      for (final step in records(run['steps']))
-        ExpansionTile(
-          title: Text(string(step['toolName'], string(step['kind']))),
-          subtitle: Text(string(step['status'])),
-          children: [
-            for (final key in [
-              'text',
-              'args',
-              'output',
-              'startedAt',
-              'endedAt',
-            ])
-              if (step[key] != null)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: SelectableText('$key: ${pretty(step[key])}'),
-                ),
-          ],
-        ),
-      if (run['result'] != null) SelectableText(string(run['result'])),
-    ],
+        if (run['result'] != null) SelectableText(string(run['result'])),
+      ],
+    ),
   );
 }
 
@@ -65,31 +75,35 @@ class FusionInspector extends StatelessWidget {
     if (state['status'] == 'idle' && events.isEmpty) {
       return const SizedBox.shrink();
     }
-    return ExpansionTile(
-      title: Text('Fusion · ${state['status']}'),
-      childrenPadding: const EdgeInsets.all(12),
-      children: [
-        Text(
-          'Main · ${object(state['lanes'])['main']} · ${object(state['models'])['main']}',
-        ),
-        Text(
-          'Sidekick · ${object(state['lanes'])['sidekick']} · ${object(state['models'])['sidekick']}',
-        ),
-        for (final event in events.where((e) => e['type'] == 'plan.completed'))
-          ExpansionTile(
-            title: Text('计划 · ${object(event['plan'])['complexity']}'),
-            children: [SelectableText(pretty(event['plan']))],
+    return _card(
+      NekoDisclosure(
+        title: Text('Fusion · ${state['status']}'),
+        childrenPadding: const EdgeInsets.all(12),
+        children: [
+          Text(
+            'Main · ${object(state['lanes'])['main']} · ${object(state['models'])['main']}',
           ),
-        for (final worker in events.where(
-          (e) => e['type'] == 'task.started' && e['role'] == 'sidekick',
-        ))
-          _worker(worker, events),
-        if (state['error'] != null) SelectableText(string(state['error'])),
-        ExpansionTile(
-          title: const Text('全部事件'),
-          children: [SelectableText(pretty(events))],
-        ),
-      ],
+          Text(
+            'Sidekick · ${object(state['lanes'])['sidekick']} · ${object(state['models'])['sidekick']}',
+          ),
+          for (final event in events.where(
+            (e) => e['type'] == 'plan.completed',
+          ))
+            NekoDisclosure(
+              title: Text('计划 · ${object(event['plan'])['complexity']}'),
+              children: [SelectableText(pretty(event['plan']))],
+            ),
+          for (final worker in events.where(
+            (e) => e['type'] == 'task.started' && e['role'] == 'sidekick',
+          ))
+            _worker(worker, events),
+          if (state['error'] != null) SelectableText(string(state['error'])),
+          NekoDisclosure(
+            title: const Text('全部事件'),
+            children: [SelectableText(pretty(events))],
+          ),
+        ],
+      ),
     );
   }
 
@@ -100,11 +114,11 @@ class FusionInspector extends StatelessWidget {
     final done = own
         .where((e) => ['task.completed', 'task.failed'].contains(e['type']))
         .lastOrNull;
-    return ExpansionTile(
+    return NekoDisclosure(
       title: Text('${worker['task']} · ${done?['type'] ?? 'running'}'),
       children: [
         SelectableText('${worker['workerId']} · ${worker['model']}'),
-        ExpansionTile(
+        NekoDisclosure(
           title: const Text('思考'),
           children: [
             SelectableText(
@@ -124,7 +138,7 @@ class FusionInspector extends StatelessWidget {
               : string(done['text'], string(done['message'])),
         ),
         for (final tool in own.where((e) => e['type'] == 'tool.started'))
-          ExpansionTile(
+          NekoDisclosure(
             title: Text(string(tool['toolName'])),
             children: [
               SelectableText(
@@ -160,49 +174,77 @@ class ExtensionWidgets extends StatelessWidget {
   final Future<void> Function(Json)? onAnswer;
   final Json ui;
   final bool below, streaming;
+
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    constraints: BoxConstraints(
-      maxHeight: !below && ui['dialog'] != null
-          ? MediaQuery.sizeOf(context).height * .45
-          : 180,
-    ),
-    child: SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (!below && ui['dialog'] != null)
-            if (onAnswer != null)
-              ExtensionDialogCard(
-                key: ValueKey(object(ui['dialog'])['id']),
-                dialog: object(ui['dialog']),
-                queued: (ui['queued'] as num? ?? 0).toInt(),
-                onAnswer: onAnswer!,
-              )
-            else
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text('扩展正在等待电脑端回答，请在电脑端继续。'),
-              ),
-          for (final widget in records(
-            ui['widgets'],
-          ).where((w) => (w['placement'] == 'belowEditor') == below))
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: SelectableText(
-                (widget['lines'] as List? ?? []).join('\n'),
-              ),
-            ),
-          if (!below && streaming && ui['working'] != null)
-            Text(string(ui['working'])),
-          if (!below)
-            for (final status in records(ui['statuses']))
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(string(status['text'])),
-              ),
-        ],
+  Widget build(BuildContext context) {
+    final c = context.mx;
+    final muted = TextStyle(
+      fontSize: 13,
+      height: 1.45,
+      color: c.onSurfaceVariantSummary,
+    );
+    final lines = records(ui['widgets'])
+        .where((w) => (w['placement'] == 'belowEditor') == below)
+        .toList();
+    final statuses = below ? <Json>[] : records(ui['statuses']);
+    final working = !below && streaming && ui['working'] != null;
+    final dialog = !below && ui['dialog'] != null;
+    if (!dialog && lines.isEmpty && statuses.isEmpty && !working) {
+      return const SizedBox.shrink();
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: dialog ? MediaQuery.sizeOf(context).height * .45 : 180,
       ),
-    ),
-  );
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (dialog)
+              if (onAnswer != null)
+                ExtensionDialogCard(
+                  key: ValueKey(object(ui['dialog'])['id']),
+                  dialog: object(ui['dialog']),
+                  queued: (ui['queued'] as num? ?? 0).toInt(),
+                  onAnswer: onAnswer!,
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text('扩展正在等待电脑端回答，请在电脑端继续。', style: muted),
+                ),
+            for (final widget in lines)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: SelectableText(
+                  (widget['lines'] as List? ?? []).join('\n'),
+                  style: muted,
+                ),
+              ),
+            if (working)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
+                    MiuixInfiniteProgressIndicator(
+                      color: c.primary,
+                      size: 13,
+                      strokeWidth: 1.6,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(string(ui['working']), style: muted),
+                  ],
+                ),
+              ),
+            for (final status in statuses)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: Text(string(status['text']), style: muted),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

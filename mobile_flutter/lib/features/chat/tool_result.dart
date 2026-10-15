@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_miuix/miuix.dart';
 
 import '../../core/protocol.dart';
 import '../../ui/theme.dart';
+import 'transcript.dart';
 
-/// NekoCode Desktop 风格结构化结果展示与文件差异卡片
+/// 结构化工具结果：文件差异、代码定位报告、退出状态码。
 class ToolResult extends StatelessWidget {
   const ToolResult({
     super.key,
@@ -20,156 +21,124 @@ class ToolResult extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final c = context.mx;
     final name = string(cell['toolName'], string(cell['name']));
     final details = object(cell['details']);
     final diff = string(details['diff']);
     final result = diff.isNotEmpty ? diff : output;
-    final isDiff = diff.isNotEmpty || result.contains('@@ ') || result.startsWith('diff --git');
-
-    if (showDiffOnly && isDiff) {
-      return _buildDiffView(context, result, isDark);
-    }
-
+    final isDiff =
+        diff.isNotEmpty ||
+        result.contains('@@ ') ||
+        result.startsWith('diff --git');
+    if (showDiffOnly && isDiff) return _DiffView(text: result);
+    final exit = details['exitCode'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (name == 'code_search') ...[
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Row(
-              children: [
-                const Icon(Icons.saved_search_rounded, size: 14, color: BaoColors.accent),
-                const SizedBox(width: 6),
-                Text(
-                  'Fast Context · 定位报告',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: MiuixText(
+              '定位报告',
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: c.primary,
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: MarkdownBody(
               data: output,
               selectable: true,
-              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                p: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? BaoColors.darkText : BaoColors.lightText,
-                ),
-                code: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                  backgroundColor: isDark ? const Color(0xFF262626) : const Color(0xFFE5E5E5),
-                ),
-              ),
+              styleSheet: nekoMarkdown(context, size: 13.5),
             ),
           ),
-          for (final match in RegExp(r'([\w./\\-]+\.[\w]+):(\d+)(?:-(\d+))?').allMatches(output))
+          for (final match in RegExp(
+            r'([\w./\\-]+\.[\w]+):(\d+)(?:-(\d+))?',
+          ).allMatches(output))
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
               child: SelectableText(
                 match.group(0)!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'monospace',
-                  fontSize: 11.5,
-                  color: BaoColors.accent,
+                  fontSize: 12,
+                  color: c.primary,
                 ),
               ),
             ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
         ],
-        if (isDiff) _buildDiffView(context, result, isDark),
-        if (details['exitCode'] != null)
+        if (isDiff) _DiffView(text: result),
+        if (exit != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: Text(
-              '退出状态码：${details['exitCode']}',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'monospace',
-                color: details['exitCode'] == 0 ? BaoColors.green : BaoColors.red,
-              ),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: MiuixText(
+              '退出状态码 $exit',
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: exit == 0 ? NekoTone.success(context.isDark) : c.error,
             ),
           ),
       ],
     );
   }
+}
 
-  Widget _buildDiffView(BuildContext context, String diffText, bool isDark) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF141414) : const Color(0xFFF6F6F6),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: isDark ? BaoColors.darkBorderSubtle : BaoColors.lightBorderSubtle,
-          width: 0.6,
+class _DiffView extends StatelessWidget {
+  const _DiffView({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.mx;
+    final dark = context.isDark;
+    final add = NekoTone.success(dark);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          color: NekoTone.codeBackground(dark),
+          shape: NekoShape.squircle(14),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final line in text.split('\n')) _line(line, c, add),
+            ],
+          ),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFEFEFEF),
-              border: Border(
-                bottom: BorderSide(
-                  color: isDark ? BaoColors.darkBorderSubtle : BaoColors.lightBorderSubtle,
-                  width: 0.6,
-                ),
-              ),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.difference_rounded, size: 13, color: BaoColors.accent),
-                const SizedBox(width: 5),
-                Text(
-                  '文件变更差异 (Diff)',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final line in diffText.split('\n'))
-                    SelectableText(
-                      line,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                        height: 1.35,
-                        color: line.startsWith('+') && !line.startsWith('+++')
-                            ? BaoColors.green
-                            : line.startsWith('-') && !line.startsWith('---')
-                            ? BaoColors.red
-                            : line.startsWith('@')
-                            ? BaoColors.accent
-                            : (isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
+    );
+  }
+
+  Widget _line(String line, MiuixColors c, Color add) {
+    final isAdd = line.startsWith('+') && !line.startsWith('+++');
+    final isDel = line.startsWith('-') && !line.startsWith('---');
+    final color = isAdd
+        ? add
+        : isDel
+        ? c.error
+        : line.startsWith('@')
+        ? c.primary
+        : c.onSurfaceVariantSummary;
+    return Container(
+      color: isAdd
+          ? add.withValues(alpha: .1)
+          : isDel
+          ? c.error.withValues(alpha: .1)
+          : null,
+      child: SelectableText(
+        line.isEmpty ? ' ' : line,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11.5,
+          height: 1.5,
+          color: color,
+        ),
       ),
     );
   }

@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekocode_mobile/core/protocol.dart';
 import 'package:nekocode_mobile/features/chat/extension_dialog.dart';
-import 'package:nekocode_mobile/ui/theme.dart';
+
+import 'support.dart';
 
 void main() {
-  Widget page(Json dialog, Future<void> Function(Json) answer) => MaterialApp(
-    theme: GptTheme.light(),
-    home: Scaffold(
+  Widget page(Json dialog, Future<void> Function(Json) answer) => themed(
+    Scaffold(
       body: SingleChildScrollView(
         child: ExtensionDialogCard(
           key: ValueKey(dialog['id']),

@@ -1,155 +1,159 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_miuix/miuix.dart';
 
 import '../../core/protocol.dart';
+import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
 import '../mobile_controller.dart';
 
+/// 输入框上方的一排配置胶囊：权限 / 模式 / 模型 / 思考 / Fusion。
 class ConfigurationBar extends StatelessWidget {
   const ConfigurationBar({super.key, required this.controller});
   final MobileController controller;
+
   @override
   Widget build(BuildContext context) {
     final c = controller;
     final value = c.snapshot ?? c.defaults ?? {};
-    Widget picker(
+
+    Widget chip(
       String title,
       String field,
-      List<Json> choices,
-    ) {
-      final isDark = Theme.of(context).brightness == Brightness.dark;
-      return PopupMenuButton<String>(
-        enabled: !c.busy && c.online && choices.isNotEmpty,
-        tooltip: title,
-        onSelected: (v) => c.configure({field: v}),
-        itemBuilder: (_) => [
-          for (final option in choices) ...[
-            if (field == 'modelKey' &&
-                choices.indexOf(option) ==
-                    choices.indexWhere(
-                      (o) => o['provider'] == option['provider'],
-                    ))
-              PopupMenuItem<String>(
-                enabled: false,
-                child: Text(
-                  string(option['provider']),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-                ),
-              ),
-            PopupMenuItem(
-              value: string(option['value']),
-              child: Text(string(option['name'])),
-            ),
-          ],
-        ],
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF222222) : const Color(0xFFEFEFEF),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFDDDDDD),
-              width: 0.8,
-            ),
-          ),
-          child: Text(
-            '$title: ${choices.where((o) => o['value'] == value[field]).firstOrNull?['name'] ?? value[field] ?? '—'} ▾',
-            style: TextStyle(
-              fontSize: 11.5,
-              color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
-            ),
-          ),
-        ),
+      List<Json> choices, {
+      bool enabled = true,
+    }) {
+      final current = choices
+          .where((o) => o['value'] == value[field])
+          .firstOrNull;
+      final label = string(
+        current?['short'],
+        string(current?['name'], '${value[field] ?? '—'}'),
       );
-    };
-    if (c.isAcp) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final option in records(value['configOptions']))
-              PopupMenuButton<String>(
-                enabled: value['status'] == 'ready' && !c.busy,
-                tooltip: string(option['name']),
-                onSelected: (v) =>
-                    c.configure({'configId': option['id'], 'value': v}),
-                itemBuilder: (_) => [
-                  for (final choice in records(option['options']))
-                    PopupMenuItem(
-                      value: string(choice['value']),
-                      child: Text(string(choice['name'])),
-                    ),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Text('${option['name']}: ${option['currentValue']} ▾'),
-                ),
-              ),
-          ],
-        ),
+      return PillBadge(
+        label: '$title · $label',
+        onTap: !enabled || c.busy || !c.online || choices.isEmpty
+            ? null
+            : () async {
+                final picked = await showNekoPicker<String>(
+                  context,
+                  title: title,
+                  selected: value[field] as String?,
+                  choices: [
+                    for (final o in choices)
+                      NekoChoice(
+                        string(o['value']),
+                        string(o['name']),
+                        group: field == 'modelKey'
+                            ? string(o['provider'])
+                            : null,
+                      ),
+                  ],
+                );
+                if (picked != null) await c.configure({field: picked});
+              },
       );
     }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          picker('权限', 'mode', [
-            {'value': 'read-only', 'name': '只读'},
-            {'value': 'auto', 'name': '自动审批'},
-            {'value': 'full-access', 'name': '完全访问'},
-          ]),
-          picker('模式', 'workMode', [
-            for (final mode in ['agent', 'ask', 'plan', 'debug', 'multitask'])
-              {'value': mode, 'name': mode},
-          ]),
-          if (value['workMode'] == 'agent')
-            Text(
-              '· ${value['agentPhase'] ?? 'execute'}',
-              style: const TextStyle(fontSize: 12),
-            ),
-          picker('模型', 'modelKey', [
-            for (final model in records(value['models']))
-              {
-                'value': model['key'],
-                'provider': model['providerName'] ?? model['provider'],
-                'name':
-                    '${model['providerName'] ?? model['provider']}/${model['name'] ?? model['id']}',
-              },
-          ]),
-          if (value['fusion'] == null)
-            picker('思考', 'thinkingLevel', [
-              for (final level in value['thinkingLevels'] as List? ?? ['off'])
-                {'value': level, 'name': level},
-            ]),
-          TextButton(
-            onPressed: c.busy || !c.online
-                ? null
-                : () => showDialog<void>(
-                    context: context,
-                    builder: (_) => FusionDialog(controller: c),
-                  ),
-            child: Text(
-              value['fusion'] == null
-                  ? 'Fusion / Team'
-                  : 'Fusion · ${object(value['fusion'])['strategy'] ?? 'delegate'}',
-            ),
+
+    final chips = <Widget>[];
+    if (c.isAcp) {
+      for (final option in records(value['configOptions'])) {
+        final choices = records(option['options']);
+        final current = choices
+            .where((o) => o['value'] == option['currentValue'])
+            .firstOrNull;
+        chips.add(
+          PillBadge(
+            label:
+                '${option['name']} · ${current?['name'] ?? option['currentValue']}',
+            onTap: value['status'] == 'ready' && !c.busy
+                ? () async {
+                    final picked = await showNekoPicker<String>(
+                      context,
+                      title: string(option['name']),
+                      selected: option['currentValue'] as String?,
+                      choices: [
+                        for (final o in choices)
+                          NekoChoice(string(o['value']), string(o['name'])),
+                      ],
+                    );
+                    if (picked != null) {
+                      await c.configure({
+                        'configId': option['id'],
+                        'value': picked,
+                      });
+                    }
+                  }
+                : null,
           ),
-        ],
+        );
+      }
+    } else {
+      chips.addAll([
+        chip('权限', 'mode', [
+          {'value': 'read-only', 'name': '只读'},
+          {'value': 'auto', 'name': '自动审批'},
+          {'value': 'full-access', 'name': '完全访问'},
+        ]),
+        chip('模式', 'workMode', [
+          for (final mode in ['agent', 'ask', 'plan', 'debug', 'multitask'])
+            {'value': mode, 'name': mode},
+        ]),
+        chip('模型', 'modelKey', [
+          for (final model in records(value['models']))
+            {
+              'value': model['key'],
+              'provider': model['providerName'] ?? model['provider'],
+              'name': '${model['name'] ?? model['id']}',
+            },
+        ]),
+        if (value['fusion'] == null)
+          chip('思考', 'thinkingLevel', [
+            for (final level in value['thinkingLevels'] as List? ?? ['off'])
+              {'value': level, 'name': level},
+          ]),
+        PillBadge(
+          label: value['fusion'] == null
+              ? 'Fusion / Team'
+              : 'Fusion · ${object(value['fusion'])['strategy'] ?? 'delegate'}',
+          selected: value['fusion'] != null,
+          onTap: c.busy || !c.online
+              ? null
+              : () => showNekoSheet<void>(
+                  context,
+                  title: 'Fusion / Team',
+                  subtitle: '多模型协作策略',
+                  maxHeightFactor: .85,
+                  builder: (_) => FusionSheet(controller: c),
+                ),
+        ),
+      ]);
+    }
+
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+        itemCount: chips.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (_, i) => Center(child: chips[i]),
       ),
     );
   }
 }
 
-class FusionDialog extends StatefulWidget {
-  const FusionDialog({super.key, required this.controller});
+/// Fusion / Team 配置面板内容（显示在底部面板中）。
+class FusionSheet extends StatefulWidget {
+  const FusionSheet({super.key, required this.controller});
   final MobileController controller;
   @override
-  State<FusionDialog> createState() => _FusionDialogState();
+  State<FusionSheet> createState() => _FusionSheetState();
 }
 
-class _FusionDialogState extends State<FusionDialog> {
+class _FusionSheetState extends State<FusionSheet> {
   late Json config;
   late List<Json> models;
+
   @override
   void initState() {
     super.initState();
@@ -171,115 +175,155 @@ class _FusionDialogState extends State<FusionDialog> {
     };
   }
 
-  Widget select(String title, String field, List<Json> items) =>
-      DropdownButtonFormField<String>(
-        key: ValueKey('$field:${config[field]}'),
-        initialValue: items.any((i) => i['value'] == config[field])
-            ? config[field] as String?
-            : null,
-        decoration: InputDecoration(labelText: title),
-        items: [
-          for (final i in items)
-            DropdownMenuItem(
-              value: string(i['value']),
-              child: Text(string(i['name']), overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        onChanged: (v) => setState(() {
-          config[field] = v;
+  List levelsFor(dynamic modelKey) =>
+      models.where((m) => m['key'] == modelKey).firstOrNull?['thinkingLevels']
+          as List? ??
+      ['off'];
+
+  Widget select(String title, String field, List<Json> items) {
+    final current = items.where((i) => i['value'] == config[field]).firstOrNull;
+    return MiuixArrowPreference(
+      title: title,
+      endActions: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 170),
+          child: MiuixText(
+            string(current?['name'], '未选择'),
+            fontSize: 14.5,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            color: context.mx.onSurfaceVariantSummary,
+          ),
+        ),
+      ],
+      onClick: () async {
+        final picked = await showNekoPicker<String>(
+          context,
+          title: title,
+          selected: config[field] as String?,
+          choices: [
+            for (final i in items)
+              NekoChoice(string(i['value']), string(i['name'])),
+          ],
+        );
+        if (picked == null) return;
+        setState(() {
+          config[field] = picked;
           if (field.endsWith('ModelKey')) {
             final role = field.replaceFirst('ModelKey', '');
-            final levels =
-                models
-                        .where((m) => m['key'] == v)
-                        .firstOrNull?['thinkingLevels']
-                    as List? ??
-                ['off'];
+            final levels = levelsFor(picked);
             if (!levels.contains(config['${role}ThinkingLevel'])) {
               config['${role}ThinkingLevel'] = levels.first;
             }
           }
-        }),
-        isExpanded: true,
-      );
+        });
+      },
+    );
+  }
+
+  void apply() {
+    for (final role in ['lead', 'sidekick']) {
+      final levels = levelsFor(config['${role}ModelKey']);
+      if (!levels.contains(config['${role}ThinkingLevel'])) {
+        config['${role}ThinkingLevel'] = levels.first;
+      }
+    }
+    widget.controller.configure({'fusion': config});
+    Navigator.pop(context);
+  }
+
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Fusion / Team'),
-    content: SizedBox(
-      width: 360,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            select('策略', 'strategy', [
-              for (final v in ['delegate', 'parallel', 'team'])
-                {'value': v, 'name': v},
-            ]),
-            SwitchListTile(
-              title: const Text('自适应路由'),
-              value: config['adaptiveRouting'] == true,
-              onChanged: (v) => setState(() => config['adaptiveRouting'] = v),
-            ),
-            if (config['strategy'] == 'team')
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text('使用电脑「设置 → Team」中的团队成员与权限。手机端与旧版一样不编辑电脑团队配置。'),
-              ),
-            for (final role in ['lead', 'sidekick']) ...[
-              select('$role 模型', '${role}ModelKey', [
-                for (final m in models)
-                  {'value': m['key'], 'name': m['name'] ?? m['id']},
-              ]),
-              select('$role 思考', '${role}ThinkingLevel', [
-                for (final v
-                    in (models
-                                .where(
-                                  (m) => m['key'] == config['${role}ModelKey'],
-                                )
-                                .firstOrNull?['thinkingLevels']
-                            as List? ??
-                        ['off']))
+  Widget build(BuildContext context) {
+    final mx = context.mx;
+    return ListView(
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+      children: [
+        MiuixCard(
+          cornerRadius: 22,
+          colors: MiuixCardColors(
+            color: mx.surface,
+            contentColor: mx.onSurface,
+          ),
+          child: Column(
+            children: [
+              select('策略', 'strategy', [
+                for (final v in ['delegate', 'parallel', 'team'])
                   {'value': v, 'name': v},
               ]),
+              MiuixSwitchPreference(
+                title: '自适应路由',
+                value: config['adaptiveRouting'] == true,
+                onChanged: (v) => setState(() => config['adaptiveRouting'] = v),
+              ),
+              if (config['strategy'] == 'team')
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                  child: MiuixText(
+                    '使用电脑「设置 → Team」中的团队成员与权限。手机端与旧版一样不编辑电脑团队配置。',
+                    fontSize: 13,
+                    height: 1.45,
+                    color: mx.onSurfaceVariantSummary,
+                  ),
+                ),
             ],
+          ),
+        ),
+        for (final role in ['lead', 'sidekick']) ...[
+          MiuixSmallTitle(
+            role == 'lead' ? 'Lead' : 'Sidekick',
+            insideMargin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          ),
+          MiuixCard(
+            cornerRadius: 22,
+            colors: MiuixCardColors(
+              color: mx.surface,
+              contentColor: mx.onSurface,
+            ),
+            child: Column(
+              children: [
+                select('$role 模型', '${role}ModelKey', [
+                  for (final m in models)
+                    {'value': m['key'], 'name': m['name'] ?? m['id']},
+                ]),
+                select('$role 思考', '${role}ThinkingLevel', [
+                  for (final v in levelsFor(config['${role}ModelKey']))
+                    {'value': v, 'name': v},
+                ]),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: ActionButton(
+                '取消',
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ActionButton(
+                '关闭 Fusion',
+                danger: true,
+                onPressed: () {
+                  widget.controller.configure({'fusion': null});
+                  Navigator.pop(context);
+                },
+              ),
+            ),
           ],
         ),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
-      ),
-      TextButton(
-        onPressed: () {
-          widget.controller.configure({'fusion': null});
-          Navigator.pop(context);
-        },
-        child: const Text('关闭 Fusion'),
-      ),
-      ActionButton(
-        '应用',
-        onPressed: models.isEmpty
-            ? null
-            : () {
-                for (final role in ['lead', 'sidekick']) {
-                  final levels =
-                      models
-                              .where(
-                                (m) => m['key'] == config['${role}ModelKey'],
-                              )
-                              .firstOrNull?['thinkingLevels']
-                          as List? ??
-                      ['off'];
-                  if (!levels.contains(config['${role}ThinkingLevel'])) {
-                    config['${role}ThinkingLevel'] = levels.first;
-                  }
-                }
-                widget.controller.configure({'fusion': config});
-                Navigator.pop(context);
-              },
-      ),
-    ],
-  );
+        const SizedBox(height: 10),
+        ActionButton(
+          '应用',
+          isPrimary: true,
+          expand: true,
+          onPressed: models.isEmpty ? null : apply,
+        ),
+      ],
+    );
+  }
 }

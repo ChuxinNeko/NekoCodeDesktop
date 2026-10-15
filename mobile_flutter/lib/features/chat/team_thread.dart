@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_miuix/miuix.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../../core/protocol.dart';
+import '../../ui/theme.dart';
+import '../../ui/widgets.dart';
+import 'transcript.dart';
 
 /// Projects the same server event stream as shared/team-thread.ts.
 List<Json> projectTeamItems(List<Json> events) {
@@ -153,70 +157,109 @@ List<Json> teamTurns(Json workflow) {
 class TeamThreads extends StatelessWidget {
   const TeamThreads({super.key, required this.turns});
   final List<Json> turns;
+
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      for (final turn in turns)
-        ExpansionTile(
-          initiallyExpanded: turn['status'] == 'running',
-          title: Text('团队 · ${turn['status']}'),
-          subtitle: Text(
-            string(turn['prompt']),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          children: [
-            for (final item in records(turn['items']))
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        '${item['member'] ?? ''}${item['model'] == null ? '' : ' · ${item['model']}'}',
-                      ),
-                      if (item['kind'] == 'assign')
-                        SelectableText(
-                          '→ @${string(item['to']).replaceFirst(RegExp(r'^@'), '')}: ${item['task']}',
-                        )
-                      else ...[
-                        MarkdownBody(
-                          data: string(item['text']),
-                          selectable: true,
+  Widget build(BuildContext context) {
+    final c = context.mx;
+    return Column(
+      children: [
+        for (final turn in turns)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: MiuixCard(
+              cornerRadius: NekoShape.card - 4,
+              child: NekoDisclosure(
+                initiallyExpanded: turn['status'] == 'running',
+                title: Text('团队 · ${turn['status']}'),
+                subtitle: Text(
+                  string(turn['prompt']),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                children: [
+                  for (final item in records(turn['items']))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: DecoratedBox(
+                        decoration: ShapeDecoration(
+                          color: c.surface,
+                          shape: NekoShape.squircle(16),
                         ),
-                        for (final tool in records(item['tools']))
-                          ListTile(
-                            dense: true,
-                            title: Text(string(tool['name'])),
-                            subtitle: Text(
-                              '${tool['status']} · ${tool['detail'] ?? ''}',
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              MiuixText(
+                                '${item['member'] ?? ''}${item['model'] == null ? '' : ' · ${item['model']}'}',
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: c.primary,
+                              ),
+                              const SizedBox(height: 6),
+                              if (item['kind'] == 'assign')
+                                SelectableText(
+                                  '→ @${string(item['to']).replaceFirst(RegExp(r'^@'), '')}: ${item['task']}',
+                                )
+                              else ...[
+                                MarkdownBody(
+                                  data: string(item['text']),
+                                  selectable: true,
+                                  styleSheet: nekoMarkdown(context, size: 14),
+                                ),
+                                for (final tool in records(item['tools']))
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: MiuixText(
+                                      '${tool['name']} · ${tool['status']}${tool['detail'] == null ? '' : ' · ${tool['detail']}'}',
+                                      fontSize: 12.5,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      color: c.onSurfaceVariantSummary,
+                                    ),
+                                  ),
+                                if (item['error'] != null)
+                                  SelectableText(
+                                    string(item['error']),
+                                    style: TextStyle(color: c.error),
+                                  ),
+                                if (item['status'] == 'running')
+                                  MiuixText(
+                                    '正在执行…',
+                                    fontSize: 12.5,
+                                    color: c.primary,
+                                  ),
+                              ],
+                            ],
                           ),
-                        if (item['error'] != null)
-                          SelectableText(string(item['error'])),
-                        if (item['status'] == 'running') const Text('正在执行…'),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            if (object(turn['final'])['member'] != null)
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('最终回复 · ${object(turn['final'])['member']}'),
-                    MarkdownBody(
-                      data: string(object(turn['final'])['text']),
-                      selectable: true,
+                        ),
+                      ),
                     ),
-                  ],
-                ),
+                  if (object(turn['final'])['member'] != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          MiuixText(
+                            '最终回复 · ${object(turn['final'])['member']}',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          const SizedBox(height: 6),
+                          MarkdownBody(
+                            data: string(object(turn['final'])['text']),
+                            selectable: true,
+                            styleSheet: nekoMarkdown(context, size: 14.5),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
-          ],
-        ),
-    ],
-  );
+            ),
+          ),
+      ],
+    );
+  }
 }

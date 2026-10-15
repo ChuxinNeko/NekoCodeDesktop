@@ -1,16 +1,70 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_miuix/miuix.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/protocol.dart';
 import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
 import '../mobile_controller.dart';
+import 'tool_presentation.dart';
 import 'tool_result.dart';
 
+/// Markdown 样式：跟随 Miuix 色板，代码块使用中性灰底。
+MarkdownStyleSheet nekoMarkdown(BuildContext context, {double size = 15.5}) {
+  final c = context.mx;
+  final dark = context.isDark;
+  final base = TextStyle(fontSize: size, height: 1.6, color: c.onSurface);
+  final heading = base.copyWith(fontWeight: FontWeight.w700, height: 1.4);
+  return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+    p: base,
+    pPadding: EdgeInsets.zero,
+    h1: heading.copyWith(fontSize: size + 5),
+    h2: heading.copyWith(fontSize: size + 3),
+    h3: heading.copyWith(fontSize: size + 1),
+    h4: heading,
+    strong: base.copyWith(fontWeight: FontWeight.w700),
+    em: base.copyWith(fontStyle: FontStyle.italic),
+    a: base.copyWith(color: c.primary),
+    listBullet: base,
+    listIndent: 22,
+    blockSpacing: 12,
+    code: TextStyle(
+      fontFamily: 'monospace',
+      fontSize: size - 2.5,
+      color: c.onSurface,
+      backgroundColor: NekoTone.codeBackground(dark),
+    ),
+    codeblockPadding: const EdgeInsets.all(14),
+    codeblockDecoration: ShapeDecoration(
+      color: NekoTone.codeBackground(dark),
+      shape: NekoShape.squircle(16),
+    ),
+    blockquotePadding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
+    blockquoteDecoration: BoxDecoration(
+      border: Border(
+        left: BorderSide(color: c.primary.withValues(alpha: .6), width: 3),
+      ),
+    ),
+    horizontalRuleDecoration: BoxDecoration(
+      border: Border(top: BorderSide(color: c.dividerLine, width: 1)),
+    ),
+    tableBorder: TableBorder.all(color: c.dividerLine, width: .6),
+    tableHead: base.copyWith(fontWeight: FontWeight.w700),
+    tableBody: base,
+    tableCellsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+  );
+}
+
+Future<void> _openLink(String? href) async {
+  final uri = Uri.tryParse(href ?? '');
+  if (uri != null && ['https', 'http'].contains(uri.scheme)) {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}
+
+/// 一条用户 / 助手消息。
 class MessageCell extends StatelessWidget {
   const MessageCell({super.key, required this.cell, required this.controller});
   final Json cell;
@@ -18,249 +72,186 @@ class MessageCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (cell['type'] == 'tool') {
-      return ToolCell(
-        key: ValueKey(cell['id']),
-        cell: cell,
-        controller: controller,
-      );
-    }
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final user = cell['type'] == 'user';
+    final c = context.mx;
     final text = string(cell['text']);
-    final thinking = string(cell['thinking']);
-
-    // BaoCode 风格用户消息气泡 (UserMessageBubble)
-    if (user) {
+    if (cell['type'] == 'user') {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(width: 44),
-            Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: isDark ? BaoColors.darkBubbleFill : BaoColors.lightBubbleFill,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isDark ? BaoColors.darkBubbleBorder : BaoColors.lightBubbleBorder,
-                    width: 0.8,
-                  ),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * .82,
+            ),
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                color: c.primary,
+                shape: NekoShape.squircle(NekoShape.bubble),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 11,
                 ),
                 child: SelectableText(
                   text,
                   style: TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                    leadingDistribution: TextLeadingDistribution.even,
+                    fontSize: 16,
+                    height: 1.45,
+                    color: c.onPrimary,
                   ),
                 ),
               ),
             ),
-          ],
+          ),
         ),
       );
     }
 
-    // BaoCode 风格 AI 助手沉浸式流排版
+    final thinking = string(cell['thinking']);
+    final streaming = cell['streaming'] == true;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // BaoCode 风格思考过程折叠块 (ThinkingSection)
-          if (thinking.isNotEmpty || (cell['streaming'] == true && text.isEmpty)) ...[
-            _BaoThinkingCard(
+          if (thinking.isNotEmpty || (streaming && text.isEmpty)) ...[
+            _ThinkingCard(
               thinking: thinking,
-              streaming: cell['streaming'] == true && text.isEmpty,
+              streaming: streaming && text.isEmpty,
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 10),
           ],
-
-          // 核心 Markdown 回复流
           if (text.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: MarkdownBody(
-                data: text,
-                selectable: true,
-                styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                  p: TextStyle(
-                    fontSize: 14.5,
-                    height: 1.55,
-                    color: isDark ? BaoColors.darkText : BaoColors.lightText,
-                  ),
-                  codeblockDecoration: BoxDecoration(
-                    color: isDark ? BaoColors.darkCodeBg : BaoColors.lightCodeBg,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: isDark ? BaoColors.darkBorder : BaoColors.lightBorder,
-                      width: 0.8,
-                    ),
-                  ),
-                  code: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
-                    color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                    backgroundColor: isDark ? const Color(0xFF282828) : const Color(0xFFE5E5E5),
-                  ),
-                  blockquoteDecoration: BoxDecoration(
-                    border: Border(
-                      left: BorderSide(
-                        color: isDark ? BaoColors.accent : const Color(0xFF005FB8),
-                        width: 3,
-                      ),
-                    ),
-                  ),
-                ),
-                onTapLink: (_, href, _) async {
-                  final uri = Uri.tryParse(href ?? '');
-                  if (uri != null && ['https', 'http'].contains(uri.scheme)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
+            MarkdownBody(
+              data: text,
+              selectable: true,
+              styleSheet: nekoMarkdown(context),
+              onTapLink: (_, href, _) => _openLink(href),
             ),
-
-          // 流式生成进度提示
-          if (cell['streaming'] == true && text.isNotEmpty)
+          if (streaming && text.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.only(top: 10),
               child: Row(
                 children: [
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.8,
-                      valueColor: AlwaysStoppedAnimation<Color>(BaoColors.accent),
-                    ),
+                  MiuixInfiniteProgressIndicator(
+                    color: c.primary,
+                    size: 14,
+                    strokeWidth: 1.8,
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    'Agent 正在生成…',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary,
-                    ),
+                  MiuixText(
+                    '正在生成…',
+                    fontSize: 13,
+                    color: c.onSurfaceVariantSummary,
                   ),
                 ],
               ),
             ),
-
-          // 错误提示
           if (cell['error'] != null)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
+              padding: const EdgeInsets.only(top: 8),
+              child: MiuixText(
                 string(cell['error']),
-                style: const TextStyle(color: BaoColors.red, fontSize: 13),
+                fontSize: 14,
+                color: c.error,
               ),
             ),
-
-          // 底部用量与操作信息 (tokens · 次调用 · 复制)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              if (cell['usage'] is Map)
-                Text(
-                  _usage(object(cell['usage'])),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isDark ? BaoColors.darkTextFaint : BaoColors.lightTextFaint,
-                  ),
-                )
-              else
-                const SizedBox.shrink(),
-              if (text.isNotEmpty)
-                IconButton(
-                  tooltip: '复制回复',
-                  splashRadius: 16,
-                  icon: Icon(
-                    Icons.copy_rounded,
-                    size: 14,
-                    color: isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary,
-                  ),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: text));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('已复制回复'),
-                        duration: Duration(milliseconds: 1200),
-                        behavior: SnackBarBehavior.floating,
+          if (text.isNotEmpty || cell['usage'] is Map)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  if (text.isNotEmpty)
+                    MiuixPressable(
+                      feedbackType: MiuixPressFeedbackType.sink,
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: text));
+                        showNekoToast(context, '已复制回复');
+                      },
+                      semanticLabel: '复制回复',
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(0, 6, 12, 6),
+                        child: MiuixIcon(
+                          vector: MiuixIcons.os4.copy,
+                          size: 18,
+                          tint: c.onSurfaceVariantActions,
+                        ),
                       ),
-                    );
-                  },
-                ),
-            ],
-          ),
+                    ),
+                  if (cell['usage'] is Map)
+                    Expanded(
+                      child: MiuixText(
+                        _usage(object(cell['usage'])),
+                        fontSize: 12,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        color: c.onSurfaceVariantActions,
+                      ),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
 
-  String _usage(Json usage) =>
-      '${usage['totalTokens'] ?? 0} tokens · ${usage['calls'] ?? 0} 次调用${usage['costUsd'] == null ? '' : ' · \$${usage['costUsd']}'}${usage['durationMs'] == null ? '' : ' · ${((usage['durationMs'] as num) / 1000).toStringAsFixed(1)}s'}';
+  String _usage(Json usage) {
+    final tokens = usage['totalTokens'] ?? 0;
+    final seconds = usage['durationMs'] is num
+        ? ' · ${((usage['durationMs'] as num) / 1000).toStringAsFixed(1)}s'
+        : '';
+    final cost = usage['costUsd'] == null ? '' : ' · \$${usage['costUsd']}';
+    return '$tokens tokens · ${usage['calls'] ?? 0} 次调用$cost$seconds';
+  }
 }
 
-/// 思考过程折叠组件
-class _BaoThinkingCard extends StatefulWidget {
-  const _BaoThinkingCard({required this.thinking, required this.streaming});
+/// 思考过程（可折叠）。
+class _ThinkingCard extends StatefulWidget {
+  const _ThinkingCard({required this.thinking, required this.streaming});
   final String thinking;
   final bool streaming;
-
   @override
-  State<_BaoThinkingCard> createState() => _BaoThinkingCardState();
+  State<_ThinkingCard> createState() => _ThinkingCardState();
 }
 
-class _BaoThinkingCardState extends State<_BaoThinkingCard> {
-  bool _expanded = false;
-
+class _ThinkingCardState extends State<_ThinkingCard> {
+  bool expanded = false;
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    final verb = widget.streaming ? 'Thinking...' : 'Thought';
-    final detail = widget.streaming ? 'processing' : 'completed';
-
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1B1B1C) : const Color(0xFFF7F7F8),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: isDark ? BaoColors.darkBorder : BaoColors.lightBorder,
-          width: 0.8,
-        ),
+    final c = context.mx;
+    final canOpen = widget.thinking.isNotEmpty;
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        color: c.surfaceContainer,
+        shape: NekoShape.squircle(NekoShape.card - 4),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           StepHeader(
-            verb: verb,
-            detail: detail,
+            verb: widget.streaming ? '正在思考…' : '已思考',
             running: widget.streaming,
-            expanded: _expanded,
-            onToggle: () => setState(() => _expanded = !_expanded),
-            icon: Icon(
-              Icons.auto_awesome_rounded,
-              size: 14,
-              color: widget.streaming ? BaoColors.amber : (isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary),
+            expanded: expanded,
+            onToggle: canOpen
+                ? () => setState(() => expanded = !expanded)
+                : null,
+            icon: MiuixIcon(
+              vector: MiuixIcons.os4.memoryFunction,
+              size: 18,
+              tint: c.onSurfaceVariantSummary,
             ),
           ),
-          if (_expanded && widget.thinking.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+          if (expanded && canOpen)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
               child: SelectableText(
                 widget.thinking,
                 style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.5,
-                  color: isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary,
+                  fontSize: 13.5,
+                  height: 1.55,
+                  color: c.onSurfaceVariantSummary,
                 ),
               ),
             ),
@@ -270,185 +261,48 @@ class _BaoThinkingCardState extends State<_BaoThinkingCard> {
   }
 }
 
-// -----------------------------------------------------------------------------
-// NekoCode Desktop 风格工具调用展示规范 (复用 NekoCodeDesktop ToolCalls.tsx 架构)
-// -----------------------------------------------------------------------------
+/// 连续的工具调用合并为一张卡片，行间用发丝线分隔。
+class ToolGroup extends StatelessWidget {
+  const ToolGroup({super.key, required this.cells, required this.controller});
+  final List<Json> cells;
+  final MobileController controller;
 
-class _ToolPresentation {
-  const _ToolPresentation({
-    required this.label,
-    required this.subject,
-    required this.icon,
-    this.meta,
-    this.isShell = false,
-    this.prompt = '\$',
-    this.cwd,
-  });
-
-  final String label;
-  final String subject;
-  final IconData icon;
-  final String? meta;
-  final bool isShell;
-  final String prompt;
-  final String? cwd;
+  @override
+  Widget build(BuildContext context) {
+    final c = context.mx;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          color: c.surfaceContainer,
+          shape: NekoShape.squircle(NekoShape.card - 4),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < cells.length; i++) ...[
+              if (i > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 44),
+                  child: ColoredBox(
+                    color: c.dividerLine.withValues(alpha: .6),
+                    child: const SizedBox(height: .5),
+                  ),
+                ),
+              ToolCell(
+                key: ValueKey(cells[i]['id']),
+                cell: cells[i],
+                controller: controller,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-_ToolPresentation _presentTool(Json cell) {
-  final name = string(cell['name'], string(cell['toolName']));
-  final input = cell['input'] ?? cell['args'];
-  final details = object(cell['details']);
-
-  // 参数提取辅助
-  String? argString(String key) {
-    if (input is Map && input[key] is String && (input[key] as String).isNotEmpty) {
-      return input[key] as String;
-    }
-    return null;
-  }
-
-  int? argNumber(String key) {
-    if (input is Map && input[key] is num) return (input[key] as num).toInt();
-    return null;
-  }
-
-  String pathBasename(String p) => p.split(RegExp(r'[\\/]')).where((s) => s.isNotEmpty).lastOrNull ?? p;
-
-  // 1. Terminal / Shell 命令类工具 (对应 NekoCode Desktop TerminalCard)
-  if (name == 'bash' || name == 'powershell' || name == 'cmd' || name == 'terminal') {
-    final cmd = argString('command') ?? (input is String ? input : '');
-    final cwd = argString('cwd');
-    final prompt = name == 'powershell' ? 'PS>' : (name == 'cmd' ? '>' : '\$');
-    return _ToolPresentation(
-      label: '运行命令',
-      subject: cmd.split('\n').firstOrNull ?? cmd,
-      icon: Icons.terminal_rounded,
-      isShell: true,
-      prompt: prompt,
-      cwd: cwd,
-    );
-  }
-
-  if (name == 'ssh' && argString('op') == 'exec') {
-    final host = argString('host') ?? 'ssh';
-    final cmd = argString('command') ?? '';
-    return _ToolPresentation(
-      label: host,
-      subject: cmd.split('\n').firstOrNull ?? cmd,
-      icon: Icons.dns_rounded,
-      isShell: true,
-      prompt: '$host \$',
-    );
-  }
-
-  // 2. 读文件 (read)
-  if (name == 'read' || name == 'readFile') {
-    final p = argString('path') ?? '';
-    final offset = argNumber('offset');
-    final limit = argNumber('limit');
-    String? meta;
-    if (offset != null && limit != null) {
-      meta = 'L$offset–${offset + limit - 1}';
-    } else if (offset != null) {
-      meta = 'L$offset+';
-    } else if (limit != null) {
-      meta = 'L1–$limit';
-    }
-    return _ToolPresentation(
-      label: '读取文件',
-      subject: p.isNotEmpty ? pathBasename(p) : '文件',
-      icon: Icons.description_outlined,
-      meta: meta,
-    );
-  }
-
-  // 3. 编辑/写入文件 (edit / write)
-  if (name == 'edit' || name == 'write' || name == 'writeFile') {
-    final p = argString('path') ?? '';
-    return _ToolPresentation(
-      label: name == 'edit' ? '编辑文件' : '写入文件',
-      subject: p.isNotEmpty ? pathBasename(p) : '文件',
-      icon: Icons.edit_note_rounded,
-    );
-  }
-
-  // 4. 搜索与定位 (grep / find / semantic_search / code_search / ast_grep)
-  if (name == 'grep') {
-    return _ToolPresentation(
-      label: '搜索',
-      subject: argString('pattern') ?? '',
-      icon: Icons.search_rounded,
-    );
-  }
-  if (name == 'find') {
-    return _ToolPresentation(
-      label: '查找文件',
-      subject: argString('pattern') ?? '',
-      icon: Icons.manage_search_rounded,
-    );
-  }
-  if (name == 'code_search') {
-    return _ToolPresentation(
-      label: '定位代码',
-      subject: argString('query') ?? '',
-      icon: Icons.saved_search_rounded,
-    );
-  }
-  if (name == 'semantic_search') {
-    return _ToolPresentation(
-      label: '语义搜索',
-      subject: argString('query') ?? '',
-      icon: Icons.travel_explore_rounded,
-      meta: argString('path'),
-    );
-  }
-  if (name == 'ls') {
-    final p = argString('path') ?? '.';
-    return _ToolPresentation(
-      label: '列出目录',
-      subject: pathBasename(p),
-      icon: Icons.folder_open_rounded,
-    );
-  }
-  if (name == 'stat') {
-    return _ToolPresentation(
-      label: '测量文件',
-      subject: argString('path') ?? '',
-      icon: Icons.straighten_rounded,
-    );
-  }
-  if (name == 'github') {
-    return _ToolPresentation(
-      label: 'GitHub',
-      subject: [argString('repo'), argString('op')].where((s) => s != null && s.isNotEmpty).join(' · '),
-      icon: Icons.commit_rounded,
-    );
-  }
-  if (name == 'web_search') {
-    return _ToolPresentation(
-      label: '网页搜索',
-      subject: argString('query') ?? '',
-      icon: Icons.language_rounded,
-    );
-  }
-  if (name == 'web_fetch') {
-    final url = argString('url') ?? '';
-    return _ToolPresentation(
-      label: '抓取网页',
-      subject: url,
-      icon: Icons.public_rounded,
-    );
-  }
-
-  // 默认普通工具
-  return _ToolPresentation(
-    label: name,
-    subject: argString('command') ?? argString('path') ?? argString('query') ?? '',
-    icon: Icons.build_outlined,
-  );
-}
-
-/// NekoCode Desktop 风格工具调用折叠单元 (ToolCell)
+/// 单个工具调用行：折叠时一行摘要，展开后显示参数 / 输出。
 class ToolCell extends StatefulWidget {
   const ToolCell({super.key, required this.cell, required this.controller});
   final Json cell;
@@ -459,7 +313,7 @@ class ToolCell extends StatefulWidget {
 }
 
 class _ToolCellState extends State<ToolCell> {
-  bool _expanded = false;
+  bool expanded = false;
   String extra = '';
   bool loading = false;
   String? error;
@@ -498,266 +352,80 @@ class _ToolCellState extends State<ToolCell> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final pres = _presentTool(widget.cell);
+    final c = context.mx;
+    final pres = presentTool(widget.cell);
     final output = string(widget.cell['output']);
-    final effectiveOutput = extra.isNotEmpty ? extra : output;
+    final effective = extra.isNotEmpty ? extra : output;
     final running = widget.cell['status'] == 'running';
-    final isError = widget.cell['status'] == 'error';
+    final failed = widget.cell['status'] == 'error';
     final hasMore = widget.cell['truncated'] == true && extra.isEmpty;
+    final fallback = running ? (pres.isShell ? '等待命令输出…' : '执行中…') : '(无输出)';
 
-    final border = isDark ? BaoColors.darkBorder : BaoColors.lightBorder;
-    final cardBg = isDark ? BaoColors.darkCodeBg : BaoColors.lightCodeBg;
-
-    // 如果是命令工具 (TerminalCard 风格)
-    if (pres.isShell) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        child: Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF181818) : const Color(0xFFFAFAFA),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: isError ? BaoColors.red.withValues(alpha: 0.6) : border,
-              width: 0.8,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 桌面端风格 Header
-              InkWell(
-                onTap: () => setState(() => _expanded = !_expanded),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                  child: Row(
-                    children: [
-                      // 左侧状态指示图标
-                      if (running)
-                        const SizedBox(
-                          width: 13,
-                          height: 13,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.6,
-                            valueColor: AlwaysStoppedAnimation<Color>(BaoColors.accent),
-                          ),
-                        )
-                      else
-                        Icon(
-                          pres.icon,
-                          size: 14,
-                          color: isError
-                              ? BaoColors.red
-                              : (isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary),
-                        ),
-                      const SizedBox(width: 8),
-
-                      // 动词标签
-                      Text(
-                        pres.label,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // 命令单行摘要
-                      Expanded(
-                        child: Text(
-                          pres.subject,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 11.5,
-                            color: isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary,
-                          ),
-                        ),
-                      ),
-
-                      // 状态与折叠箭头
-                      if (running)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 6),
-                          child: Text(
-                            '运行中…',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: isDark ? BaoColors.amber : const Color(0xFFB45309),
-                            ),
-                          ),
-                        ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        _expanded ? Icons.keyboard_arrow_down_rounded : Icons.chevron_right_rounded,
-                        size: 15,
-                        color: isDark ? BaoColors.darkTextFaint : BaoColors.lightTextFaint,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // 展开后的黑底终端窗口
-              if (_expanded) ...[
-                Container(
-                  decoration: BoxDecoration(
-                    color: cardBg,
-                    border: Border(top: BorderSide(color: border, width: 0.6)),
-                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(6)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // 命令提示行 PS> / $ command · cwd
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${pres.prompt} ',
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.bold,
-                                color: isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary,
-                              ),
-                            ),
-                            Expanded(
-                              child: SelectableText.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: pres.subject,
-                                      style: TextStyle(
-                                        fontFamily: 'monospace',
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w500,
-                                        color: isDark ? BaoColors.darkTextPrimary : BaoColors.lightTextPrimary,
-                                      ),
-                                    ),
-                                    if (pres.cwd != null)
-                                      TextSpan(
-                                        text: '  ·  ${pres.cwd}',
-                                        style: TextStyle(
-                                          fontFamily: 'monospace',
-                                          fontSize: 10.5,
-                                          color: isDark ? BaoColors.darkTextFaint : BaoColors.lightTextFaint,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // 终端输出流
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
-                          child: SelectableText(
-                            effectiveOutput.isNotEmpty
-                                ? effectiveOutput
-                                : (running ? '等待命令输出…' : '(无输出)'),
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 11.5,
-                              height: 1.4,
-                              color: isError
-                                  ? BaoColors.red
-                                  : (isDark ? BaoColors.darkText : BaoColors.lightText),
-                            ),
-                          ),
-                        ),
-                      ),
-                      // 加载更多
-                      if (hasMore)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Center(
-                            child: loading
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(strokeWidth: 1.6),
-                                  )
-                                : TextButton.icon(
-                                    onPressed: fetchExtra,
-                                    icon: const Icon(Icons.expand_more_rounded, size: 14),
-                                    label: const Text('加载更多输出', style: TextStyle(fontSize: 11.5)),
-                                  ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        StepHeader(
+          verb: pres.label,
+          object: pres.isShell
+              ? '${pres.prompt} ${pres.subject}'
+              : pres.subject,
+          mono: pres.isShell,
+          detail: pres.meta,
+          running: running,
+          expanded: expanded,
+          onToggle: () => setState(() => expanded = !expanded),
+          icon: Icon(
+            pres.icon,
+            size: 18,
+            color: failed ? c.error : c.onSurfaceVariantSummary,
           ),
         ),
-      );
-    }
-
-    // 其它工具调用：标准 ToolRow + 展开 Output 结构
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          StepHeader(
-            verb: pres.label,
-            object: pres.subject,
-            detail: pres.meta ?? (running ? 'running' : null),
-            running: running,
-            expanded: _expanded,
-            onToggle: () => setState(() => _expanded = !_expanded),
-            icon: Icon(
-              pres.icon,
-              size: 14,
-              color: isError
-                  ? BaoColors.red
-                  : (isDark ? BaoColors.darkTextSecondary : BaoColors.lightTextSecondary),
-            ),
-          ),
-          if (_expanded) ...[
-            // 如果包含差异或结构化定位，优先使用桌面端 ToolResult 结构
+        if (expanded) ...[
+          if (!pres.isShell)
             ToolResult(
               cell: widget.cell,
-              output: effectiveOutput,
+              output: effective,
               showDiffOnly: true,
             ),
-            StepOutputCard(
-              title: '${pres.label} 输出',
-              output: effectiveOutput.isNotEmpty
-                  ? effectiveOutput
-                  : (running ? '执行中…' : '(无输出)'),
-            ),
-            if (hasMore)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Center(
-                  child: loading
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 1.6),
-                        )
-                      : TextButton.icon(
-                          onPressed: fetchExtra,
-                          icon: const Icon(Icons.expand_more_rounded, size: 14),
-                          label: const Text('加载更多输出', style: TextStyle(fontSize: 11.5)),
-                        ),
-                ),
+          if (pres.isShell && pres.cwd != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: MiuixText(
+                pres.cwd!,
+                fontSize: 11.5,
+                fontFamily: 'monospace',
+                color: c.onSurfaceVariantActions,
               ),
-          ],
+            ),
+          StepOutputCard(
+            title: pres.isShell ? '终端输出' : '${pres.label} 输出',
+            output: effective.isNotEmpty ? effective : fallback,
+            maxHeight: 220,
+          ),
+          if (error != null)
+            ErrorNotice(
+              error,
+              margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            ),
+          if (hasMore)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Center(
+                child: loading
+                    ? MiuixInfiniteProgressIndicator(
+                        color: c.primary,
+                        size: 16,
+                        strokeWidth: 2,
+                      )
+                    : ActionButton(
+                        '加载更多输出',
+                        compact: true,
+                        onPressed: fetchExtra,
+                      ),
+              ),
+            ),
         ],
-      ),
+      ],
     );
   }
 }

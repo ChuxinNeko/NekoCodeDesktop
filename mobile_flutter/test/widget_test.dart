@@ -7,6 +7,12 @@ import 'package:nekocode_mobile/features/mobile_controller.dart';
 
 import 'support.dart';
 
+/// 运行中的任务带有持续动画，pumpAndSettle 永远不会结束，改为固定时长推进。
+Future<void> settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 800));
+}
+
 void main() {
   for (final brightness in Brightness.values) {
     testWidgets('真实配对页面 ${brightness.name}、手动及账号切换', (tester) async {
@@ -58,7 +64,7 @@ void main() {
       },
     ];
     await tester.pumpWidget(NekoCodeApp(controller: c, initialize: false));
-    await tester.pumpAndSettle();
+    await settle(tester);
     expect(find.text('真实任务'), findsOneWidget);
     c.view = 'chat';
     c.taskId = 'task-1';
@@ -86,11 +92,11 @@ void main() {
       'thinkingLevels': ['off'],
     };
     c.emit();
-    await tester.pumpAndSettle();
+    await settle(tester);
     expect(find.text('确认方案'), findsOneWidget);
     expect(find.text('方案 A'), findsOneWidget);
     await tester.drag(find.byType(ListView).first, const Offset(0, 1000));
-    await tester.pumpAndSettle();
+    await settle(tester);
     expect(find.textContaining('请修复问题', findRichText: true), findsWidgets);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
