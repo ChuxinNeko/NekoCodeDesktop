@@ -6,6 +6,7 @@ import { createAssistantMessageEventStream, fauxAssistantMessage, getCurrentSyst
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createWorkflowSession } from "../../src/main/workflow-runtime";
 import { configureTeamSettings } from "../../src/main/team-settings";
+import { TEAM_THREAD_ENTRY, type TeamThreadTurn } from "../../src/shared/team-thread";
 import { DEFAULT_TEAM, isTeamSettings, mentionedMembers, TEAM_AVATAR_COLORS, TEAM_AVATAR_SHAPES, teamAvatarOf, type TeamSettings } from "../../src/shared/team";
 
 type Script = (stage: string, n: number, context: string) => ToolCall | string;
@@ -81,6 +82,15 @@ describe("AI team strategy", () => {
 			expect(JSON.stringify(replies.at(-1))).toContain("DIRECT_REPLY");
 			expect(replies.at(-1)?.model).toBe("claude-sonnet-4-5");
 			expect(created.workflow.state.snapshot().fusion?.status).toBe("complete");
+			// Each run's group chat is saved on the session and comes back in the snapshot, final answer and its sender included.
+			const saved = manager.getBranch().flatMap(entry => entry.type === "custom" && entry.customType === TEAM_THREAD_ENTRY ? [entry.data as TeamThreadTurn] : []);
+			expect(saved.map(turn => turn.final)).toEqual([{ member: "Chief", text: "TEAM_ANSWER" }, { member: "Coder", text: "DIRECT_REPLY" }]);
+			expect(saved[0]!.items.map(item => [item.kind, item.member])).toEqual([["assign", "Chief"], ["assign", "Chief"], ["message", "Coder"], ["message", "Reviewer"]]);
+			expect(saved[0]!.items[2]).toMatchObject({ text: "CODER_REPORT", status: "done", tools: [{ name: "write", detail: "a.txt", status: "done" }] });
+			const user = manager.getBranch().find(entry => entry.type === "message" && entry.message.role === "user");
+			expect(saved[0]!.userTimestamp).toBe(user?.type === "message" ? user.message.timestamp : -1);
+			expect(created.workflow.state.snapshot().teamThreads).toEqual(saved);
+			expect(created.workflow.state.snapshot().fusion?.history).toEqual([]);
 		}), 15000);
 
 	test("unknown teammates and an exhausted hand-off budget are reported to the admin", () => scenario(["Do two things."], (stage, n, context) => {

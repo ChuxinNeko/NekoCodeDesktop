@@ -23,7 +23,7 @@ import { ChevronDownIcon, ChevronRightIcon, CircleAlertIcon, FileIcon, Undo2Icon
 import { highlightWhenIdle } from "../lib/codeHighlight";
 import { TaskCard } from "./chat/AgentTask";
 import type { TeamThreadTurn } from "../../../shared/team-thread";
-import { TeamThread } from "./team/TeamThread";
+import { TeamFinalMessage, TeamThread } from "./team/TeamThread";
 import { FastContextCard } from "./chat/FastContextCard";
 import { EditedFilesCard } from "./chat/EditedFilesCard";
 import {
@@ -127,13 +127,26 @@ const MessageCell = memo(function MessageCell({
 	closesTurn,
 	afterWork,
 	onFork,
+	team,
 }: {
 	cell: AssistantCellData;
 	closesTurn: boolean;
 	/** Concludes a run of work: a rule sets the answer apart from the process above it. */
 	afterWork?: boolean;
 	onFork?: (cellId: string) => Promise<void> | void;
+	/** The AI team run this reply ends: it is sent by the bot that wrote it. */
+	team?: TeamThreadTurn;
 }) {
+	const actions = closesTurn && !cell.streaming && (cell.text || cell.usage) ? (
+		<MessageActions cell={cell} onFork={cell.text ? onFork : undefined} />
+	) : null;
+	if (team) return (
+		<TeamFinalMessage turn={team} footer={actions}>
+			{cell.text ? <Markdown text={cell.text} /> : null}
+			{cell.text && !cell.streaming ? <SourceList text={cell.text} /> : null}
+			{cell.error ? <p role="alert" className="mt-1 whitespace-pre-wrap break-words text-[length:var(--app-font-size-chat-meta,10px)] text-destructive">{cell.error}</p> : null}
+		</TeamFinalMessage>
+	);
 	return (
 		<div className={cn("flex w-full flex-col gap-2", afterWork && "border-t border-border/50 pt-4")}>
 			{cell.text ? <Markdown text={cell.text} /> : null}
@@ -145,9 +158,7 @@ const MessageCell = memo(function MessageCell({
 					<span className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{cell.error}</span>
 				</div>
 			) : null}
-			{closesTurn && !cell.streaming && (cell.text || cell.usage) ? (
-				<MessageActions cell={cell} onFork={cell.text ? onFork : undefined} />
-			) : null}
+			{actions}
 		</div>
 	);
 });
@@ -693,7 +704,7 @@ const TranscriptView = function Transcript({
 			const turn = teamTurns[i];
 			for (let j = cursor; j >= 0; j--) {
 				const cell = cells[j];
-				if (cell.type === "user" && cell.text.trim() === turn.prompt.trim()) { map.set(cell.id, turn); cursor = j - 1; break; }
+				if (cell.type === "user" && ((turn.userTimestamp !== undefined && cell.timestamp === turn.userTimestamp) || cell.text.trim() === turn.prompt.trim())) { map.set(cell.id, turn); cursor = j - 1; break; }
 			}
 		}
 		return map;
@@ -703,6 +714,16 @@ const TranscriptView = function Transcript({
 	// scroll event does not regroup every turn in a long session.
 	const grouped = useMemo(() => groupTranscriptRows(cells), [cells]);
 	const rows = useMemo(() => foldSettledTurns(grouped, streaming === true || settling), [grouped, streaming, settling]);
+	// The reply that closes a team run is the team's final message, drawn as a bot's bubble.
+	const teamFinalByCell = useMemo(() => {
+		const map = new Map<string, TeamThreadTurn>();
+		let turn: TeamThreadTurn | undefined;
+		for (const row of rows) {
+			if (row.kind === "user") turn = teamByCell.get(row.cell.id);
+			else if (row.kind === "message" && turn?.final && row.cell.text.trim() === turn.final.text.trim()) map.set(row.cell.id, turn);
+		}
+		return map;
+	}, [rows, teamByCell]);
 	const currentTurnRowIds = useMemo(() => {
 		const start = rows.findIndex((row) => row.kind === "user" && row.cell.id === lastUserId);
 		return new Set(start < 0 ? [] : rows.slice(start + 1).map((row) => row.id));
@@ -771,6 +792,7 @@ const TranscriptView = function Transcript({
 									closesTurn={closingReplies.has(row.id)}
 									afterWork={closingReplies.has(row.id) && rows[index - 1]?.kind === "work"}
 									onFork={onForkMessage ? forkMessage : undefined}
+									team={teamFinalByCell.get(row.cell.id)}
 								/>
 							) : row.kind === "thinking" ? (
 								<CellThinking cell={row.cell} />

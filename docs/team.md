@@ -29,9 +29,16 @@ has the sender's avatar and name (role, admin tag) on the left and a bubble on t
 right. The admin's notes and its hand-offs (`@Coder <task>`) come first, then each
 member's bubble with its tool calls (name + path/command, live status), its report,
 and typing dots while it works. Consecutive messages from one member share one
-avatar. The final answer stays the normal reply below; bubbles that would repeat
-it say so instead. The Fusion inspector above the composer is not shown for team
-runs. Threads are kept for the open chat's runs (not yet restored after reopening).
+avatar. The final answer is the bot's last message too: the admin's (or, for a
+direct `@Name`, that member's) bubble holds it, with the usual copy/fork actions
+under it; when several members were addressed directly their bubbles hold the
+replies and the joined copy is not repeated. The Fusion inspector above the
+composer is not shown for team runs.
+
+Each finished run is saved on the session as a small `nekocode.team.thread.v1`
+entry (the projected messages, not the token stream), so the group chat comes
+back when the chat is reopened, and forks keep the threads of their branch. A run
+that was stopped is saved with its unfinished messages marked failed.
 
 ## Members
 

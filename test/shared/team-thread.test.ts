@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { FusionEvent } from "../../src/main/fusion/reference/core/types";
 import { createInitialState, fusionReducer } from "../../src/shared/fusion-engine-state";
-import { teamThreadItems, teamThreadTurns } from "../../src/shared/team-thread";
+import { isTeamThreadTurn, mergeTeamThreads, settledTeamThreadTurn, teamThreadItems, teamThreadTurn, teamThreadTurns } from "../../src/shared/team-thread";
 
 const id = "s1";
 const coordinated: FusionEvent[] = [
@@ -40,8 +40,27 @@ describe("team thread", () => {
 		fusion = fusionReducer(fusion, { type: "event.received", event: { type: "session.started", sessionId: id, models: { main: "a", sidekick: "b" } } });
 		expect(teamThreadTurns(fusion)).toHaveLength(0);
 	});
-	test("direct replies that are the answer are marked instead of repeated", () => {
+	test("the final answer is sent by the admin, or by the one member answering directly; several direct replies keep their bubbles", () => {
+		expect(teamThreadTurn(coordinated, "fix it", "complete", "Coder fixed the bug.").final).toEqual({ member: "Chief", text: "Coder fixed the bug." });
 		const direct = [coordinated[0], { type: "plan.completed", sessionId: id, plan: { complexity: 0.5, mainTask: "Direct: @Coder", sidekickTasks: [] } }, ...coordinated.slice(5, 10)] as FusionEvent[];
-		expect(teamThreadItems(direct, "Fixed it: a.ts line 3.")).toMatchObject([{ member: "Coder", answered: true }]);
+		const one = teamThreadTurn(direct, "@Coder fix", "complete", "Fixed it: a.ts line 3.");
+		expect(one.final).toEqual({ member: "Coder", text: "Fixed it: a.ts line 3." });
+		expect(one.items).toMatchObject([{ member: "Coder", text: "", tools: [{ name: "read" }] }]);
+		const reviewer = direct.slice(2).map(event => JSON.parse(JSON.stringify(event).replaceAll("w1", "w2").replaceAll("@Coder", "@Reviewer").replaceAll("Fixed it", "Looks fine"))) as FusionEvent[];
+		const both = teamThreadTurn([...direct, ...reviewer], "@all", "complete", "**@Coder**\n\nFixed it: a.ts line 3.\n\n---\n\n**@Reviewer**\n\nLooks fine: a.ts line 3.");
+		expect(both.final?.member).toBeNull();
+		expect(both.items.map(item => item.kind === "message" ? item.text : "")).toEqual(["Fixed it: a.ts line 3.", "Looks fine: a.ts line 3."]);
+	});
+	test("a run saved while unfinished stops typing; saved turns merge with the running one", () => {
+		const settled = settledTeamThreadTurn(teamThreadTurn(coordinated.slice(0, 7), "fix it", "running"));
+		expect(settled.status).toBe("failed");
+		expect(settled.items.at(-1)).toMatchObject({ status: "failed", tools: [{ status: "failed" }] });
+		let state = fusionReducer(createInitialState(), { type: "run.submitted", prompt: "next" });
+		for (const event of coordinated.slice(0, 4)) state = fusionReducer(state, { type: "event.received", event });
+		expect(mergeTeamThreads([settled], state, 42).map(turn => [turn.prompt, turn.status, turn.userTimestamp])).toEqual([["fix it", "failed", undefined], ["next", "running", 42]]);
+		state = fusionReducer(state, { type: "event.received", event: coordinated.at(-1)! });
+		expect(mergeTeamThreads([settled], state)).toHaveLength(1);
+		expect(isTeamThreadTurn(settled)).toBe(true);
+		expect(isTeamThreadTurn({ prompt: 1 })).toBe(false);
 	});
 });

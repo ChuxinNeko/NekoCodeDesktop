@@ -1,5 +1,6 @@
 import type { ExecutionMode } from "./agent";
 import type { FusionState } from "./fusion-engine-state";
+import type { TeamThreadTurn } from "./team-thread";
 
 export const WORK_MODES = ["agent", "ask", "plan", "debug", "multitask"] as const;
 export type WorkMode = (typeof WORK_MODES)[number];
@@ -221,6 +222,8 @@ export const MAX_FINISHED_EXPLORERS = 5;
 export type SavedWorkflowTask = Omit<WorkflowTask, "steps">;
 export interface WorkflowSnapshot {
 	fusion?: FusionState;
+	/** AI team runs on this branch as group chats, the running one last. */
+	teamThreads?: TeamThreadTurn[];
 	maxWorkers?: number;
 	request: WorkflowRequest | null;
 	todos: WorkflowTodo[];

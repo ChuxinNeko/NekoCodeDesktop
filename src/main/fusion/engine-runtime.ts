@@ -10,6 +10,7 @@ import { FusionDelegateEngine } from "./delegate-engine";
 import { FusionTeamEngine } from "./team-engine";
 import { currentTeamSettings } from "../team-settings";
 import { piAi } from "../pi";
+import { liveTeamThreadTurn, settledTeamThreadTurn, TEAM_THREAD_ENTRY } from "../../shared/team-thread";
 
 export const FUSION_ENGINE_TRACE_ENTRY = "nekocode.fusion.engine-trace.v1";
 
@@ -119,7 +120,12 @@ export class FusionEngineRuntime {
 			try { await this.driver.abort(); }
 			finally {
 				this.controller = undefined;
-				try { this.host.manager.appendCustomEntry(FUSION_ENGINE_TRACE_ENTRY, this.state); }
+				try {
+					// The team's group chat is saved on its own, small, so it can be shown again when the chat is reopened.
+					const team = liveTeamThreadTurn(this.state, this.startedAt);
+					if (team) this.host.manager.appendCustomEntry(TEAM_THREAD_ENTRY, settledTeamThreadTurn(team));
+					this.host.manager.appendCustomEntry(FUSION_ENGINE_TRACE_ENTRY, this.state);
+				}
 				finally {
 					this.host.parent.setAutoCompactionEnabled(compaction); this.host.parent.setCacheWarmingMode(warming);
 					this.emit({ type: "agent_end", messages: this.host.parent.messages, willRetry: false }); this.host.onChange();

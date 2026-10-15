@@ -603,7 +603,6 @@ export const en = {
 	"team.avatar": "Avatar",
 	"team.avatarShape": "Avatar shape",
 	"team.avatarColor": "Avatar color",
-	"team.thread.answeredBelow": "Replied — see the answer below.",
 	"team.access": "Access",
 	"team.usageHint": "Changes apply from the next message. Changing a member's role, model or instructions starts it with a fresh memory.",
 	"team.error.name": "\"{name}\" is not a valid name: use 1–32 letters, digits, _ or -, without spaces.",

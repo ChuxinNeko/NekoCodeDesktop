@@ -82,6 +82,7 @@ import { fusionTaskError, taskHandoffPrompt, FusionExecutionEvidence, FusionInli
 	FUSION_COMPACT_HANDOFF_SCHEMA, FUSION_RESUME_HANDOFF_SCHEMA } from "./fusion-handoff";
 import { FusionSidekickSession } from "./fusion-sidekick-session";
 import { FusionEngineRuntime } from "./fusion/engine-runtime";
+import { isTeamThreadTurn, mergeTeamThreads, TEAM_THREAD_ENTRY, type TeamThreadTurn } from "../shared/team-thread";
 import type { PiFusionStage } from "./fusion/pi-runner";
 import { createFusionParallelTools } from "./fusion-parallel-tools";
 import { createFusionReportTool, createFusionUpgradeTool, createFusionModelRouteTool, FUSION_MODEL_ROUTE_TOOL, FUSION_REPORT_TOOL, FUSION_UPGRADE_TOOL, fusionTaskResult,
@@ -975,7 +976,20 @@ export class WorkflowRuntime {
 			onChange: () => this.options.onChange(),
 		});
 		const snapshot = this.state.snapshot.bind(this.state);
-		this.state.snapshot = () => ({ ...snapshot(), ...(this.engineFusion && this.engine ? { fusion: this.engine.state } : {}) });
+		this.state.snapshot = () => {
+			const live = this.engineFusion ? this.engine?.state : undefined;
+			const teamThreads = mergeTeamThreads(this.savedTeamThreads(), live, this.engine?.startedAt);
+			// Earlier turns are not needed by the inspector; they would be resent with every streamed token.
+			return { ...snapshot(), ...(live ? { fusion: { ...live, history: [] } } : {}), ...(teamThreads.length ? { teamThreads } : {}) };
+		};
+	}
+	private teamThreadCache?: { leaf: string | null; turns: TeamThreadTurn[] };
+	/** Team group chats saved on the current branch; re-read only when the branch moves. */
+	private savedTeamThreads(): TeamThreadTurn[] {
+		const leaf = this.options.sessionManager.getLeafId();
+		if (this.teamThreadCache?.leaf !== leaf) this.teamThreadCache = { leaf, turns: this.options.sessionManager.getBranch().flatMap(entry =>
+			entry.type === "custom" && entry.customType === TEAM_THREAD_ENTRY && isTeamThreadTurn(entry.data) ? [entry.data] : []) };
+		return this.teamThreadCache.turns;
 	}
 	private engineActorContext(): PromptContext {
 		const context = this.context();
