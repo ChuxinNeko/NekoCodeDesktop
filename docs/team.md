@@ -22,6 +22,17 @@ Members report back to whoever assigned the task. With **Members can delegate**
 enabled, a member may pass part of its task to another member (one level deep;
 never back to the admin).
 
+## In the chat
+
+A team run is drawn under your message as a group chat, QQ-style: each message
+has the sender's avatar and name (role, admin tag) on the left and a bubble on the
+right. The admin's notes and its hand-offs (`@Coder <task>`) come first, then each
+member's bubble with its tool calls (name + path/command, live status), its report,
+and typing dots while it works. Consecutive messages from one member share one
+avatar. The final answer stays the normal reply below; bubbles that would repeat
+it say so instead. The Fusion inspector above the composer is not shown for team
+runs. Threads are kept for the open chat's runs (not yet restored after reopening).
+
 ## Members
 
 | Field | Meaning |
@@ -52,5 +63,6 @@ closing the chat releases all of them.
   persistent member actors, events for the Fusion timeline.
 - `src/main/fusion/engine-runtime.ts` — keeps one team engine per chat for
   `strategy: "team"`.
-- Renderer: `components/settings/TeamSettings.tsx`, `components/chat/TeamPicker.tsx`, `components/team/TeamAvatar.tsx`.
-- Tests: `test/main/fusion-team-integration.test.ts`.
+- `src/shared/team-thread.ts` — projects the run's events into chat messages.
+- Renderer: `components/settings/TeamSettings.tsx`, `components/chat/TeamPicker.tsx`, `components/team/TeamAvatar.tsx`, `components/team/TeamThread.tsx` (shown by `Transcript.tsx`).
+- Tests: `test/main/fusion-team-integration.test.ts`, `test/shared/team-thread.test.ts`.

@@ -597,6 +597,7 @@ export const zhCN: Record<TranslationKey, string> = {
 	"team.avatar": "头像",
 	"team.avatarShape": "头像形状",
 	"team.avatarColor": "头像颜色",
+	"team.thread.answeredBelow": "已回复，见下方答复。",
 	"team.access": "权限",
 	"team.usageHint": "修改从下一条消息起生效。修改成员的角色、模型或指令后，它会以全新记忆开始。",
 	"team.error.name": "“{name}”不是有效名字：请使用 1–32 个字母、数字、_ 或 -，不含空格。",

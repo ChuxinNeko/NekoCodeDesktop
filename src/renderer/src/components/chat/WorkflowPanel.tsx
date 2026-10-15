@@ -386,7 +386,9 @@ export function WorkflowPanel({
 	onCancelWorker?: (id: string) => Promise<unknown>;
 }) {
 	const [error, setError] = useState("");
-	if (!workflow.request && !workflow.todos.length && !workflow.tasks.length && !workflow.fusion) return null;
+	// A team run is drawn in the transcript as a group chat instead of this inspector.
+	const fusion = workflow.fusion?.models?.sidekick === "team" ? undefined : workflow.fusion;
+	if (!workflow.request && !workflow.todos.length && !workflow.tasks.length && !fusion) return null;
 	return (
 		<div className={cn("shrink-0 pb-1", CHAT_COLUMN_GUTTER_CLASS_NAME)}>
 			{/* A column rather than one scrolling box: each section below owns its
@@ -398,7 +400,7 @@ export function WorkflowPanel({
 					"flex max-h-[40vh] flex-col gap-2 text-[length:var(--app-font-size-ui,12px)]",
 				)}
 			>
-				{workflow.fusion ? <FusionEngineInspector state={workflow.fusion} /> : null}
+				{fusion ? <FusionEngineInspector state={fusion} /> : null}
 				{workflow.request ? (
 					<QuestionCard key={workflow.request.id} request={workflow.request} onAnswer={onAnswer} />
 				) : null}

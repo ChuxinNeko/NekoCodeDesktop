@@ -3,7 +3,8 @@ import type { MentionCandidate } from "../../../shared/mentions";
 import type { FusionConfig } from "../../../shared/fusion";
 import type { WorkMode, WorkflowAnswer } from "../../../shared/workflow";
 import type { SlashCommandSummary } from "../../../shared/commands";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { teamThreadTurns } from "../../../shared/team-thread";
 import type {
 	AgentDefaults,
 	AgentSnapshot,
@@ -166,6 +167,8 @@ export function ChatView(props: ChatViewProps) {
 	const { t } = useTranslation();
 	const { cwd, snapshot, busy, error, terminalOpen } = props;
 	const settling = useRunSettlement(snapshot?.streaming === true, snapshot?.session.id);
+	const fusionState = snapshot?.workflow.fusion;
+	const teamTurns = useMemo(() => teamThreadTurns(fusionState), [fusionState]);
 
 	// --- transcript auto-scroll ------------------------------------------------
 	// On send, the new turn's prompt is scrolled to ~30% from the top and the
@@ -521,6 +524,7 @@ export function ChatView(props: ChatViewProps) {
 							onLoadToolOutput={props.onLoadToolOutput}
 							onForkMessage={props.onForkMessage}
 							onStopCommand={props.onStopCommand}
+							teamTurns={teamTurns}
 						/>
 							</>
 						)}

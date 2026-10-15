@@ -3752,3 +3752,10 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 @media (prefers-reduced-motion: reduce) {
   .team-avatar-eyes { animation: none; }
 }
+
+/* Team group chat: typing dots while a member is working */
+.team-typing span { width: 5px; height: 5px; border-radius: 9999px; background: currentColor; opacity: .35; animation: team-typing 1.2s infinite ease-in-out; }
+.team-typing span:nth-child(2) { animation-delay: .15s; }
+.team-typing span:nth-child(3) { animation-delay: .3s; }
+@keyframes team-typing { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: .7; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .team-typing span { animation: none; } }

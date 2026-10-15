@@ -22,6 +22,8 @@ import { cn } from "../lib/utils";
 import { ChevronDownIcon, ChevronRightIcon, CircleAlertIcon, FileIcon, Undo2Icon } from "../lib/icons";
 import { highlightWhenIdle } from "../lib/codeHighlight";
 import { TaskCard } from "./chat/AgentTask";
+import type { TeamThreadTurn } from "../../../shared/team-thread";
+import { TeamThread } from "./team/TeamThread";
 import { FastContextCard } from "./chat/FastContextCard";
 import { EditedFilesCard } from "./chat/EditedFilesCard";
 import {
@@ -606,6 +608,7 @@ const TranscriptView = function Transcript({
 	onLoadToolOutput,
 	onForkMessage,
 	onStopCommand,
+	teamTurns,
 }: {
 	cells: AgentCell[];
 	models?: readonly ModelOption[];
@@ -633,6 +636,8 @@ const TranscriptView = function Transcript({
 	/** Branch the conversation at a reply into a session of its own. */
 	onForkMessage?: (cellId: string) => Promise<void> | void;
 	onStopCommand?: StopCommand;
+	/** AI team runs, each drawn as a group chat under the prompt that started it. */
+	teamTurns?: readonly TeamThreadTurn[];
 }) {
 	// The handlers come from parents that recreate them every render. Reached
 	// through a ref, they stop being a reason for every row to re-render: the
@@ -679,6 +684,20 @@ const TranscriptView = function Transcript({
 			break;
 		}
 	}
+	// Each team run belongs to the latest prompt with its text, matched newest first.
+	const teamByCell = useMemo(() => {
+		const map = new Map<string, TeamThreadTurn>();
+		if (!teamTurns?.length) return map;
+		let cursor = cells.length - 1;
+		for (let i = teamTurns.length - 1; i >= 0; i--) {
+			const turn = teamTurns[i];
+			for (let j = cursor; j >= 0; j--) {
+				const cell = cells[j];
+				if (cell.type === "user" && cell.text.trim() === turn.prompt.trim()) { map.set(cell.id, turn); cursor = j - 1; break; }
+			}
+		}
+		return map;
+	}, [teamTurns, cells]);
 	// Scrolling the parent can re-render the chat surface without changing the
 	// transcript. Keep this work tied to the structurally shared cell array so a
 	// scroll event does not regroup every turn in a long session.
@@ -736,6 +755,7 @@ const TranscriptView = function Transcript({
 					return (
 						<div key={row.id} className={TRANSCRIPT_ROW_CLASS_NAME}>
 							{row.kind === "user" ? (
+								<>
 								<UserCell
 									cell={row.cell}
 									anchor={row.cell.id === lastUserId}
@@ -743,6 +763,8 @@ const TranscriptView = function Transcript({
 									onRestore={onRestoreCheckpoint ? restoreCheckpoint : undefined}
 									restoreDisabled={streaming === true}
 								/>
+								{teamByCell.has(row.cell.id) ? <TeamThread turn={teamByCell.get(row.cell.id)!} /> : null}
+								</>
 							) : row.kind === "message" ? (
 								<MessageCell
 									cell={row.cell}
