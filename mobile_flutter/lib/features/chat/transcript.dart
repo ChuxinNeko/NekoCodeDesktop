@@ -10,6 +10,10 @@ import '../../ui/widgets.dart';
 import '../mobile_controller.dart';
 import 'tool_presentation.dart';
 import 'tool_result.dart';
+import 'transcript_rows.dart';
+import 'workflow_style.dart';
+import 'working_orb.dart';
+import 'workflow_tool_glyph.dart';
 
 /// Markdown 样式：跟随 Miuix 色板，代码块使用中性灰底。
 MarkdownStyleSheet nekoMarkdown(BuildContext context, {double size = 15.5}) {
@@ -116,10 +120,7 @@ class MessageCell extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (thinking.isNotEmpty || (streaming && text.isEmpty)) ...[
-            _ThinkingCard(
-              thinking: thinking,
-              streaming: streaming && text.isEmpty,
-            ),
+            ThinkingCard(cell: cell),
             const SizedBox(height: 10),
           ],
           if (text.isNotEmpty)
@@ -207,61 +208,315 @@ class MessageCell extends StatelessWidget {
   }
 }
 
-/// 思考过程（可折叠）。
-class _ThinkingCard extends StatefulWidget {
-  const _ThinkingCard({required this.thinking, required this.streaming});
-  final String thinking;
-  final bool streaming;
+/// Desktop ThinkingBlock: a bare header and five-line reasoning window.
+class ThinkingCard extends StatefulWidget {
+  const ThinkingCard({super.key, required this.cell});
+  final Json cell;
   @override
-  State<_ThinkingCard> createState() => _ThinkingCardState();
+  State<ThinkingCard> createState() => _ThinkingCardState();
 }
 
-class _ThinkingCardState extends State<_ThinkingCard> {
+class _ThinkingCardState extends State<ThinkingCard> {
   bool expanded = false;
+  bool followTail = true;
+  final scroll = ScrollController();
+  bool get active =>
+      widget.cell['streaming'] == true &&
+      widget.cell['thinkingEndedAt'] == null;
+  @override
+  void didUpdateWidget(covariant ThinkingCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cell['streaming'] == true && !active) expanded = false;
+  }
+
+  @override
+  void dispose() {
+    scroll.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final c = context.mx;
-    final canOpen = widget.thinking.isNotEmpty;
-    return DecoratedBox(
-      decoration: ShapeDecoration(
-        color: c.surfaceContainer,
-        shape: NekoShape.squircle(NekoShape.card - 4),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          StepHeader(
-            verb: widget.streaming ? '正在思考…' : '已思考',
-            running: widget.streaming,
+    final text = string(widget.cell['thinking']);
+    final preview =
+        text
+            .split('\n')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .lastOrNull ??
+        '';
+    if (active && expanded && followTail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && scroll.hasClients) {
+          scroll.jumpTo(scroll.position.maxScrollExtent);
+        }
+      });
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => expanded = !expanded),
+          child: Semantics(
+            button: true,
             expanded: expanded,
-            onToggle: canOpen
-                ? () => setState(() => expanded = !expanded)
-                : null,
-            icon: MiuixIcon(
-              vector: MiuixIcons.os4.memoryFunction,
-              size: 18,
-              tint: c.onSurfaceVariantSummary,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                WorkflowChevron(open: expanded),
+                const SizedBox(width: 4),
+                WorkflowElapsed(
+                  active: active,
+                  working: false,
+                  startedAt:
+                      (widget.cell['thinkingStartedAt'] as num? ??
+                              widget.cell['timestamp'] as num? ??
+                              0)
+                          .toInt(),
+                  endedAt:
+                      (widget.cell['thinkingEndedAt'] as num? ??
+                              widget.cell['timestamp'] as num? ??
+                              0)
+                          .toInt(),
+                  hasEnd: widget.cell['thinkingEndedAt'] != null,
+                ),
+              ],
             ),
           ),
-          if (expanded && canOpen)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-              child: SelectableText(
-                widget.thinking,
-                style: TextStyle(
-                  fontSize: 13.5,
-                  height: 1.55,
-                  color: c.onSurfaceVariantSummary,
+        ),
+        if (expanded && text.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          WorkflowStyle.rail(
+            context,
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 82.5),
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (n) {
+                  followTail = n.metrics.extentAfter < 8;
+                  return false;
+                },
+                child: SingleChildScrollView(
+                  controller: scroll,
+                  physics: const ClampingScrollPhysics(),
+                  child: SelectableText(
+                    text,
+                    style: WorkflowStyle.text(context, 11).copyWith(
+                      color: WorkflowStyle.muted(
+                        context,
+                      ).withValues(alpha: .455),
+                    ),
+                  ),
                 ),
               ),
             ),
+          ),
+        ] else if (active && preview.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          WorkflowStyle.rail(
+            context,
+            Text(
+              preview,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: WorkflowStyle.text(context, 11).copyWith(
+                color: WorkflowStyle.muted(context).withValues(alpha: .455),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// A whole run, using desktop WorkingBlock geometry. The result widgets below
+/// ToolCell's header stay untouched and keep their original mobile styling.
+class WorkingBlock extends StatefulWidget {
+  const WorkingBlock({
+    super.key,
+    required this.row,
+    required this.controller,
+    required this.active,
+    required this.waiting,
+  });
+  final TranscriptRow row;
+  final MobileController controller;
+  final bool active, waiting;
+  @override
+  State<WorkingBlock> createState() => _WorkingBlockState();
+}
+
+class _WorkingBlockState extends State<WorkingBlock> {
+  late bool open = widget.active;
+  @override
+  void didUpdateWidget(covariant WorkingBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active && !widget.active) open = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tools = widget.row.items.where((i) => i.kind == 'tool').length;
+    final last = widget.row.items.lastOrNull;
+    final cell = last?.cell ?? <String, dynamic>{};
+    final summary = widget.waiting
+        ? 'Planning Next Step'
+        : last?.kind == 'tool'
+        ? presentTool(cell).subject
+        : string(
+                last?.kind == 'thinking' ? cell['thinking'] : cell['text'],
+              ).split('\n').where((s) => s.trim().isNotEmpty).lastOrNull ??
+              '';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => open = !open),
+            child: Semantics(
+              button: true,
+              expanded: open,
+              child: Row(
+                children: [
+                  WorkflowChevron(open: open, size: 16),
+                  const SizedBox(width: 4),
+                  if (widget.active) ...[
+                    const WorkingOrb(),
+                    const SizedBox(width: 4),
+                  ],
+                  Flexible(
+                    child: WorkflowElapsed(
+                      active: widget.active,
+                      working: true,
+                      startedAt: widget.row.startedAt,
+                      endedAt: widget.row.endedAt,
+                    ),
+                  ),
+                  if (!widget.active) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      '· $tools tool ${tools == 1 ? 'call' : 'calls'}',
+                      style: WorkflowStyle.text(context, 11).copyWith(
+                        color: WorkflowStyle.muted(
+                          context,
+                        ).withValues(alpha: .455),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          if (open) ...[
+            const SizedBox(height: 6),
+            WorkflowStyle.rail(
+              context,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < widget.row.items.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 8),
+                    TranscriptItem(
+                      key: ValueKey(widget.row.items[i].id),
+                      row: widget.row.items[i],
+                      controller: widget.controller,
+                      insideWork: true,
+                    ),
+                  ],
+                  if (widget.waiting) ...[
+                    if (widget.row.items.isNotEmpty) const SizedBox(height: 8),
+                    const PlanningLine(),
+                  ],
+                ],
+              ),
+            ),
+          ] else if (widget.active && summary.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            WorkflowStyle.rail(
+              context,
+              WorkflowShimmer(
+                active: widget.waiting,
+                child: Text(
+                  summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: WorkflowStyle.text(context, 11).copyWith(
+                    color: WorkflowStyle.muted(context).withValues(alpha: .455),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-/// 连续的工具调用合并为一张卡片，行间用发丝线分隔。
+class PlanningLine extends StatelessWidget {
+  const PlanningLine({super.key});
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: WorkflowShimmer(
+      child: Text('Planning Next Step', style: WorkflowStyle.text(context)),
+    ),
+  );
+}
+
+class TranscriptItem extends StatelessWidget {
+  const TranscriptItem({
+    super.key,
+    required this.row,
+    required this.controller,
+    this.insideWork = false,
+  });
+  final TranscriptRow row;
+  final MobileController controller;
+  final bool insideWork;
+  @override
+  Widget build(BuildContext context) {
+    final cell = row.cell!;
+    if (row.kind == 'tool') return ToolCell(cell: cell, controller: controller);
+    if (row.kind == 'thinking') {
+      final child = ThinkingCard(cell: cell);
+      return insideWork
+          ? child
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+              child: child,
+            );
+    }
+    if (row.kind == 'notice') {
+      return Padding(
+        padding: insideWork
+            ? EdgeInsets.zero
+            : const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Text(
+          string(cell['text']),
+          style: WorkflowStyle.text(
+            context,
+            10,
+          ).copyWith(color: cell['level'] == 'error' ? context.mx.error : null),
+        ),
+      );
+    }
+    if (insideWork) {
+      return MarkdownBody(
+        data: string(cell['text']),
+        selectable: true,
+        styleSheet: nekoMarkdown(context, size: 13),
+        onTapLink: (_, href, _) => _openLink(href),
+      );
+    }
+    return MessageCell(cell: {...cell, 'thinking': ''}, controller: controller);
+  }
+}
+
+/// 连续工具调用保持为轻量文字列表，不再套工作流卡片。
 class ToolGroup extends StatelessWidget {
   const ToolGroup({super.key, required this.cells, required this.controller});
   final List<Json> cells;
@@ -269,34 +524,18 @@ class ToolGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.mx;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-      child: DecoratedBox(
-        decoration: ShapeDecoration(
-          color: c.surfaceContainer,
-          shape: NekoShape.squircle(NekoShape.card - 4),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (var i = 0; i < cells.length; i++) ...[
-              if (i > 0)
-                Padding(
-                  padding: const EdgeInsets.only(left: 44),
-                  child: ColoredBox(
-                    color: c.dividerLine.withValues(alpha: .6),
-                    child: const SizedBox(height: .5),
-                  ),
-                ),
-              ToolCell(
-                key: ValueKey(cells[i]['id']),
-                cell: cells[i],
-                controller: controller,
-              ),
-            ],
-          ],
-        ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final cell in cells)
+            ToolCell(
+              key: ValueKey(cell['id']),
+              cell: cell,
+              controller: controller,
+            ),
+        ],
       ),
     );
   }
@@ -317,7 +556,6 @@ class _ToolCellState extends State<ToolCell> {
   String extra = '';
   bool loading = false;
   String? error;
-
   @override
   void didUpdateWidget(covariant ToolCell oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -364,21 +602,13 @@ class _ToolCellState extends State<ToolCell> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        StepHeader(
-          verb: pres.label,
-          object: pres.isShell
-              ? '${pres.prompt} ${pres.subject}'
-              : pres.subject,
-          mono: pres.isShell,
-          detail: pres.meta,
+        _ToolCallHeader(
+          cell: widget.cell,
+          presentation: pres,
           running: running,
+          failed: failed,
           expanded: expanded,
-          onToggle: () => setState(() => expanded = !expanded),
-          icon: Icon(
-            pres.icon,
-            size: 18,
-            color: failed ? c.error : c.onSurfaceVariantSummary,
-          ),
+          onTap: () => setState(() => expanded = !expanded),
         ),
         if (expanded) ...[
           if (!pres.isShell)
@@ -427,5 +657,107 @@ class _ToolCellState extends State<ToolCell> {
         ],
       ],
     );
+  }
+}
+
+class _ToolCallHeader extends StatelessWidget {
+  const _ToolCallHeader({
+    required this.cell,
+    required this.presentation,
+    required this.running,
+    required this.failed,
+    required this.expanded,
+    required this.onTap,
+  });
+  final Json cell;
+  final ToolPresentation presentation;
+  final bool running, failed, expanded;
+  final VoidCallback onTap;
+
+  String get action => presentation.label;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = WorkflowStyle.foreground(context).withValues(alpha: .8);
+    final shell = presentation.isShell;
+    final content = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Semantics(
+        button: true,
+        expanded: expanded,
+        child: Padding(
+          padding: shell
+              ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+              : const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: Center(
+                  child: WorkflowToolGlyph(
+                    presentation: presentation,
+                    running: running,
+                    failed: failed,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                action,
+                style: WorkflowStyle.text(
+                  context,
+                ).copyWith(fontWeight: FontWeight.w500, color: foreground),
+              ),
+              if (presentation.subject.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    presentation.subject,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: WorkflowStyle.text(
+                      context,
+                      11,
+                    ).copyWith(fontFamily: 'monospace'),
+                  ),
+                ),
+              ] else
+                const Spacer(),
+              if (presentation.meta?.isNotEmpty == true) ...[
+                const SizedBox(width: 10),
+                Text(
+                  presentation.meta!,
+                  style: WorkflowStyle.text(context, 11),
+                ),
+              ],
+              if (shell && cell['startedAt'] is num) ...[
+                const SizedBox(width: 10),
+                WorkflowToolDuration(
+                  running: running,
+                  startedAt: (cell['startedAt'] as num).toInt(),
+                  endedAt: (cell['timestamp'] as num? ?? 0).toInt(),
+                ),
+              ],
+              const SizedBox(width: 6),
+              Opacity(
+                opacity: expanded ? 1 : 0,
+                child: WorkflowChevron(open: expanded),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return shell
+        ? DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: WorkflowStyle.rule(context)),
+            ),
+            child: content,
+          )
+        : content;
   }
 }

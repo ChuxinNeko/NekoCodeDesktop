@@ -16,3 +16,5 @@ pi/packages/*/dist/
 pi/packages/*/*/dist/
 pi/packages/ai/src/providers/data/
 pi/packages/ai/src/providers/.model-generation-*/
+*.pptx
+*.ndjson

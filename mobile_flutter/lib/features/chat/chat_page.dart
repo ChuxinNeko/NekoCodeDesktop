@@ -11,6 +11,7 @@ import '../mobile_controller.dart';
 import 'configuration.dart';
 import 'run_details.dart';
 import 'transcript.dart';
+import 'transcript_rows.dart';
 import 'workflow_panel.dart';
 
 class ChatPage extends StatefulWidget {
@@ -156,23 +157,6 @@ class _ChatPageState extends State<ChatPage> {
     ].join(' · ');
   }
 
-  /// 把连续的工具调用合并成一组。
-  List<Object> displayItems(List<Json> cells) {
-    final out = <Object>[];
-    for (final cell in cells) {
-      if (cell['type'] == 'tool') {
-        if (out.isNotEmpty && out.last is List<Json>) {
-          (out.last as List<Json>).add(cell);
-        } else {
-          out.add(<Json>[cell]);
-        }
-      } else {
-        out.add(cell);
-      }
-    }
-    return out;
-  }
-
   @override
   Widget build(BuildContext context) {
     final extension = object(c.snapshot?['extensionUi']);
@@ -200,7 +184,7 @@ class _ChatPageState extends State<ChatPage> {
     final cells = records(c.snapshot?['cells']);
     final tail = cells.isEmpty
         ? ''
-        : '${cells.last['id']}:${cells.last['text']}:${cells.last['output']}';
+        : '${cells.last['id']}:${cells.last['text']}:${cells.last['thinking']}:${cells.last['output']}';
     if (tail != _tail) {
       final follow = !scroll.hasClients || scroll.position.extentAfter < 140;
       _tail = tail;
@@ -269,7 +253,8 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     }
-    if (cells.isEmpty) {
+    final streaming = c.snapshot?['streaming'] == true;
+    if (cells.isEmpty && !streaming) {
       return Padding(
         padding: EdgeInsets.only(top: top),
         child: EmptyState(
@@ -279,12 +264,15 @@ class _ChatPageState extends State<ChatPage> {
         ),
       );
     }
-    final items = displayItems(cells);
+    final items = transcriptRows(cells, streaming: streaming);
+    final waiting = waitingOnModel(cells, streaming);
+    final lastUser = items.lastIndexWhere((row) => row.kind == 'user');
+    final planning = waiting && (items.isEmpty || items.last.kind != 'work');
     final more = c.desktop.more && !c.isAcp;
     return ListView.builder(
       controller: scroll,
       padding: EdgeInsets.only(top: top + 8, bottom: 12),
-      itemCount: items.length + (more ? 1 : 0),
+      itemCount: items.length + (more ? 1 : 0) + (planning ? 1 : 0),
       itemBuilder: (_, index) {
         if (more) {
           if (index == 0) {
@@ -317,20 +305,23 @@ class _ChatPageState extends State<ChatPage> {
           }
           index--;
         }
-        final item = items[index];
-        if (item is List<Json>) {
-          return ToolGroup(
-            key: ValueKey('tools:${item.first['id']}'),
-            cells: item,
-            controller: c,
+        if (index == items.length) {
+          return const Padding(
+            padding: EdgeInsets.fromLTRB(16, 6, 16, 6),
+            child: PlanningLine(),
           );
         }
-        final cell = item as Json;
-        return MessageCell(
-          key: ValueKey(cell['id']),
-          cell: cell,
-          controller: c,
-        );
+        final item = items[index];
+        if (item.kind == 'work') {
+          return WorkingBlock(
+            key: ValueKey(item.id),
+            row: item,
+            controller: c,
+            active: streaming && index > lastUser,
+            waiting: waiting && index == items.length - 1,
+          );
+        }
+        return TranscriptItem(key: ValueKey(item.id), row: item, controller: c);
       },
     );
   }
