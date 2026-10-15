@@ -46,8 +46,8 @@ export class FusionTeamEngine {
 	dispose(): void { for (const { handle } of this.actors.values()) this.options.release(handle); this.actors.clear(); }
 	modelOf(member: TeamMember): string { return member.modelKey || this.options.defaultModelKey; }
 	private actorFor(member: TeamMember, team: TeamSettings): PiFusionActorHandle {
-		// A changed role, model or roster gets a fresh actor; its old context no longer fits.
-		const signature = JSON.stringify([member, this.modelOf(member), team.adminId, team.members.map(item => [item.name, item.role, item.access])]);
+		// A changed role, model or roster gets a fresh actor; its old context no longer fits (the avatar does not matter).
+		const signature = JSON.stringify([{ ...member, avatar: undefined }, this.modelOf(member), team.adminId, team.members.map(item => [item.name, item.role, item.access])]);
 		const known = this.actors.get(member.id);
 		if (known?.signature === signature) return known.handle;
 		if (known) this.options.release(known.handle);

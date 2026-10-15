@@ -6,7 +6,7 @@ import { createAssistantMessageEventStream, fauxAssistantMessage, getCurrentSyst
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createWorkflowSession } from "../../src/main/workflow-runtime";
 import { configureTeamSettings } from "../../src/main/team-settings";
-import { DEFAULT_TEAM, mentionedMembers, type TeamSettings } from "../../src/shared/team";
+import { DEFAULT_TEAM, isTeamSettings, mentionedMembers, TEAM_AVATAR_COLORS, TEAM_AVATAR_SHAPES, teamAvatarOf, type TeamSettings } from "../../src/shared/team";
 
 type Script = (stage: string, n: number, context: string) => ToolCall | string;
 const chat = "anthropic/claude-opus-4-5", cheap = "anthropic/claude-sonnet-4-5";
@@ -101,5 +101,18 @@ describe("mentionedMembers", () => {
 		expect(mentionedMembers("hey @coder and @REVIEWER", DEFAULT_TEAM.members).map(member => member.id)).toEqual(["coder", "reviewer"]);
 		expect(mentionedMembers("@all", DEFAULT_TEAM.members)).toHaveLength(3);
 		expect(mentionedMembers("mail me@coder.dev", DEFAULT_TEAM.members)).toHaveLength(0);
+	});
+});
+
+describe("team avatars", () => {
+	test("default members have their own avatars; others get a stable generated one; unknown ids are rejected", () => {
+		expect(DEFAULT_TEAM.members.map(teamAvatarOf)).toEqual([{ shape: "orb", color: "teal" }, { shape: "pyramid", color: "indigo" }, { shape: "gem", color: "violet" }]);
+		const generated = teamAvatarOf({ id: "m-abc" });
+		expect(TEAM_AVATAR_SHAPES).toContain(generated.shape);
+		expect(TEAM_AVATAR_COLORS).toContain(generated.color);
+		expect(teamAvatarOf({ id: "m-abc" })).toEqual(generated);
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...DEFAULT_TEAM.members[0], avatar: { shape: "nope", color: "teal" } }] })).toBe(false);
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...DEFAULT_TEAM.members[0], avatar: "orbit" }] })).toBe(false);
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...DEFAULT_TEAM.members[0], avatar: undefined }] })).toBe(true);
 	});
 });

@@ -4,6 +4,7 @@ import type { FusionConfig } from "../../../../shared/fusion";
 import { DEFAULT_TEAM, type TeamSettings } from "../../../../shared/team";
 import { api } from "../../api";
 import { useTranslation } from "../../i18n";
+import { TeamAvatar, TeamGroupAvatar } from "../team/TeamAvatar";
 import { MenuItem, MenuSeparator, MenuSub, MenuSubTrigger } from "../ui/menu";
 import { ComposerPickerMenuSubPopup } from "./ComposerPickerMenuPopup";
 
@@ -35,6 +36,7 @@ export function TeamPicker(props: Props) {
 			if (open) api.preferencesGet().then((preferences) => setTeam(preferences.team)).catch(() => setTeam(null));
 		}}>
 			<MenuSubTrigger disabled={!props.models.length}>
+				<TeamGroupAvatar members={roster.members} size={16} />
 				<span className="flex-1">{t("team.title")}</span>
 				{active ? <span aria-label={t("team.active")}>✓</span> : null}
 			</MenuSubTrigger>
@@ -44,14 +46,17 @@ export function TeamPicker(props: Props) {
 					<p className="text-xs leading-relaxed text-muted-foreground">{t("team.pickerDescription")}</p>
 					<ul className="space-y-1">
 						{roster.members.map((member) => (
-							<li key={member.id} className="flex min-w-0 flex-col">
-								<span className="truncate">
-									@{member.name}
-									<span className="text-muted-foreground"> · {member.role || t("team.member")}</span>
-									{member.id === roster.adminId ? <span className="text-muted-foreground"> · {t("team.admin")}</span> : null}
-								</span>
-								<span className="truncate text-xs text-muted-foreground">
-									{modelOf(member.modelKey)} · {member.thinkingLevel}{member.access === "read-only" ? ` · ${t("team.readOnly")}` : ""}
+							<li key={member.id} className="flex min-w-0 items-center gap-2">
+								<TeamAvatar member={member} size={22} />
+								<span className="flex min-w-0 flex-col">
+									<span className="truncate">
+										@{member.name}
+										<span className="text-muted-foreground"> · {member.role || t("team.member")}</span>
+										{member.id === roster.adminId ? <span className="text-muted-foreground"> · {t("team.admin")}</span> : null}
+									</span>
+									<span className="truncate text-xs text-muted-foreground">
+										{modelOf(member.modelKey)} · {member.thinkingLevel}{member.access === "read-only" ? ` · ${t("team.readOnly")}` : ""}
+									</span>
 								</span>
 							</li>
 						))}

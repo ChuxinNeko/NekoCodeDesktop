@@ -18,6 +18,34 @@ export interface TeamMember {
 	thinkingLevel: ThinkingLevel;
 	/** Read-only members can inspect but never change the workspace. */
 	access: "full" | "read-only";
+	/** Shape and colour of the member's little character; absent picks one from its id. */
+	avatar?: TeamAvatar;
+}
+
+/** Avatars in the style of Grok's bots: a soft coloured shape with two white eyes that blink. */
+export const TEAM_AVATAR_SHAPES = ["orb", "pyramid", "gem"] as const;
+export const TEAM_AVATAR_COLORS = ["teal", "orange", "indigo", "violet", "blue", "coral"] as const;
+export type TeamAvatarShape = (typeof TEAM_AVATAR_SHAPES)[number];
+export type TeamAvatarColor = (typeof TEAM_AVATAR_COLORS)[number];
+export interface TeamAvatar { shape: TeamAvatarShape; color: TeamAvatarColor }
+
+export function isTeamAvatar(value: unknown): value is TeamAvatar {
+	const avatar = value as TeamAvatar;
+	return !!avatar && typeof avatar === "object" && (TEAM_AVATAR_SHAPES as readonly string[]).includes(avatar.shape) &&
+		(TEAM_AVATAR_COLORS as readonly string[]).includes(avatar.color);
+}
+
+export function teamHash(text: string): number {
+	let hash = 0;
+	for (const char of text) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+	return hash;
+}
+
+/** The member's avatar: its own choice, else a stable pick from its id. */
+export function teamAvatarOf(member: Pick<TeamMember, "id" | "avatar">): TeamAvatar {
+	if (isTeamAvatar(member.avatar)) return member.avatar;
+	const hash = teamHash(member.id);
+	return { shape: TEAM_AVATAR_SHAPES[hash % TEAM_AVATAR_SHAPES.length], color: TEAM_AVATAR_COLORS[Math.floor(hash / 3) % TEAM_AVATAR_COLORS.length] };
 }
 
 export interface TeamSettings {
@@ -42,7 +70,8 @@ export function isTeamMember(value: unknown): value is TeamMember {
 		typeof member.role === "string" && member.role.length <= 60 &&
 		typeof member.instructions === "string" && member.instructions.length <= 8000 &&
 		typeof member.modelKey === "string" && LEVELS.has(member.thinkingLevel) &&
-		(member.access === "full" || member.access === "read-only");
+		(member.access === "full" || member.access === "read-only") &&
+		(member.avatar === undefined || isTeamAvatar(member.avatar));
 }
 
 export function isTeamSettings(value: unknown): value is TeamSettings {
@@ -63,11 +92,11 @@ export const DEFAULT_TEAM: TeamSettings = {
 	peerDelegation: false,
 	maxAssignments: 8,
 	members: [
-		{ id: "chief", name: "Chief", role: "Team lead", modelKey: "", thinkingLevel: "medium", access: "full",
+		{ id: "chief", name: "Chief", role: "Team lead", modelKey: "", thinkingLevel: "medium", access: "full", avatar: { shape: "orb", color: "teal" },
 			instructions: "Understand what the user wants, split it into clear pieces, hand them to the right teammates, check their results and give the user one coherent answer. Do small things yourself." },
-		{ id: "coder", name: "Coder", role: "Engineer", modelKey: "", thinkingLevel: "low", access: "full",
+		{ id: "coder", name: "Coder", role: "Engineer", modelKey: "", thinkingLevel: "low", access: "full", avatar: { shape: "pyramid", color: "indigo" },
 			instructions: "Implement changes carefully, keep to the existing style, and run the relevant checks before reporting." },
-		{ id: "reviewer", name: "Reviewer", role: "Reviewer", modelKey: "", thinkingLevel: "medium", access: "read-only",
+		{ id: "reviewer", name: "Reviewer", role: "Reviewer", modelKey: "", thinkingLevel: "medium", access: "read-only", avatar: { shape: "gem", color: "violet" },
 			instructions: "Review code and plans critically: correctness, edge cases, security and missed requirements. Report concrete findings with file and line." },
 	],
 };

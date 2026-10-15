@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CodeIntelModelOption } from "../../../../shared/code-intel";
 import type { ThinkingLevel } from "../../../../shared/agent";
-import { isTeamSettings, TEAM_NAME_PATTERN, type TeamMember, type TeamSettings as Team } from "../../../../shared/team";
+import { isTeamSettings, TEAM_AVATAR_COLORS, TEAM_AVATAR_SHAPES, TEAM_NAME_PATTERN, teamAvatarOf, type TeamMember, type TeamSettings as Team } from "../../../../shared/team";
 import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
 import { Button } from "../ui/button";
@@ -9,6 +9,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
+import { TEAM_AVATAR_FILL, TeamAvatar, TeamAvatarGlyph } from "../team/TeamAvatar";
 import { SettingsRow } from "./SettingsRow";
 
 const LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -114,6 +115,7 @@ export function TeamSettings() {
 			{team.members.map((member) => (
 				<div key={member.id} className="flex flex-col gap-2 rounded-lg border border-[color:var(--app-surface-divider)] p-3">
 					<div className="flex items-center gap-2">
+						<TeamAvatar member={member} size={28} />
 						<span className="text-muted-foreground">@</span>
 						<Input className="w-36" aria-label={t("team.name")} placeholder={t("team.name")} value={member.name}
 							onChange={(event) => patchMember(member.id, { name: event.target.value.trim() })} />
@@ -145,6 +147,34 @@ export function TeamSettings() {
 								<SelectItem value="read-only">{t("team.readOnly")}</SelectItem>
 							</SelectPopup>
 						</Select>
+					</div>
+					<div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+						<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{t("team.avatar")}</span>
+						<div className="flex items-center gap-1.5" role="radiogroup" aria-label={t("team.avatarShape")}>
+							{TEAM_AVATAR_SHAPES.map((shape) => {
+								const current = teamAvatarOf(member);
+								const selected = current.shape === shape;
+								return (
+									<button key={shape} type="button" role="radio" aria-checked={selected} title={shape}
+										className={selected ? "rounded-md ring-2 ring-foreground/60 ring-offset-1 ring-offset-background" : "rounded-md opacity-45 hover:opacity-90"}
+										onClick={() => patchMember(member.id, { avatar: { ...current, shape } })}>
+										<TeamAvatarGlyph avatar={{ ...current, shape }} size={20} blink={false} />
+									</button>
+								);
+							})}
+						</div>
+						<div className="flex items-center gap-1.5" role="radiogroup" aria-label={t("team.avatarColor")}>
+							{TEAM_AVATAR_COLORS.map((color) => {
+								const current = teamAvatarOf(member);
+								const selected = current.color === color;
+								return (
+									<button key={color} type="button" role="radio" aria-checked={selected} title={color}
+										className={selected ? "size-4 rounded-full ring-2 ring-foreground/60 ring-offset-1 ring-offset-background" : "size-4 rounded-full opacity-60 hover:opacity-100"}
+										style={{ background: TEAM_AVATAR_FILL[color] }}
+										onClick={() => patchMember(member.id, { avatar: { ...current, color } })} />
+								);
+							})}
+						</div>
 					</div>
 				</div>
 			))}

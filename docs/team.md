@@ -32,6 +32,7 @@ never back to the admin).
 | Model | A `provider/model`, or *Follow chat model* (the model selected when Team was picked). |
 | Thinking | Thinking level for that member. |
 | Access | *Full access* uses the normal tools; *Read-only* limits it to `read`, `grep`, `find`, `ls`. |
+| Avatar | A Grok-style bot face: a soft coloured shape with two slanted eyes that blink now and then (off with reduced motion). Shape `orb` / `pyramid` / `gem`, colour `teal` / `orange` / `indigo` / `violet` / `blue` / `coral`. Defaults: Chief orb·teal, Coder pyramid·indigo, Reviewer gem·violet; members without a choice get a stable one from their id, and the team itself shows the members huddled together. Changing it keeps the member's memory. |
 
 Team settings: **Admin**, **Run assignments in parallel** (several tasks of one
 `team_assign` call run at the same time — the admin is told to give them disjoint
@@ -51,5 +52,5 @@ closing the chat releases all of them.
   persistent member actors, events for the Fusion timeline.
 - `src/main/fusion/engine-runtime.ts` — keeps one team engine per chat for
   `strategy: "team"`.
-- Renderer: `components/settings/TeamSettings.tsx`, `components/chat/TeamPicker.tsx`.
+- Renderer: `components/settings/TeamSettings.tsx`, `components/chat/TeamPicker.tsx`, `components/team/TeamAvatar.tsx`.
 - Tests: `test/main/fusion-team-integration.test.ts`.

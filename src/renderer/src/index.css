@@ -3738,3 +3738,17 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 @media (prefers-reduced-motion: reduce) {
   .chat-user-message-bubble[data-timeline-flash] { animation: none; outline: 2px solid var(--color-ring, currentColor); outline-offset: 1px; }
 }
+
+/* Team avatars blink now and then; each sets its own --blink-duration/--blink-delay. */
+@keyframes team-avatar-blink {
+  0%, 93%, 100% { transform: scaleY(1); }
+  95.5% { transform: scaleY(0.12); }
+}
+.team-avatar-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: team-avatar-blink var(--blink-duration, 5s) ease-in-out var(--blink-delay, 0s) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .team-avatar-eyes { animation: none; }
+}
