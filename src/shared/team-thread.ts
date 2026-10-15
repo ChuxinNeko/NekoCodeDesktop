@@ -177,14 +177,23 @@ export function settledTeamThreadTurn(turn: TeamThreadTurn): TeamThreadTurn {
 		tools: item.tools.map(tool => tool.status === "running" ? { ...tool, status: "failed" } : tool) } : item) };
 }
 
-/** The run in progress (or just finished) in the engine state, when it is a team run. */
-export function liveTeamThreadTurn(state: FusionState | undefined, userTimestamp?: number): TeamThreadTurn | undefined {
+/**
+ * The run in progress (or just finished) in the engine state, when it is a team run.
+ * `final`: the answer the engine already put on the transcript, known a moment before the run reports completion.
+ */
+export function liveTeamThreadTurn(state: FusionState | undefined, userTimestamp?: number, final?: string): TeamThreadTurn | undefined {
 	if (!state?.prompt || !isTeamRun(state.events)) return undefined;
-	return teamThreadTurn(state.events, state.prompt, state.status === "idle" ? "running" : state.status, state.output, userTimestamp);
+	const status = state.status === "idle" ? "running" : state.status;
+	const projected = projectTeamThread(state.events, final ?? (status === "complete" ? state.output : undefined));
+	return { prompt: state.prompt, status, items: projected.items, ...(projected.final ? { final: projected.final } : {}), ...(userTimestamp !== undefined ? { userTimestamp } : {}) };
 }
 
-/** Saved turns plus the one still running; a finished live turn is already among the saved ones. */
-export function mergeTeamThreads(saved: readonly TeamThreadTurn[], state: FusionState | undefined, userTimestamp?: number): TeamThreadTurn[] {
-	const live = state?.status === "running" ? liveTeamThreadTurn(state, userTimestamp) : undefined;
+/**
+ * Saved turns plus the live one until it is saved — so the thread and its final message never blink
+ * between the answer arriving, the run completing and the entry being written.
+ */
+export function mergeTeamThreads(saved: readonly TeamThreadTurn[], state: FusionState | undefined, userTimestamp?: number, final?: string): TeamThreadTurn[] {
+	const unsaved = userTimestamp !== undefined ? !saved.some(turn => turn.userTimestamp === userTimestamp) : state?.status === "running";
+	const live = unsaved ? liveTeamThreadTurn(state, userTimestamp, final) : undefined;
 	return live ? [...saved, live] : [...saved];
 }

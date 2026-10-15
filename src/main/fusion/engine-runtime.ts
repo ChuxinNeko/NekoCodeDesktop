@@ -27,6 +27,8 @@ export class FusionEngineRuntime {
 	private engine?: FusionEngine;
 	/** Team members keep their context across turns, so the team engine outlives a run. */
 	private team?: { engine: FusionTeamEngine; key: string };
+	/** The team run's final answer once it is on the transcript, so the live group chat shows who sent it straight away. */
+	teamFinal?: string;
 	private listeners = new Set<(event: AgentSessionEvent) => void>();
 	private readonly nativePrompt: AgentSession["prompt"];
 	private readonly nativeAbort: AgentSession["abort"];
@@ -77,7 +79,7 @@ export class FusionEngineRuntime {
 		this.controller = new AbortController();
 		const controller = this.controller;
 		try {
-			this.startedAt = Date.now();
+			this.startedAt = Date.now(); this.teamFinal = undefined;
 			const priorMessages = [...this.host.parent.messages];
 			this.driver.begin(prompt);
 			this.state = fusionReducer(this.state, { type: "run.submitted", prompt });
@@ -122,7 +124,7 @@ export class FusionEngineRuntime {
 				this.controller = undefined;
 				try {
 					// The team's group chat is saved on its own, small, so it can be shown again when the chat is reopened.
-					const team = liveTeamThreadTurn(this.state, this.startedAt);
+					const team = liveTeamThreadTurn(this.state, this.startedAt, this.teamFinal);
 					if (team) this.host.manager.appendCustomEntry(TEAM_THREAD_ENTRY, settledTeamThreadTurn(team));
 					this.host.manager.appendCustomEntry(FUSION_ENGINE_TRACE_ENTRY, this.state);
 				}
@@ -138,7 +140,7 @@ export class FusionEngineRuntime {
 		if (this.team?.key === key) return this.team.engine;
 		this.dropTeam();
 		const engine = new FusionTeamEngine({ run: request => this.driver.run(request), release: handle => this.driver.release(handle),
-			appendFinal: (text, modelKey) => this.appendLeadMessage(text, modelKey), store: this.store,
+			appendFinal: (text, modelKey) => { this.teamFinal = text; return this.appendLeadMessage(text, modelKey); }, store: this.store,
 			team: () => currentTeamSettings(), defaultModelKey: config.leadModelKey,
 			...(this.host.instructions ? { instructions: this.host.instructions } : {}),
 			...(config.contextMessageLimit ? { contextMessageLimit: config.contextMessageLimit } : {}) });

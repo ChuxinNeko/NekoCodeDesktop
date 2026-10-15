@@ -61,6 +61,21 @@ describe("team thread", () => {
 		state = fusionReducer(state, { type: "event.received", event: coordinated.at(-1)! });
 		expect(mergeTeamThreads([settled], state)).toHaveLength(1);
 		expect(isTeamThreadTurn(settled)).toBe(true);
+	});
+	test("no blink at the end: the final answer has its sender before completion, and the live turn stays until it is saved", () => {
+		let state = fusionReducer(createInitialState(), { type: "run.submitted", prompt: "fix it" });
+		for (const event of coordinated.slice(0, -1)) state = fusionReducer(state, { type: "event.received", event });
+		// The answer is on the transcript; the run has not reported completion yet.
+		const before = mergeTeamThreads([], state, 7, "Coder fixed the bug.");
+		expect(before).toHaveLength(1);
+		expect(before[0]).toMatchObject({ status: "running", userTimestamp: 7, final: { member: "Chief", text: "Coder fixed the bug." } });
+		expect(before[0]!.items.map(item => item.member)).toEqual(["Chief", "Chief", "Coder"]);
+		// Completed but not written yet: still shown, now complete.
+		state = fusionReducer(state, { type: "event.received", event: coordinated.at(-1)! });
+		const completed = mergeTeamThreads([], state, 7, "Coder fixed the bug.");
+		expect(completed[0]).toMatchObject({ status: "complete", final: { member: "Chief" } });
+		// Written: the saved copy is the only one.
+		expect(mergeTeamThreads([completed[0]!], state, 7, "Coder fixed the bug.")).toEqual([completed[0]!]);
 		expect(isTeamThreadTurn({ prompt: 1 })).toBe(false);
 	});
 });

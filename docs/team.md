@@ -38,7 +38,9 @@ composer is not shown for team runs.
 Each finished run is saved on the session as a small `nekocode.team.thread.v1`
 entry (the projected messages, not the token stream), so the group chat comes
 back when the chat is reopened, and forks keep the threads of their branch. A run
-that was stopped is saved with its unfinished messages marked failed.
+that was stopped is saved with its unfinished messages marked failed. Until the
+entry is written the live run is shown (with the final answer's sender known as
+soon as the answer is on the transcript), so the end of a run does not flicker.
 
 ## Members
 

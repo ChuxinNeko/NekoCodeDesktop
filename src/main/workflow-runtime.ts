@@ -978,7 +978,7 @@ export class WorkflowRuntime {
 		const snapshot = this.state.snapshot.bind(this.state);
 		this.state.snapshot = () => {
 			const live = this.engineFusion ? this.engine?.state : undefined;
-			const teamThreads = mergeTeamThreads(this.savedTeamThreads(), live, this.engine?.startedAt);
+			const teamThreads = mergeTeamThreads(this.savedTeamThreads(), live, this.engine?.startedAt, this.engine?.teamFinal);
 			// Earlier turns are not needed by the inspector; they would be resent with every streamed token.
 			return { ...snapshot(), ...(live ? { fusion: { ...live, history: [] } } : {}), ...(teamThreads.length ? { teamThreads } : {}) };
 		};
