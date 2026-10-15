@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskManager } from "../../src/main/task-manager";
 import { LanService } from "../../src/main/lan-service";
+import { ExtensionUiHost } from "../../src/main/extension-ui";
 import type { AcpService } from "../../src/main/acp/service";
 import { encodeLanPairing, parseLanPairing } from "../../src/shared/lan-pairing";
 import type { AgentCell, AgentSnapshot } from "../../src/shared/agent";
@@ -65,6 +66,44 @@ async function setup() {
 }
 
 describe("LAN authentication and task API", () => {
+	test("remote extension dialogs validate current id, kind, choices and editor acknowledgements over LAN and relay", async () => {
+		const f = await setup();
+		const token = await f.pair();
+		const host = new ExtensionUiHost({ onChange() {}, onNotify() {} });
+		const snapshot = () => ({ session: { id: "desktop-task", sessionFile: "secret" }, extensionUi: host.snapshot() });
+		f.tasks.byId = async () => ({ getSnapshot: snapshot, answerExtensionUi: (answer: Parameters<ExtensionUiHost["answer"]>[0]) => { host.answer(answer); return snapshot(); } }) as never;
+		const path = "/api/tasks/desktop-task/extension-answer";
+		const ask = host.context();
+		const selected = ask.select("选择", ["A", "B"]);
+		const confirm = ask.confirm("确认", "真的执行？");
+		let id = host.snapshot()!.dialog!.id;
+		expect((await f.request(path, { id, value: "C" }, token)).status).toBe(400);
+		expect((await f.request(path, { id: "stale", value: "A" }, token)).status).toBe(409);
+		expect((await f.request(path, { id, value: "A" })).status).toBe(401);
+		const response = await f.request(path, { id, value: "B" }, token);
+		expect(response.status).toBe(200);
+		expect((await response.json()).session.sessionFile).toBeUndefined();
+		expect(await selected).toBe("B");
+		expect((await f.request(path, { id, value: "B" }, token)).status).toBe(409);
+		id = host.snapshot()!.dialog!.id;
+		expect((await f.request(path, { id, confirmed: "yes" }, token)).status).toBe(400);
+		expect((await f.service.handleRelay("flutter-test-peer-123", { id: "relay-request-12345", method: "POST", path, body: { id, confirmed: false } })).status).toBe(200);
+		expect(await confirm).toBe(false);
+		const input = ask.input("输入"); id = host.snapshot()!.dialog!.id;
+		expect((await f.request(path, { id, value: "x".repeat(32001) }, token)).status).toBe(400);
+		expect((await f.request(path, { id, value: "" }, token)).status).toBe(200);
+		expect(await input).toBe("");
+		const editor = ask.editor("编辑", "初始内容"); id = host.snapshot()!.dialog!.id;
+		expect((await f.request(path, { id, value: "一行\n二行" }, token)).status).toBe(200);
+		expect(await editor).toBe("一行\n二行");
+		const cancel = ask.select("取消选择", ["A"]); id = host.snapshot()!.dialog!.id;
+		expect((await f.request(path, { id, cancelled: true }, token)).status).toBe(200);
+		expect(await cancel).toBeUndefined();
+		ask.setEditorText("插入消息"); id = host.snapshot()!.editor!.id;
+		expect((await f.request(path, { id }, token)).status).toBe(200);
+		expect(host.snapshot()?.editor).toBeUndefined();
+		host.dispose();
+	});
 	test("regenerating the desktop QR invalidates the old code and scanning consumes the new code", async () => {
 		const f = await setup();
 		const old = parseLanPairing(encodeLanPairing("192.168.1.8", f.service.status().pairing!));

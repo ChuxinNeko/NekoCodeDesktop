@@ -281,7 +281,7 @@ export class LanService {
 				catch (error) { return { id, accepted: false, error: error instanceof Error ? error.message : String(error) }; }
 			});
 		}
-		const match = /^\/api\/tasks\/([a-zA-Z0-9-]+)(?:\/(abort|answer|send|configure|commands|cancel-worker|delta|tool-output))?$/.exec(path);
+		const match = /^\/api\/tasks\/([a-zA-Z0-9-]+)(?:\/(abort|answer|send|configure|commands|cancel-worker|delta|tool-output|extension-answer))?$/.exec(path);
 		if (match && ((method === "GET" && (!match[2] || match[2] === "commands")) || (method === "POST" && match[2] && match[2] !== "commands"))) {
 			const agent = await this.tasks.byId(match[1]);
 			if (match[2] === "commands") return (await agent.slashCommands()).filter((c) => c.name !== "terminal");
@@ -309,6 +309,26 @@ export class LanService {
 					...(delta.full ? { full: this.withoutSessionFile(delta.full) } : {}),
 					...(delta.rest ? { rest: this.withoutSessionFile(delta.rest) } : {}),
 				};
+			}
+			if (match[2] === "extension-answer") {
+				const input = body!;
+				const ui = agent.getSnapshot()?.extensionUi;
+				if (typeof input.id !== "string" || input.id.length > 200) throw new HttpError(400, "无效的扩展请求编号");
+				const dialog = ui?.dialog;
+				const editorAck = ui?.editor?.id === input.id;
+				if (!editorAck && (!dialog || dialog.id !== input.id)) throw new HttpError(409, "扩展请求已变化，请刷新后重试");
+				if (input.cancelled !== undefined && typeof input.cancelled !== "boolean") throw new HttpError(400, "无效的取消状态");
+				if (!editorAck && input.cancelled !== true) {
+					if (dialog!.kind === "confirm") {
+						if (typeof input.confirmed !== "boolean") throw new HttpError(400, "请选择确认或拒绝");
+					} else if (typeof input.value !== "string" || input.value.length > 32_000 ||
+						(dialog!.kind === "select" && !dialog!.options?.includes(input.value))) {
+						throw new HttpError(400, "无效的扩展回答");
+					}
+				}
+				const next = agent.answerExtensionUi({ id: input.id,
+					...(editorAck ? {} : input.cancelled === true ? { cancelled: true } : dialog!.kind === "confirm" ? { confirmed: input.confirmed as boolean } : { value: input.value as string }) });
+				return next ? this.withoutSessionFile(next) : null;
 			}
 			if (match[2] === "configure") await this.configure(agent, this.options(body));
 			if (match[2] === "cancel-worker") {

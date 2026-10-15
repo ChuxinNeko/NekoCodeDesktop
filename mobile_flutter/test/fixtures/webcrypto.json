@@ -1,0 +1,19 @@
+{
+  "scalar": "8691c38c21d4dbeedb742a7f91ecdea26870e3250d637911980cb6c6c2046ca2",
+  "publicKey": "BOFbIedSsx5sIWHz2Wdk4EJn1PNcinjBzeS5O4gFdQqYmLHFxkE1yxQwwqQIycBJiEJgXaiCEZi2rDkhiSi403A",
+  "peerPublicKey": "BMkFKEznDPEg6ZfCofvQ5RbCgqrPnOPi6xvUJRRCYNTDQg_OHgcGMrTBEf6UY_t2WU6wRJnOgidGx6EELD4WUHk",
+  "id": "4489d5fc418f135e07cb8f53d587c1cf7fe3b33d3afc48cc1749bd83b9a9af60",
+  "shared": "8ac35966bb3ecdf5f0e7826011ff50ef79ea7cff15b72cba49b90d115d75dc78",
+  "cipher": {
+    "version": 1,
+    "iv": "MxK8yLZKKoiP-i4P",
+    "data": "Ra_AyWv2OlnQ9Qr3WRD_U5ohH6iOAYMHzFRjh4lRnbiHp9kB7LLHDjtbk13ld1_qrRmcVuwJLPG6qLOv4tWTT4NbDH6VBuHedQ276yL3dh6uCb8IK_eNup16H5pRqo4"
+  },
+  "plain": {
+    "id": "test-response",
+    "status": 200,
+    "body": {
+      "text": "WebCrypto 与 Dart 兼容"
+    }
+  }
+}
