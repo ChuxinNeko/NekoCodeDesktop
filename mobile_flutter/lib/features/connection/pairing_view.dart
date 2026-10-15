@@ -229,30 +229,18 @@ class _Hero extends StatelessWidget {
     final mx = context.mx;
     return Column(
       children: [
-        Container(
-          width: 84,
-          height: 84,
-          decoration: ShapeDecoration(
-            shape: NekoShape.squircle(28),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [mx.primaryContainer, mx.primary],
-            ),
-            shadows: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(88 * .22),
+            boxShadow: [
               BoxShadow(
-                color: mx.primary.withValues(alpha: .35),
-                blurRadius: 28,
-                offset: const Offset(0, 12),
+                color: Colors.black.withValues(alpha: context.isDark ? .5 : .14),
+                blurRadius: 24,
+                offset: const Offset(0, 10),
               ),
             ],
           ),
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.terminal_rounded,
-            color: Colors.white,
-            size: 44,
-          ),
+          child: Image.asset('assets/images/logo.png', width: 88, height: 88),
         ),
         const SizedBox(height: 22),
         const MiuixText('NekoCode', fontSize: 32, fontWeight: FontWeight.w700),
