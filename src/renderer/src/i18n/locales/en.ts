@@ -3,6 +3,19 @@
  * locale must provide exactly these keys.
  */
 export const en = {
+	"workFlow.steps": "Work steps",
+	"workFlow.thinking": "Reasoning",
+	"workFlow.read": "Reading files",
+	"workFlow.search": "Searching",
+	"workFlow.edit": "Editing files",
+	"workFlow.command": "Running commands",
+	"workFlow.computer": "Using the computer",
+	"workFlow.task": "Task progress",
+	"workFlow.notice": "Status update",
+	"workFlow.tools": "Using tools",
+	"workFlow.failed": "Failed",
+	"workFlow.running": "In progress",
+
 	"mobile.manualDetails": "Manual setup: desktop addresses and pairing code",
 	"mobile.qrAddress": "Desktop address in QR code (choose your phone’s subnet)",
 	"mobile.qrExpired": "This code has expired or has been used. Generate a new code.",

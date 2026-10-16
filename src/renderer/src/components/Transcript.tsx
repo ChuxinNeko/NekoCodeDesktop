@@ -1,16 +1,17 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useId } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import type { AgentCell, ModelOption } from "../../../shared/agent";
 import type { CheckpointSummary } from "../../../shared/checkpoints";
 import type { ExplorerRun, WorkflowTask } from "../../../shared/workflow";
 import {
-	foldSettledTurns,
+	foldWorkTimelineRows,
 	groupTranscriptRows,
 	workToolCount,
 	type AssistantCellData,
 	type WorkItem,
 	type WorkRow,
 } from "../../../shared/transcript";
+import { groupWorkStages, type WorkStage } from "../lib/workStages";
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
 import { completedTurnChanges } from "../lib/turnChanges";
@@ -37,7 +38,7 @@ import {
 	toolSummary,
 	workUnits,
 } from "./chat/ToolCalls";
-import { lastThinkingLine, ThinkingBlock } from "./chat/Thinking";
+import { lastThinkingLine, ThinkingBlock, ThinkingStream } from "./chat/Thinking";
 import { SourceList } from "./chat/WebSources";
 import { Markdown } from "./chat/Markdown";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
@@ -509,11 +510,12 @@ const WorkingBlock = memo(function WorkingBlock({
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(active);
 	const reducedMotion = useReducedMotion();
-	useEffect(() => { if (settling) setOpen(false); }, [settling]);
+	useEffect(() => { if (settling || !active) setOpen(false); }, [settling, active]);
 	const now = useNow(active);
 	const end = active ? now : row.endedAt;
 	const seconds = elapsedSeconds(row.startedAt, end);
 	const tools = workToolCount(row);
+	const stages = useMemo(() => groupWorkStages(row.items), [row.items]);
 	const last = row.items[row.items.length - 1];
 	// Collapsed, the block says what it is standing in for: the step running
 	// right now while it runs, under the header; once it stops, the size of what
@@ -547,23 +549,16 @@ const WorkingBlock = memo(function WorkingBlock({
 				) : null}
 			</button>
 			<DisclosureRegion open={open}>
-				<div className="flex flex-col gap-2 border-l border-border/60 pl-3">
-					{workUnits(row.items, active).map((unit) => {
-						if (unit.kind === "computer")
-							return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
-						const item = unit.item;
-						return item.kind === "thinking" ? (
-							<CellThinking key={item.id} cell={item.cell} />
-						) : item.kind === "tool" ? (
-							<ToolCell key={item.id} cell={item.cell} active={active} />
-						) : item.kind === "message" ? (
-							<RemarkCell key={item.id} cell={item.cell} />
-						) : (
-							<NoticeCell key={item.id} cell={item.cell} />
-						);
-					})}
-					{waiting ? <PlanningLine /> : null}
-				</div>
+				<ol className="m-0 list-none p-0 pl-1" aria-label={t("workFlow.steps")}>
+					{stages.map((stage, index) => (
+						<WorkStageRow key={stage.id} stage={stage} active={active}
+							current={active && index === stages.length - 1 && !waiting} />
+					))}
+					{waiting ? <li className="relative pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
+						<span aria-hidden="true" className="absolute left-0 top-2.5 size-2 rounded-full bg-primary/50 motion-safe:animate-pulse" />
+						<PlanningLine />
+					</li> : null}
+				</ol>
 			</DisclosureRegion>
 			{!open && !settling && summary ? (
 				<div
@@ -579,6 +574,50 @@ const WorkingBlock = memo(function WorkingBlock({
 		</div>
 	);
 }, sameWorkingBlock);
+
+/** Second-level timeline: compact task labels, full original traffic on demand. */
+const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
+	stage: WorkStage;
+	active: boolean;
+	current: boolean;
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailId = useId();
+	const failed = stage.items.some((item) => item.kind === "tool" && item.cell.status === "error" || item.kind === "notice" && item.cell.level === "error");
+	const running = active && (current || stage.items.some((item) => item.kind === "tool" && (item.cell.status === "running" || item.cell.status === "pending")));
+	const first = stage.items[0];
+	const title = stage.title || (first?.kind === "tool" ? toolSummary(first.cell, t) : "") || t(`workFlow.${stage.category}`);
+	return (
+		<li className="group/work-stage relative min-w-0 pb-3 pl-6 last:pb-0" data-work-stage={stage.id}>
+			<span aria-hidden="true" className="absolute bottom-0 left-[3px] top-4 w-px bg-border/60 group-last/work-stage:hidden" />
+			<span aria-hidden="true" className={cn("absolute left-0 top-2 size-2 rounded-full", failed ? "bg-destructive/70" : running ? "bg-primary/70 motion-safe:animate-pulse" : "bg-muted-foreground/25")} />
+			<button type="button" aria-expanded={open} aria-controls={detailId}
+				onClick={() => setOpen((value) => !value)}
+				className="flex max-w-full items-start gap-1.5 rounded py-0.5 text-left text-[length:var(--app-font-size-chat-body,13px)] leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
+				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "text-foreground/80", failed && "text-destructive")}>
+					{title}
+				</span>
+				<ChevronRightIcon aria-hidden="true" className="workflow-chevron mt-1 size-3.5 shrink-0 opacity-60" data-open={open} />
+				{failed ? <span className="sr-only">{t("workFlow.failed")}</span> : null}
+				{running ? <span className="sr-only">{t("workFlow.running")}</span> : null}
+			</button>
+			<DisclosureRegion open={open} id={detailId}>
+				<div className="flex min-w-0 flex-col gap-2 pb-1 pt-2" data-work-stage-details="">
+					<div className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/60">{t(`workFlow.${stage.category}`)}</div>
+					{workUnits(stage.items, active).map((unit) => {
+						if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
+						const item = unit.item;
+						return item.kind === "thinking" ? <ThinkingStream key={item.id} text={item.cell.thinking} />
+							: item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} />
+							: item.kind === "message" ? <RemarkCell key={item.id} cell={item.cell} />
+							: <NoticeCell key={item.id} cell={item.cell} />;
+					})}
+				</div>
+			</DisclosureRegion>
+		</li>
+	);
+});
 
 /**
  * True while the run is streaming but the model has produced nothing visible
@@ -713,7 +752,7 @@ const TranscriptView = function Transcript({
 	// transcript. Keep this work tied to the structurally shared cell array so a
 	// scroll event does not regroup every turn in a long session.
 	const grouped = useMemo(() => groupTranscriptRows(cells), [cells]);
-	const rows = useMemo(() => foldSettledTurns(grouped, streaming === true || settling), [grouped, streaming, settling]);
+	const rows = useMemo(() => foldWorkTimelineRows(grouped, streaming === true || settling), [grouped, streaming, settling]);
 	// The reply that closes a team run is the team's final message, drawn as a bot's bubble.
 	const teamFinalByCell = useMemo(() => {
 		const map = new Map<string, TeamThreadTurn>();
@@ -801,7 +840,7 @@ const TranscriptView = function Transcript({
 							) : (
 								<WorkingBlock
 									row={row}
-									active={last && streaming === true}
+									active={streaming === true && currentTurnRowIds.has(row.id)}
 									waiting={last && waitingInWork}
 									settling={settling && currentTurnRowIds.has(row.id)}
 								/>

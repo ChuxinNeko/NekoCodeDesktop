@@ -304,3 +304,26 @@ describe("structural and GitHub tool guidance", () => {
 		expect(prompt).toContain(guidance.ast_grep);
 	});
 });
+
+
+describe("work stage title discipline", () => {
+	test("interactive sessions receive action-title instructions", () => {
+		for (const mode of WORK_MODES) {
+			const prompt = buildModePrompt({ ...base, mode });
+			expect(prompt).toContain("## 工作阶段标题");
+			expect(prompt).toContain("### 读取项目入口");
+			expect(prompt).toContain("再调用工具");
+			expect(prompt).toContain("最终答复按任务正常组织");
+		}
+	});
+	test("custom prompts retain the runtime UI convention", () => {
+		configureCustomPrompt(() => "My custom instructions");
+		try { expect(buildModePrompt({ ...base, mode: "agent" })).toContain("## 工作阶段标题"); }
+		finally { configureCustomPrompt(() => null); }
+	});
+	test("does not add UI narration to workers, automation or structured Fusion stages", () => {
+		for (const extra of [{ child: true }, { headless: true }, { fastContext: true }, { interactive: false }])
+			expect(buildModePrompt({ ...base, mode: "agent", ...extra })).not.toContain("## 工作阶段标题");
+		expect(buildModePrompt({ ...base, mode: "agent", fusionEngineInstructions: "Structured stage" })).toBe("Structured stage");
+	});
+});

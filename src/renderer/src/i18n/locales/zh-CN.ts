@@ -5,6 +5,19 @@ import type { TranslationKey } from "./en";
  * exactly; the Record type makes a missing key a compile error.
  */
 export const zhCN: Record<TranslationKey, string> = {
+	"workFlow.steps": "工作步骤",
+	"workFlow.thinking": "思考与规划",
+	"workFlow.read": "读取文件",
+	"workFlow.search": "搜索与检索",
+	"workFlow.edit": "编辑文件",
+	"workFlow.command": "执行命令",
+	"workFlow.computer": "操作电脑",
+	"workFlow.task": "任务进展",
+	"workFlow.notice": "状态更新",
+	"workFlow.tools": "使用工具",
+	"workFlow.failed": "执行失败",
+	"workFlow.running": "进行中",
+
 	"mobile.manualDetails": "手动配置：查看电脑地址和配对码",
 	"mobile.qrAddress": "二维码中的电脑地址（选择与手机同网段的地址）",
 	"mobile.qrExpired": "二维码已过期或已使用，请重新生成。",

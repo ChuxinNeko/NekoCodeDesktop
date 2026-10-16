@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentCell } from "../../src/shared/agent";
-import { foldSettledTurns, groupTranscriptRows, type TranscriptRow } from "../../src/shared/transcript";
+import { foldSettledTurns, foldWorkTimelineRows, groupTranscriptRows, type TranscriptRow } from "../../src/shared/transcript";
 
 const user = (id: string, timestamp = 0): AgentCell => ({ id, type: "user", text: id, timestamp });
 const say = (id: string, text: string, timestamp = 0, thinking = ""): AgentCell => ({
@@ -79,5 +79,30 @@ describe("foldSettledTurns", () => {
 	test("spans the folded group from the first step to the answer", () => {
 		const [, folded] = foldSettledTurns(groupTranscriptRows(turn), false);
 		expect(folded.kind === "work" && [folded.startedAt, folded.endedAt]).toEqual([1, 5]);
+	});
+});
+
+
+describe("live work timeline", () => {
+	test("collects intermediate remarks and thinking under one live header", () => {
+		const cells = [user("u"), say("a", "读取入口", 1, "Inspecting"), tool("t", 2), say("b", "执行测试", 3, "Verifying"), tool("t2", 4)];
+		const rows = foldWorkTimelineRows(groupTranscriptRows(cells), true);
+		expect(shape(rows)).toEqual(["user:u", "turn-u[thinking:a-thinking,message:a-message,tool:t,thinking:b-thinking,message:b-message,tool:t2]"]);
+	});
+	test("leaves a potential final answer streaming outside the work group", () => {
+		const rows = foldWorkTimelineRows(groupTranscriptRows([user("u"), tool("t", 1), say("a", "结果", 2, "Summarizing")]), true);
+		expect(shape(rows)).toEqual(["user:u", "turn-u[tool:t,thinking:a-thinking]", "message:a-message"]);
+	});
+	test("uses the same work key while streaming and after completion", () => {
+		const cells = [user("u"), tool("t", 1), say("a", "结果", 2)];
+		expect(foldWorkTimelineRows(groupTranscriptRows(cells), true)[1].id).toBe(foldWorkTimelineRows(groupTranscriptRows(cells), false)[1].id);
+	});
+	test("wraps the first live thought before any tool arrives", () => {
+		expect(shape(foldWorkTimelineRows(groupTranscriptRows([user("u"), say("a", "", 1, "正在检查")]), true))).toEqual(["user:u", "turn-u[thinking:a-thinking]"]);
+	});
+	test("does not merge turns or fabricate process for plain text", () => {
+		expect(shape(foldWorkTimelineRows(groupTranscriptRows([user("u"), say("a", "直接回答", 1)]), true))).toEqual(["user:u", "message:a-message"]);
+		const rows = foldWorkTimelineRows(groupTranscriptRows([user("u"), tool("t", 1), say("a", "完成", 2), user("u2", 3), tool("t2", 4)]), true);
+		expect(shape(rows)).toEqual(["user:u", "turn-u[tool:t]", "message:a-message", "user:u2", "turn-u2[tool:t2]"]);
 	});
 });

@@ -1,3 +1,4 @@
+import { WORK_STAGE_PROMPT } from "./work-stage-prompt";
 import common from "../../pi/packages/prompt/common_prefix.md?raw";
 import agent from "../../pi/packages/prompt/agent/prompt.md?raw";
 import ask from "../../pi/packages/prompt/ask/prompt.md?raw";
@@ -463,6 +464,7 @@ export function buildModePrompt(context: PromptContext): string {
 			? "fusion_request_upgrade 是兼容的高风险信号工具，与 fusion_route_model 一样只排队等待自然压缩边界，不立即升档。无法安全推进时调用 fusion_report(needs_escalation) 交回父代理，而不是主动制造压缩或等待切换。" : "",
 		context.fastContext ? FAST_CONTEXT_PROMPT : "",
 		reminders,
+		!context.child && !context.headless && !context.fastContext && context.interactive !== false ? WORK_STAGE_PROMPT : "",
 		context.workflowContext
 			? "## 当前会话工作流状态（不是额外授权）\n" + context.workflowContext
 			: "",

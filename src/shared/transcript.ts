@@ -232,3 +232,38 @@ export function foldSettledTurns(rows: readonly TranscriptRow[], streaming: bool
 export function workToolCount(row: WorkRow): number {
 	return row.items.reduce((count, item) => count + (item.kind === "tool" ? 1 : 0), 0);
 }
+
+/**
+ * Keep the live turn's process under the same header even when a model speaks
+ * between calls. A trailing answer still streams at the top level; if a later
+ * tool arrives that remark joins the timeline. Completed turns use the same key.
+ */
+export function foldWorkTimelineRows(rows: readonly TranscriptRow[], streaming: boolean): TranscriptRow[] {
+	const folded = foldSettledTurns(rows, streaming);
+	if (!streaming) return folded;
+	let start = 0;
+	let turn = "start";
+	for (let i = 0; i < folded.length; i++) {
+		const row = folded[i];
+		if (row.kind === "user") { start = i + 1; turn = row.cell.id; }
+	}
+	const segment = folded.slice(start);
+	const reply = segment[segment.length - 1];
+	const hasReply = reply?.kind === "message";
+	const process = hasReply ? segment.slice(0, -1) : segment;
+	if (!process.some((row) => row.kind === "work" || row.kind === "thinking")) return folded;
+	const work: WorkRow = { kind: "work", id: `turn-${turn}`, items: [], startedAt: Infinity, endedAt: 0 };
+	for (const row of process) {
+		if (row.kind === "user") continue;
+		if (row.kind === "work") {
+			work.items.push(...row.items);
+			work.startedAt = Math.min(work.startedAt, row.startedAt);
+			work.endedAt = Math.max(work.endedAt, row.endedAt);
+		} else {
+			work.items.push({ kind: row.kind, id: row.id, cell: row.cell } as WorkItem);
+			work.startedAt = Math.min(work.startedAt, itemStart(row.cell));
+			work.endedAt = Math.max(work.endedAt, itemEnd(row.cell));
+		}
+	}
+	return [...folded.slice(0, start), work, ...(hasReply ? [reply] : [])];
+}
