@@ -653,7 +653,6 @@ const TranscriptView = function Transcript({
 	onOpenTask,
 	onOpenFile,
 	checkpoints,
-	composerCheckpointId,
 	onRestoreCheckpoint,
 	onOpenReview,
 	onLoadToolOutput,
@@ -674,8 +673,6 @@ const TranscriptView = function Transcript({
 	onOpenFile?: (path: string) => void;
 	/** Restore points, so a prompt can offer the rewind of its own turn. */
 	checkpoints?: readonly CheckpointSummary[];
-	/** This checkpoint is already displayed above the composer; avoid a duplicate. */
-	composerCheckpointId?: string;
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
 	/** Open the review panel — the edit summary card's "Review" action. */
 	onOpenReview?: () => void;
@@ -785,8 +782,8 @@ const TranscriptView = function Transcript({
 	// does, so the card waits for the run to finish rather than appearing
 	// half-written above an answer that is still arriving.
 	const cardByRowId = useMemo(
-		() => completedTurnChanges(rows, checkpoints ?? [], streaming === true || settling, composerCheckpointId),
-		[rows, checkpoints, streaming, settling, composerCheckpointId],
+		() => completedTurnChanges(rows, checkpoints ?? [], streaming === true || settling),
+		[rows, checkpoints, streaming, settling],
 	);
 	// The reply each finished turn ends on: the next row is the next prompt, or
 	// there is none and nothing is still running.
