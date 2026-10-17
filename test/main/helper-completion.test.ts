@@ -422,7 +422,7 @@ describe("completeHelper recovery behavior", () => {
 		expect(step).toBe(3);
 	});
 
-	test("does NOT recover when stopReason is 'aborted' (explicitly aborted by upstream)", async () => {
+	test("bounds recovery when the provider reports aborted without a cancelled caller signal", async () => {
 		const model = createMockModel();
 		let step = 0;
 
@@ -440,7 +440,7 @@ describe("completeHelper recovery behavior", () => {
 			completeHelper(session as unknown as AgentSession, "Explicit abort", model, undefined),
 		).rejects.toThrow("模型请求被中断");
 
-		expect(step).toBe(1); // Never retry when stopReason is aborted
+		expect(step).toBe(MAX_HELPER_STREAM_RECOVERIES + 1);
 	});
 
 	test("does NOT recover on non-stream errors (401, 429, 400, 500)", async () => {

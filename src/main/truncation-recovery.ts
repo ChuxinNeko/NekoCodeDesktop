@@ -1,11 +1,13 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { isStreamInterruptionError, HELPER_STREAM_RECOVERY_PROMPT } from "./helper-completion";
+
+export const MAX_STREAM_RECOVERIES = 2;
 
 /**
  * How many truncated turns get a nudge before the run is stopped.
  *
- * The loop only reaches here because the truncated tool calls failed, which
- * keeps it going; a model that truncates on every attempt would otherwise
- * retry forever at full token cost.
+ * Successful turns reset the streak, so productive work can keep going while
+ * a model that truncates on every attempt cannot retry forever at full token cost.
  */
 export const MAX_TRUNCATION_NUDGES = 2;
 
@@ -18,7 +20,8 @@ export const MAX_TRUNCATION_NUDGES = 2;
  * `write` again. This says what actually has to change.
  */
 export const TRUNCATION_GUIDANCE = [
-	"上一次回复达到单次输出 token 上限被截断，其中的工具调用全部没有执行——文件没有任何改动，不要把被截断的参数当成已保存。",
+	"上一次回复达到单次输出 token 上限被截断，任务尚未完成。保留已完成的工作，继续未完成的内容；纯文本答复接着断点继续，避免重复。",
+	"被截断回复中的工具调用全部没有执行；此前成功的工具操作仍然保留，不要把被截断的参数当成已保存。",
 	"直接重发同样的调用大概率会再次截断。请改变做法：",
 	"- 修改已存在的文件用 edit 做局部替换，不要用 write 重写整份文件；",
 	"- 确实要新建长文件时，先 write 一个较短的骨架，再用多次 edit 逐段补全；",
@@ -34,39 +37,67 @@ export const TRUNCATION_STOPPED_NOTICE =
  * Recover the main session from responses truncated by the output token limit.
  *
  * Only the interactive session needs this: subagents get the same treatment
- * from `completeHelper`, which drives its own prompt loop. Chains onto both
- * hooks so the workflow gate and compaction keep theirs.
+ * from `completeHelper`, which drives its own prompt loop. Chains onto the
+ * finish and request hooks so the workflow gate and compaction keep theirs.
  */
 export function attachTruncationRecovery(
 	session: AgentSession,
 	onStopped: (message: string) => void,
 ): void {
 	let consecutive = 0;
+	let streamRecoveries = 0;
+	let runSignal: AbortSignal | undefined;
+	let guidance: string | undefined;
 
 	const previousFinish = session.agent.finishTurn;
 	session.agent.finishTurn = async (turn, signal) => {
+		if (signal !== runSignal) {
+			runSignal = signal;
+			consecutive = 0;
+			streamRecoveries = 0;
+		}
+		guidance = undefined;
 		// The previous hook always runs: the session dispatches turn_end through it.
 		const decision = await previousFinish?.(turn, signal);
-		// Error and aborted turns end the run regardless of the decision, and
-		// never counted toward or reset the truncation streak.
+		if (signal?.aborted || decision?.action === "end") return decision || undefined;
 		const { stopReason } = turn.message;
-		if (stopReason === "error" || stopReason === "aborted") return decision || undefined;
-		// Counted here rather than in prepareNextTurn, which only runs when the
-		// loop continues: a truncated turn that called no tools ends the run on
-		// its own and must not leave the count standing for the next prompt.
+		if (stopReason === "error" || stopReason === "aborted") {
+			if (!isStreamInterruptionError(turn.message.errorMessage)) return decision || undefined;
+			if (streamRecoveries >= MAX_STREAM_RECOVERIES) {
+				onStopped("模型响应流连续中断，自动恢复次数已用尽。已成功执行的操作保留，任务尚未完成，可稍后继续。");
+				return { action: "end" };
+			}
+			streamRecoveries++;
+			guidance = HELPER_STREAM_RECOVERY_PROMPT.replaceAll("本子会话", "当前会话");
+			// Providers omit failed assistant messages from their next request. Carry
+			// only the text tail as an unverified draft, never partial tool arguments.
+			const draft = turn.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+			if (draft) guidance += `\n中断前的文本草稿（不代表工具已执行）：\n${draft.slice(-8000)}`;
+			return { action: "retry" };
+		}
+		streamRecoveries = 0;
+		// Count every truncated response, including those without tool calls.
 		consecutive = stopReason === "length" ? consecutive + 1 : 0;
 		if (consecutive > MAX_TRUNCATION_NUDGES) {
 			onStopped(TRUNCATION_STOPPED_NOTICE);
 			return { action: "end" };
 		}
+		if (stopReason === "length") {
+			guidance = TRUNCATION_GUIDANCE;
+			return { action: "continue" };
+		}
 		return decision || undefined;
 	};
 
-	const previousPrepare = session.agent.prepareNextTurnWithContext;
-	session.agent.prepareNextTurnWithContext = async (turn, signal) => {
-		const snapshot = await previousPrepare?.(turn, signal);
-		if (turn.message.stopReason !== "length") return snapshot;
-		const context = snapshot?.context ?? turn.context;
+	const previousPrepare = session.agent.prepareRequest;
+	session.agent.prepareRequest = async (request, signal) => {
+		const snapshot = await previousPrepare?.(request, signal);
+		if (!guidance || signal?.aborted || signal !== runSignal) return snapshot || undefined;
+		const context = snapshot?.context ?? request.context;
+		const recoveryPrompt = guidance;
+		guidance = undefined;
+		// Inject after the session rebuilds its canonical request projection;
+		// prepareNextTurn context additions are replaced by that projection.
 		// A fresh array: the guidance steers this run only. It is never emitted
 		// as a message, so it is neither persisted nor shown in the transcript —
 		// a reopened session would otherwise carry a nudge with no turn behind it.
@@ -76,7 +107,7 @@ export function attachTruncationRecovery(
 				...context,
 				messages: [
 					...context.messages,
-					{ role: "user" as const, content: TRUNCATION_GUIDANCE, timestamp: Date.now() },
+					{ role: "user" as const, content: recoveryPrompt, timestamp: Date.now() },
 				],
 			},
 		};

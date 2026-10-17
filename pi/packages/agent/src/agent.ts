@@ -592,7 +592,7 @@ export class Agent {
 			}
 
 			case "turn_end":
-				if (event.message.role === "assistant" && event.message.errorMessage) {
+				if (event.message.role === "assistant") {
 					this._state.errorMessage = event.message.errorMessage;
 				}
 				break;

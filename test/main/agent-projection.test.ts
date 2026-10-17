@@ -29,6 +29,13 @@ describe("errored replies", () => {
 		const cells = projectMessages([user(1), aborted, user(3), ok]);
 		expect(cells.some((c) => c.type === "assistant" && c.error === "Connection error.")).toBe(true);
 	});
+
+	test("a provider-aborted reply recovered in the same turn leaves no error or unexecuted tool row", () => {
+		const aborted: ProjectableMessage = { ...failed, stopReason: "aborted" };
+		const cells = projectMessages([user(1), aborted, ok]);
+		expect(cells.map((cell) => cell.type)).toEqual(["user", "assistant"]);
+		expect(cells.some((cell) => cell.type === "assistant" && cell.error)).toBe(false);
+	});
 });
 
 function notices(projector: CellProjector) {

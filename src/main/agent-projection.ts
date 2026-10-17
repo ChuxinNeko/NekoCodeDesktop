@@ -263,8 +263,12 @@ function recoveredBefore(messages: readonly ProjectableMessage[]): number {
 	return -1;
 }
 
-function visibleError(message: ProjectableMessage, index: number, recovered: number): string | undefined {
+function visibleError(message: ProjectableMessage, index: number, recovered: number, messages: readonly ProjectableMessage[]): string | undefined {
 	if (message.stopReason === "error" && index < recovered) return undefined;
+	// A provider-aborted stream may recover within the same user turn. Keep
+	// actual cancellations visible when a later user prompt starts a new turn.
+	if (message.stopReason === "aborted" && index < recovered &&
+		!messages.slice(index + 1, recovered + 1).some((entry) => entry.role === "user")) return undefined;
 	return assistantError(message);
 }
 
@@ -395,7 +399,7 @@ function turnUsageByMessage(
 			turns.push(turn);
 		}
 		turn.assistants.push(index);
-		if (showsAssistantCell(message, visibleError(message, index, recovered))) turn.lastShown = index;
+		if (showsAssistantCell(message, visibleError(message, index, recovered, messages))) turn.lastShown = index;
 	});
 
 	const byMessage = new Map<number, TurnUsage>();
@@ -453,10 +457,10 @@ export function projectMessages(
 			case "assistant": {
 				const text = textOf(message.content);
 				const thinking = thinkingOf(message.content);
-				const error = visibleError(message, index, recovered);
+				const error = visibleError(message, index, recovered, messages);
 				// A failed call's tool calls never ran; once it is recovered from
 				// they would only sit there as pending forever.
-				const dropTools = message.stopReason === "error" && !error;
+				const dropTools = (message.stopReason === "error" || message.stopReason === "aborted") && !error;
 				if (text || thinking || error) {
 					const timing = thinking ? thinkingTiming?.get(t) : undefined;
 					cells.push({

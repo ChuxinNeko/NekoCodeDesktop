@@ -249,8 +249,14 @@ async function runLoop(
 					context: currentContext,
 					newMessages,
 				};
-				await config.finishTurn?.(lastCompletedTurn, signal);
+				const decision = await config.finishTurn?.(lastCompletedTurn, signal);
 				await emit({ type: "turn_end", message, toolResults: [] });
+				// Recovery is opt-in. Never execute calls from the failed response,
+				// and never turn a user cancellation into another provider request.
+				if (decision?.action === "retry" && !signal?.aborted) {
+					hasMoreToolCalls = true;
+					continue;
+				}
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}

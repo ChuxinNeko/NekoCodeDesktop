@@ -167,7 +167,7 @@ export async function completeHelper(
 
 			if (
 				last?.role === "assistant" &&
-				last.stopReason === "error" &&
+				(last.stopReason === "error" || last.stopReason === "aborted") &&
 				!signal?.aborted &&
 				isStreamInterruptionError(last.errorMessage) &&
 				streamRecoveries < MAX_HELPER_STREAM_RECOVERIES

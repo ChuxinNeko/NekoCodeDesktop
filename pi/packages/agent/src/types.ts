@@ -144,13 +144,14 @@ export interface AgentTurnContext {
 }
 
 /** Decision returned by {@link FinishTurn}. Returning undefined preserves normal scheduling. */
-export type AgentTurnDecision = { action: "continue" } | { action: "end" };
+export type AgentTurnDecision = { action: "continue" } | { action: "end" } | { action: "retry" };
 
 /**
  * Called after a completed assistant turn and all of its tool-result messages, but before `turn_end`.
  * On a normal turn, `{ action: "continue" }` ensures one next provider request. Tool-result, steering, or
  * follow-up scheduling can satisfy that request and adds no extra request; otherwise the loop continues once
- * with the current context. Error and aborted responses remain hard exits.
+ * with the current context. Only an explicit `retry` can recover an error or provider-aborted response;
+ * an aborted run signal always exits. Recovery hooks must bound retries and prepare valid next-turn context.
  */
 export type FinishTurn = (
 	turn: AgentTurnContext,
@@ -258,8 +259,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * `{ action: "end" }` ends the run without polling queues or preparing another request.
 	 * On a normal turn, `{ action: "continue" }` ensures one next provider request. Tool-result, steering, or
 	 * follow-up scheduling can satisfy that request and adds no extra request; otherwise the loop continues once
-	 * with the current context. Returning undefined preserves normal scheduling. Error and aborted responses remain
-	 * hard exits.
+	 * with the current context. Returning undefined preserves normal scheduling. Error and provider-aborted responses
+	 * exit unless the hook explicitly returns `retry`; an aborted run signal always exits.
 	 */
 	finishTurn?: FinishTurn;
 

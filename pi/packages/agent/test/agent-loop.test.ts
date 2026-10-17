@@ -1118,6 +1118,39 @@ describe("agentLoop with AgentMessage", () => {
 		expect(ordering.slice(-3)).toEqual(["message_end:toolResult", "finishTurn", "turn_end"]);
 	});
 
+	it.each(["error", "aborted"] as const)("recovers %s only with an explicit retry decision and a live signal", async (reason) => {
+		for (const cancel of [false, true]) {
+			const controller = new AbortController();
+			let requests = 0;
+			let preparations = 0;
+			const events: AgentEvent[] = [];
+			await runAgentLoop([createUserMessage("run")], { messages: [], tools: [] }, {
+				model: createModel(), convertToLlm: identityConverter,
+				finishTurn: ({ message }) => {
+					if (message.stopReason === reason) {
+						if (cancel) controller.abort();
+						return { action: "retry" };
+					}
+				},
+				prepareNextTurn: ({ context }) => {
+					preparations++;
+					return { context, messages: [createUserMessage("Continue unfinished work")] };
+				},
+			}, (event) => { events.push(event); }, controller.signal, () => {
+				const stream = new MockAssistantStream();
+				const first = ++requests === 1;
+				queueMicrotask(() => {
+					if (first) stream.push({ type: "error", reason, error: { ...createAssistantMessage([], reason), errorMessage: "aborted" } });
+					else stream.push({ type: "done", reason: "stop", message: createAssistantMessage([{ type: "text", text: "done" }]) });
+				});
+				return stream;
+			});
+			expect(requests).toBe(cancel ? 1 : 2);
+			expect(preparations).toBe(cancel ? 0 : 1);
+			expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
+		}
+	});
+
 	it.each(["error", "aborted"] as const)(
 		"runs finishTurn for a %s assistant before turn_end without changing the hard exit",
 		async (reason) => {
