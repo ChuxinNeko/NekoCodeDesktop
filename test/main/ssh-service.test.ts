@@ -17,6 +17,7 @@ import {
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
+import { PassThrough } from "node:stream";
 import { Server, utils, type Connection } from "ssh2";
 import { describeSshError, hostKeyFingerprint, remoteCwd, shellQuotePath, SshService } from "../../src/main/ssh-service";
 import { SshStore } from "../../src/main/ssh-store";
@@ -25,6 +26,21 @@ import { configureSshTool, createSshTool } from "../../src/main/ssh-tool";
 const { STATUS_CODE, flagsToString } = utils.sftp;
 const USER = "neko";
 const PASSWORD = "p@ss 'word";
+
+test("command timeout returns even when the peer never acknowledges channel close", async () => {
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	let terminationRequested = false;
+	const channel = Object.assign(stdout, { stderr, signal: () => { terminationRequested = true; }, close: () => {} });
+	const client = { exec: (_command: string, ready: (error: null, stream: unknown) => void) => {
+		ready(null, channel); stdout.write("output before timeout");
+	} };
+	const service = new SshService({} as SshStore);
+	const runner = service as unknown as { run(client: unknown, command: string, cwd: null, timeoutMs: number): Promise<{ timedOut: boolean; stdout: string }> };
+	const result = await runner.run(client, "unresponsive remote", null, 20);
+	expect(result.timedOut).toBe(true); expect(result.stdout).toBe("output before timeout"); expect(terminationRequested).toBe(true);
+	stdout.destroy(); stderr.destroy();
+}, 2000);
 
 const dirs: string[] = [];
 function tmp(prefix: string): string {

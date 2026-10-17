@@ -1,7 +1,7 @@
 import type { FusionConfig } from "../../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../../shared/code-intel";
 import type { LanStatus } from "../../shared/lan";
-import type { SshHostInput, SshStatus, SshTestResult } from "../../shared/ssh";
+import type { SshHostInput, SshStatus, SshTestResult, SandboxDeployment } from "../../shared/ssh";
 import type {
 	DesktopAction,
 	DesktopController,
@@ -9,6 +9,7 @@ import type {
 	DesktopKeyInput,
 	DesktopPointerInput,
 	DesktopState,
+	DesktopResolutionInfo,
 } from "../../shared/remote-desktop";
 import type { AppVersionInfo, UpdateCheckResult, UpdateInstallState } from "../../shared/updates";
 import type {
@@ -493,7 +494,14 @@ export interface AgentApi {
 	desktopStates(): Promise<DesktopState[]>;
 	/** Open a saved host's remote desktop with the user in control. */
 	desktopConnect(hostId: string): Promise<DesktopState>;
+	desktopResolutionInfo(hostId: string): Promise<DesktopResolutionInfo>;
+	desktopSetResolution(hostId: string, width: number, height: number): Promise<DesktopResolutionInfo>;
 	desktopDisconnect(hostId: string): Promise<void>;
+	desktopSandboxStop(hostId: string): Promise<void>;
+	desktopSandboxReset(hostId: string): Promise<void>;
+	onSshChanged(listener: (status: SshStatus) => void): () => void;
+	sshSandboxDeployments(): Promise<SandboxDeployment[]>;
+	onSandboxDeployment(listener: (state: SandboxDeployment) => void): () => void;
 	desktopSetController(hostId: string, controller: DesktopController): Promise<DesktopState>;
 	/** Frames are sent only while a panel watches. */
 	desktopWatch(hostId: string, watching: boolean): Promise<void>;
@@ -502,6 +510,7 @@ export interface AgentApi {
 	onDesktopState(listener: (states: DesktopState[]) => void): () => void;
 	onDesktopFrame(listener: (frame: DesktopFrame) => void): () => void;
 	onDesktopAction(listener: (action: DesktopAction) => void): () => void;
+	onDesktopViewerEscape(listener: (partition: string) => void): () => void;
 
 	prList(cwd: string, filter: PullRequestFilter): Promise<PullRequestListResult>;
 	prDetail(cwd: string, number: number): Promise<PullRequestDetail>;

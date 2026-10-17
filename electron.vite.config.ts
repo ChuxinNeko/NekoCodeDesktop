@@ -2,6 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
+import { cpSync } from "node:fs";
 import type { Plugin } from "vite";
 
 const rendererSrc = resolve("src/renderer/src");
@@ -38,7 +39,12 @@ export default defineConfig({
   main: {
     // Bundle imported native icons into out/main instead of leaving paths to resources/.
     publicDir: "resources/public",
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), {
+      name: "nekocode:sandbox-assets",
+      writeBundle() {
+        cpSync(resolve("server/sandbox"), resolve("out/main/sandbox"), { recursive: true });
+      },
+    }],
     build: {
       // Lib mode with a second entry, rather than rollupOptions.input: an explicit
       // input turns off the lib build this config relies on (single CommonJS

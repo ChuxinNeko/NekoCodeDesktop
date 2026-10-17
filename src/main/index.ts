@@ -280,7 +280,10 @@ let sshState: { store: SshStore; service: SshService } | null = null;
 function ssh(): { store: SshStore; service: SshService } {
 	if (!sshState) {
 		const store = new SshStore(app.getPath("userData"), safeStorage);
-		sshState = { store, service: new SshService(store) };
+		sshState = { store, service: new SshService(store, state => {
+			for (const window of BrowserWindow.getAllWindows())
+				if (!window.isDestroyed()) window.webContents.send("ssh:sandboxDeployment", state);
+		}) };
 	}
 	return sshState;
 }
@@ -1790,6 +1793,7 @@ function registerIpc(): void {
 	ipcMain.handle("github:clear", () => githubAuth?.clear());
 
 	ipcMain.handle("ssh:status", () => ssh().store.status());
+	ipcMain.handle("ssh:sandboxDeployments", () => ssh().service.sandboxDeployments());
 	ipcMain.handle("ssh:save", (_e, input: unknown) => {
 		const { store, service } = ssh();
 		const status = store.save(input);
@@ -1799,18 +1803,33 @@ function registerIpc(): void {
 			service.disconnect(id);
 			remoteDesktops?.disconnect(id);
 		}
+		for (const window of BrowserWindow.getAllWindows())
+			if (!window.isDestroyed()) window.webContents.send("ssh:changed", status);
+		const saved = typeof id === "string" ? status.hosts.find(host => host.id === id) : status.hosts.at(-1);
+		if (saved?.desktopMode === "sandbox") void service.prepareSandbox(saved.id).catch(() => {});
 		return status;
 	});
 	ipcMain.handle("ssh:remove", (_e, id: string) => {
 		ssh().service.disconnect(id);
 		remoteDesktops?.disconnect(id);
-		return ssh().store.remove(id);
+		const status = ssh().store.remove(id);
+		for (const window of BrowserWindow.getAllWindows())
+			if (!window.isDestroyed()) window.webContents.send("ssh:changed", status);
+		return status;
 	});
 
 	ipcMain.handle("desktop:states", () => remoteDesktops?.states() ?? []);
 	// Opened from the panel, the user is the one who wants to drive it.
 	ipcMain.handle("desktop:connect", (_e, hostId: string) => desktops().connect(hostId, "user"));
+	ipcMain.handle("desktop:resolutionInfo", (_e, hostId: string) => desktops().resolutionInfo(hostId));
+	ipcMain.handle("desktop:setResolution", (_e, hostId: string, width: number, height: number) => desktops().setResolution(hostId, width, height));
 	ipcMain.handle("desktop:disconnect", (_e, hostId: string) => remoteDesktops?.disconnect(hostId));
+	for (const [channel, action] of [["desktop:sandboxStop", "stop"], ["desktop:sandboxReset", "reset"]] as const) {
+		ipcMain.handle(channel, async (_e, hostId: string) => {
+			remoteDesktops?.disconnect(hostId);
+			await ssh().service.manageSandbox(hostId, action);
+		});
+	}
 	ipcMain.handle("desktop:setController", (_e, hostId: string, controller: DesktopController) => {
 		if (controller !== "agent" && controller !== "user") throw new Error("Invalid controller");
 		return desktops().setController(hostId, controller);

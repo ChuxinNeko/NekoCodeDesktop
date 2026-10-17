@@ -1,0 +1,24 @@
+Port 22
+ListenAddress 0.0.0.0
+HostKey /run/neko/ssh_host_ed25519_key
+PidFile /run/neko/sshd.pid
+PermitRootLogin no
+AllowUsers neko
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+UsePAM no
+AuthorizedKeysFile /run/neko/authorized_keys
+StrictModes yes
+AllowTcpForwarding local
+PermitOpen 127.0.0.1:5900
+GatewayPorts no
+AllowAgentForwarding no
+X11Forwarding no
+PermitTunnel no
+PermitUserEnvironment no
+SetEnv DISPLAY=:1 DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/neko-session-bus XDG_RUNTIME_DIR=/tmp/runtime-neko NO_AT_BRIDGE=0
+Subsystem sftp internal-sftp
+PrintMotd no
+LogLevel ERROR

@@ -7,6 +7,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { SshHostDialog } from "./SshHostDialog";
+import { SandboxDeploymentStatus, useSandboxDeployments } from "./SandboxDeploymentStatus";
 
 type Probe = { state: "testing" } | { state: "ok"; result: SshTestResult } | { state: "error"; message: string };
 
@@ -20,11 +21,11 @@ const PROBE_DOT: Record<Probe["state"], string> = {
  * The SSH servers the agent and the terminal can reach.
  *
  * A list of what is saved and whether it answers; the connection details are
- * a dialog, filled in once. The connection is made in-process, so nothing
- * needs installing, and a password is enough.
+ * a dialog, filled in once. Sandbox environments are provisioned over SSH.
  */
 export function SshSettings() {
 	const { t } = useTranslation();
+	const deployments = useSandboxDeployments();
 	const [status, setStatus] = useState<SshStatus | null>(null);
 	const [editing, setEditing] = useState<SshHost | "new" | null>(null);
 	const [removing, setRemoving] = useState<SshHost | null>(null);
@@ -65,7 +66,8 @@ export function SshSettings() {
 			setEditing(null);
 			// Check a new or changed host straight away: a typo is cheaper to find now than mid-deploy.
 			const saved = input.id ? next.hosts.find((host) => host.id === input.id) : next.hosts.at(-1);
-			if (saved) test(saved.id);
+			if (saved) setProbes(current => { const next = { ...current }; delete next[saved.id]; return next; });
+			if (saved && saved.desktopMode !== "sandbox") test(saved.id);
 		});
 
 	return (
@@ -96,6 +98,9 @@ export function SshSettings() {
 				) : null}
 				{status?.hosts.map((host) => {
 					const probe = probes[host.id];
+					const deployment = host.desktopMode === "sandbox" ? deployments[host.id] : undefined;
+					const deploying = !!deployment && !["ready", "error"].includes(deployment.phase);
+					const dot = deployment ? PROBE_DOT[deployment.phase === "ready" ? "ok" : deployment.phase === "error" ? "error" : "testing"] : probe ? PROBE_DOT[probe.state] : "bg-muted-foreground/40";
 					return (
 						<div key={host.id} className="flex flex-col gap-1.5 rounded-lg bg-muted/40 p-3">
 							<div className="flex items-center justify-between gap-3">
@@ -103,7 +108,7 @@ export function SshSettings() {
 									<div className="flex items-center gap-2">
 										<span
 											aria-hidden="true"
-											className={cn("size-2 shrink-0 rounded-full", probe ? PROBE_DOT[probe.state] : "bg-muted-foreground/40")}
+											className={cn("size-2 shrink-0 rounded-full", dot)}
 										/>
 										<span className="truncate">{host.name}</span>
 										<span className="truncate font-mono text-xs text-muted-foreground">
@@ -112,13 +117,13 @@ export function SshSettings() {
 									</div>
 									<p className="mt-1 truncate text-xs text-muted-foreground">
 										{t(`ssh.auth.${host.auth}`)}
-										{host.remoteDir ? ` · ${host.remoteDir}` : ""}
+										{host.desktopMode === "sandbox" ? ` · ${t("ssh.desktop.sandbox")}` : host.remoteDir ? ` · ${host.remoteDir}` : ""}
 										{host.vncPort ? ` · VNC :${host.vncPort}` : ""}
 									</p>
 								</div>
 								<div className="flex shrink-0 items-center gap-1">
 									<Button
-										disabled={busy || probe?.state === "testing"}
+										disabled={busy || probe?.state === "testing" || deploying}
 										onClick={() => test(host.id)}
 										size="xs"
 										variant="subtle"
@@ -154,6 +159,7 @@ export function SshSettings() {
 							) : probe?.state === "error" ? (
 								<p className="break-words text-xs text-destructive">{probe.message}</p>
 							) : null}
+							{host.desktopMode === "sandbox" ? <SandboxDeploymentStatus state={deployments[host.id]} /> : null}
 							{host.fingerprint ? (
 								<div className="flex items-center gap-2 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 									<span className="shrink-0">{t("ssh.hostKey")}</span>

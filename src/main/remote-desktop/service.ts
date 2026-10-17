@@ -11,6 +11,8 @@ import type {
 import { shellQuote } from "../ssh-service";
 import type { SshCredentials } from "../ssh-store";
 import { RfbClient, type RfbRect } from "./rfb";
+import { validateDesktopResolution, type DesktopResolutionInfo } from "../../shared/remote-desktop";
+import { resolutionScript } from "./resolution";
 
 /**
  * Start x11vnc on the desktop the SSH user is logged into, reachable only
@@ -195,6 +197,7 @@ function forward(client: Client, port: number): Promise<ClientChannel> {
  */
 export class RemoteDesktopService {
 	private sessions = new Map<string, Session>();
+	private resizing = new Set<string>();
 
 	constructor(private readonly options: DesktopServiceOptions) {}
 
@@ -243,11 +246,13 @@ export class RemoteDesktopService {
 	private async open(session: Session): Promise<void> {
 		try {
 			const { client, credentials } = await this.options.connect(session.state.hostId);
+			if (session.state.phase === "closed") { client.end(); throw new Error("Desktop connection cancelled"); }
 			session.client = client;
 			session.state.hostName = credentials.name;
 			client.on("close", () => this.closed(session, null));
 			let port = credentials.vncPort;
 			let password = credentials.vncPassword;
+			if (credentials.desktopMode === "sandbox") session.display = ":1";
 			if (port === null) {
 				password = randomBytes(6).toString("base64url").slice(0, 8);
 				const output = await execWithInput(client, `sh -c ${shellQuote(X11VNC_LAUNCH_SCRIPT)}`, `${password}\n`, 30_000);
@@ -451,6 +456,41 @@ export class RemoteDesktopService {
 		const session = this.sessions.get(hostId);
 		if (!session?.client || session.state.phase !== "connected") throw new Error("The remote desktop is not connected");
 		return execWithInput(session.client, command, input, timeoutMs);
+	}
+
+	/** Query the exact X display behind this connection, never guess another display. */
+	async resolutionInfo(hostId: string): Promise<DesktopResolutionInfo> {
+		return this.runResolution(hostId);
+	}
+
+	async setResolution(hostId: string, width: number, height: number): Promise<DesktopResolutionInfo> {
+		validateDesktopResolution(width, height);
+		if (this.resizing.has(hostId)) throw new Error("A resolution change is already in progress");
+		this.resizing.add(hostId);
+		try {
+			const info = await this.runResolution(hostId, { width, height });
+			// RandR success alone is insufficient: the connected VNC server must follow it.
+			const deadline = Date.now() + 5000;
+			while (Date.now() < deadline) {
+				const state = this.state(hostId);
+				if (state?.phase !== "connected") throw new Error("The desktop disconnected during the resolution change");
+				if (state.width === width && state.height === height) return info;
+				await sleep(50);
+			}
+			throw new Error("The X display changed, but VNC has not reported the requested resolution. Reconnect the desktop to refresh it.");
+		} finally { this.resizing.delete(hostId); }
+	}
+
+	private async runResolution(hostId: string, size?: { width: number; height: number }): Promise<DesktopResolutionInfo> {
+		const display = this.display(hostId);
+		if (!display || !/^:\d+$/.test(display)) throw new Error("Resolution changes require an automatically connected SSH desktop; the display of an external VNC server is unknown");
+		const output = await this.run(hostId, "python3 -", resolutionScript(display, size), 45_000);
+		const line = output.split(/\r?\n/).reverse().find(line => line.startsWith("NEKO_RESOLUTION="));
+		if (!line) throw new Error(`Cannot query the remote resolution. Ensure python3 and xrandr are installed. ${output.slice(-500)}`);
+		const info = JSON.parse(line.slice("NEKO_RESOLUTION=".length));
+		if (info.error) throw new Error(String(info.error));
+		if (!Number.isInteger(info.width) || !Number.isInteger(info.height) || !Array.isArray(info.modes)) throw new Error("Invalid resolution response");
+		return info;
 	}
 
 	/** Show the panel where the agent is acting. */

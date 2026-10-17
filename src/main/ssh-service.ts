@@ -5,8 +5,11 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { posix } from "node:path";
 import type { Client, ClientChannel, ConnectConfig, SFTPWrapper } from "ssh2";
-import type { SshTestResult } from "../shared/ssh";
+import { SANDBOX_WORKSPACE, type SshTestResult, type SandboxDeployment } from "../shared/ssh";
 import type { SshCredentials, SshStore } from "./ssh-store";
+import { DesktopSandbox } from "./desktop-sandbox";
+import { shellQuote, shellQuotePath } from "./posix-shell";
+export { shellQuote, shellQuotePath } from "./posix-shell";
 
 /** Directories a directory upload leaves behind: history and installable dependencies, not a deployment. */
 export const SKIPPED_UPLOAD_DIRS = new Set([".git", "node_modules"]);
@@ -45,18 +48,6 @@ export interface SshTransferResult {
 /** OpenSSH's form: `SHA256:` and unpadded base64 of the raw host key. */
 export function hostKeyFingerprint(key: Buffer): string {
 	return `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`;
-}
-
-/** Text as one POSIX shell word. */
-export function shellQuote(text: string): string {
-	return `'${text.replace(/'/g, `'\\''`)}'`;
-}
-
-/** A path as one POSIX shell word, keeping a leading `~` outside the quotes so it still expands. */
-export function shellQuotePath(path: string): string {
-	if (path === "~") return "~";
-	if (path.startsWith("~/")) return `~/${shellQuote(path.slice(2))}`;
-	return shellQuote(path);
 }
 
 /** Where a remote command runs: an explicit cwd, resolved against the host's directory when relative. */
@@ -140,10 +131,49 @@ function sftpCall<T>(run: (done: (error: Error | null | undefined, value?: T) =>
  */
 export class SshService {
 	private pool = new Map<string, Pooled>();
+	private sandbox: DesktopSandbox;
+	private generations = new Map<string, number>();
+	private deployments = new Map<string, SandboxDeployment>();
 
-	constructor(private readonly store: SshStore) {}
+	constructor(private readonly store: SshStore, private readonly deploymentReporter?: (state: SandboxDeployment) => void) {
+		this.sandbox = new DesktopSandbox(state => this.reportDeployment(state));
+	}
+	private reportDeployment(state: SandboxDeployment): void {
+		this.deployments.set(state.hostId, state);
+		this.deploymentReporter?.(state);
+	}
+	sandboxDeployments(): SandboxDeployment[] { return [...this.deployments.values()]; }
+
+	async prepareSandbox(hostId: string): Promise<void> {
+		const credentials = this.store.credentials(hostId);
+		if (credentials.desktopMode !== "sandbox") throw new Error("This server is not configured for a sandbox");
+		this.generations.set(hostId, this.generations.get(hostId) ?? 0);
+		this.reportDeployment({ hostId, phase: "checking" });
+		try { await this.sandbox.prepare(hostId, () => this.openHost(credentials)); }
+		catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!message.includes("connection cancelled")) this.reportDeployment({ hostId, phase: "error", error: message });
+			throw error;
+		}
+	}
 
 	private async open(credentials: SshCredentials): Promise<Client> {
+		const generation = this.generations.get(credentials.id) ?? 0;
+		this.generations.set(credentials.id, generation);
+		const outer = await this.openHost(credentials);
+		if (generation !== (this.generations.get(credentials.id) ?? 0)) { outer.end(); throw new Error("SSH connection cancelled"); }
+		return credentials.desktopMode === "sandbox" ? this.sandbox.connect(credentials, outer) : outer;
+	}
+
+	private environmentCredentials(hostId: string): SshCredentials {
+		const credentials = this.store.credentials(hostId);
+		return credentials.desktopMode === "sandbox"
+			? { ...credentials, remoteDir: credentials.sandboxDir ?? SANDBOX_WORKSPACE, vncPort: 5900, vncPassword: null }
+			: credentials;
+	}
+
+	/** The settings probe and sandbox lifecycle are the only callers allowed to use a host shell. */
+	private async openHost(credentials: SshCredentials): Promise<Client> {
 		const { Client } = await loadSsh2();
 		const client = new Client();
 		let seen: string | null = null;
@@ -230,7 +260,7 @@ export class SshService {
 				if (released) return;
 				released = true;
 				if (--held.users > 0 || this.pool.get(hostId) !== held) return;
-				held.idle = setTimeout(() => this.disconnect(hostId), IDLE_MS);
+				held.idle = setTimeout(() => this.dropPool(hostId), IDLE_MS);
 				held.idle.unref?.();
 			},
 		};
@@ -238,6 +268,12 @@ export class SshService {
 
 	/** Drop a host's pooled connection — after it is edited or removed, or on quit. */
 	disconnect(hostId: string): void {
+		this.generations.set(hostId, (this.generations.get(hostId) ?? 0) + 1);
+		this.sandbox.disconnect(hostId);
+		this.dropPool(hostId);
+	}
+
+	private dropPool(hostId: string): void {
 		const entry = this.pool.get(hostId);
 		if (!entry) return;
 		this.pool.delete(hostId);
@@ -246,7 +282,7 @@ export class SshService {
 	}
 
 	disconnectAll(): void {
-		for (const id of [...this.pool.keys()]) this.disconnect(id);
+		for (const id of new Set([...this.pool.keys(), ...this.generations.keys()])) this.disconnect(id);
 	}
 
 	private async withClient<T>(hostId: string, run: (client: Client) => Promise<T>): Promise<T> {
@@ -255,7 +291,7 @@ export class SshService {
 			return await run(client);
 		} catch (error) {
 			// A connection that died under us is not one to hand out again.
-			if (/not connected|no response|ECONNRESET|socket/i.test(String(error))) this.disconnect(hostId);
+			if (/not connected|no response|ECONNRESET|socket/i.test(String(error))) this.dropPool(hostId);
 			throw error;
 		} finally {
 			release();
@@ -263,7 +299,7 @@ export class SshService {
 	}
 
 	private async withSftp<T>(hostId: string, run: (sftp: SFTPWrapper, resolve: (path: string) => Promise<string>) => Promise<T>): Promise<T> {
-		const { remoteDir } = this.store.credentials(hostId);
+		const { remoteDir } = this.environmentCredentials(hostId);
 		return this.withClient(hostId, async (client) => {
 			const sftp = await sftpCall<SFTPWrapper>((done) => client.sftp(done));
 			try {
@@ -285,10 +321,11 @@ export class SshService {
 		});
 	}
 
-	/** Connect afresh, run a harmless probe, and pin the host key if none is pinned yet. */
+	/** Provision sandbox hosts first; then probe management SSH and pin its host key. */
 	async test(hostId: string): Promise<SshTestResult> {
-		this.disconnect(hostId);
-		const client = await this.open(this.store.credentials(hostId));
+		if (this.store.credentials(hostId).desktopMode === "sandbox") await this.prepareSandbox(hostId);
+		else this.disconnect(hostId);
+		const client = await this.openHost(this.store.credentials(hostId));
 		try {
 			const result = await this.run(client, "uname -srm 2>/dev/null || ver", null, 15_000);
 			const fingerprint = this.store.hosts().find((host) => host.id === hostId)?.fingerprint ?? "";
@@ -316,12 +353,13 @@ export class SshService {
 				const timer = setTimeout(() => {
 					timedOut = true;
 					stop();
+					finish(null);
 				}, timeoutMs);
-				const onAbort = () => stop();
+				const onAbort = () => { stop(); finish(null); };
 				signal?.addEventListener("abort", onAbort, { once: true });
 				stream.on("data", (chunk: Buffer) => stdout.push(chunk));
 				stream.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-				stream.on("close", (code: number | null, exitSignal?: string) => {
+				const finish = (code: number | null, exitSignal?: string) => {
 					if (settled) return;
 					settled = true;
 					clearTimeout(timer);
@@ -335,7 +373,9 @@ export class SshService {
 						timedOut,
 						truncated: stdout.dropped + stderr.dropped,
 					});
-				});
+				};
+				stream.on("close", finish);
+				if (signal?.aborted) onAbort();
 			});
 		});
 	}
@@ -345,7 +385,7 @@ export class SshService {
 		command: string,
 		options: { cwd?: string; timeoutMs?: number; signal?: AbortSignal } = {},
 	): Promise<SshExecResult> {
-		const { remoteDir } = this.store.credentials(hostId);
+		const { remoteDir } = this.environmentCredentials(hostId);
 		const timeout = Math.min(Math.max(options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS, 1000), MAX_EXEC_TIMEOUT_MS);
 		return this.withClient(hostId, (client) => this.run(client, command, remoteCwd(remoteDir, options.cwd), timeout, options.signal));
 	}
@@ -443,8 +483,15 @@ export class SshService {
 	 * The caller ends it.
 	 */
 	async dedicated(hostId: string): Promise<{ client: Client; credentials: SshCredentials }> {
-		const credentials = this.store.credentials(hostId);
+		const credentials = this.environmentCredentials(hostId);
 		return { client: await this.open(credentials), credentials };
+	}
+
+	async manageSandbox(hostId: string, action: "stop" | "reset"): Promise<void> {
+		const credentials = this.store.credentials(hostId);
+		if (credentials.desktopMode !== "sandbox") throw new Error("This server is not configured for a sandbox");
+		this.disconnect(hostId);
+		await this.sandbox.manage(hostId, action, () => this.openHost(credentials));
 	}
 
 	/**
@@ -452,12 +499,22 @@ export class SshService {
 	 * own: closing the shell closes it, and it never holds the pool open.
 	 */
 	async shell(hostId: string, size: { cols: number; rows: number }): Promise<{ channel: ClientChannel; close: () => void }> {
-		const credentials = this.store.credentials(hostId);
+		const credentials = this.environmentCredentials(hostId);
 		const client = await this.open(credentials);
 		try {
-			const channel = await new Promise<ClientChannel>((resolve, reject) =>
-				client.shell({ term: "xterm-256color", cols: size.cols, rows: size.rows }, (error, stream) => (error ? reject(error) : resolve(stream))),
-			);
+			const channel = await new Promise<ClientChannel>((resolve, reject) => {
+				let expired = false;
+				const timer = setTimeout(() => {
+					expired = true;
+					client.end();
+					reject(new Error("Remote terminal did not start within 20 seconds"));
+				}, READY_TIMEOUT_MS);
+				client.shell({ term: "xterm-256color", cols: size.cols, rows: size.rows }, (error, stream) => {
+					clearTimeout(timer);
+					if (expired) { stream?.close(); return; }
+					error ? reject(error) : resolve(stream);
+				});
+			});
 			if (credentials.remoteDir) channel.write(`cd ${shellQuotePath(credentials.remoteDir)}\n`);
 			channel.on("close", () => client.end());
 			return { channel, close: () => client.end() };

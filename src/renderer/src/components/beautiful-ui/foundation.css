@@ -1,0 +1,166 @@
+/* Beautiful UI foundation: https://www.beautifului.dev/r/foundation.json
+ * Official tokens and shadow-plugin values, namespaced to avoid app theme collisions. */
+.beautiful-agent-screen {
+  /* surfaces — cool, blue-tinted neutrals */
+  --bui-page: oklch(0.985 0.001 286.376);
+  --bui-canvas: oklch(0.961 0.002 247.84);
+  --bui-surface: oklch(1 0 0);
+  --bui-inset: oklch(0.979 0.002 247.839);
+  --bui-hover: oklch(0.97 0.002 247.839);
+  --bui-hover-2: oklch(0.933 0.003 247.86);
+
+  /* ink ramp */
+  --bui-ink: oklch(0.247 0.006 258.361);
+  --bui-ink-2: oklch(0.506 0.01 264.477);
+  --bui-ink-3: oklch(0.695 0.009 264.505);
+
+  /* borders — solid and crisp, not alpha */
+  --bui-line: oklch(0.946 0.003 264.542);
+  --bui-line-strong: oklch(0.912 0.005 258.326);
+  --bui-line-soft: oklch(0.966 0.002 264.542);
+  --bui-grid-line: color-mix(in srgb, var(--bui-line) 78%, transparent);
+  --bui-field: oklch(0.961 0.001 286.375);
+  --bui-stripe: oklch(0.405 0 0 / 0.075);
+  --bui-stripe-bg: oklch(0.97 0 0);
+
+  /* accent */
+  --bui-accent: oklch(0.626 0.205 254.947);
+  --bui-accent-ink: oklch(0.556 0.187 255.617);
+  --bui-accent-tint: oklch(0.96 0.019 252.878);
+
+  /* semantic */
+  --bui-green: oklch(0.603 0.155 150.883);
+  --bui-green-tint: oklch(0.958 0.017 159.118);
+  --bui-orange: oklch(0.689 0.179 49.902);
+  --bui-orange-tint: oklch(0.964 0.021 67.581);
+  --bui-red: oklch(0.621 0.192 23.042);
+  --bui-red-tint: oklch(0.956 0.017 17.462);
+
+  /* chart overlays — neutral system colors with enough contrast on either theme */
+  --bui-tooltip-bg: oklch(0.272 0.008 264.435);
+  --bui-tooltip-fg: oklch(0.976 0.002 247.839);
+  --bui-tooltip-muted: oklch(0.731 0.008 260.731);
+  --bui-tooltip-border: oklch(0.356 0.007 264.474);
+
+  /* shadows — our solid hairline ring + shadow-plugin's smooth layered stacks
+   * (--bui-shadow-xs…lg come from shadow-plugin/unprefixed) so every surface reads
+   * consistently across the app. */
+  --bui-shadow-hairline: 0 0 0 1px var(--bui-line);
+  --bui-shadow-btn: 0 0 0 1px var(--bui-line-strong), var(--bui-shadow-xs);
+  --bui-shadow-card: 0 0 0 1px var(--bui-line), var(--bui-shadow-sm);
+  --bui-shadow-raised: 0 0 0 1px var(--bui-line), var(--bui-shadow-md);
+  --bui-shadow-overlay: 0 0 0 1px var(--bui-line), var(--bui-shadow-lg);
+  --bui-shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.12);
+}
+
+.dark .beautiful-agent-screen, .beautiful-agent-screen.dark {
+  --bui-page: oklch(0.209 0.004 264.477);
+  --bui-canvas: oklch(0.231 0.004 264.487);
+  --bui-surface: oklch(0.26 0.006 271.191);
+  --bui-inset: oklch(0.243 0.004 264.492);
+  --bui-hover: oklch(0.289 0.006 271.22);
+  --bui-hover-2: oklch(0.318 0.007 274.747);
+
+  --bui-ink: oklch(0.964 0.002 247.839);
+  --bui-ink-2: oklch(0.731 0.008 260.731);
+  --bui-ink-3: oklch(0.541 0.01 264.484);
+
+  --bui-line: oklch(0.308 0.006 258.354);
+  --bui-line-strong: oklch(0.356 0.007 264.474);
+  --bui-line-soft: oklch(0.278 0.006 258.354);
+  --bui-field: oklch(0.293 0.006 271.223);
+  --bui-stripe: oklch(1 0 0 / 0.055);
+  --bui-stripe-bg: oklch(0.226 0.004 264.485);
+
+  --bui-accent: oklch(0.68 0.173 253.301);
+  --bui-accent-ink: oklch(0.788 0.113 248.33);
+  --bui-accent-tint: oklch(0.68 0.173 253.301 / 0.16);
+
+  --bui-green: oklch(0.705 0.154 153.814);
+  --bui-green-tint: oklch(0.705 0.154 153.814 / 0.14);
+  --bui-orange: oklch(0.746 0.156 55.642);
+  --bui-orange-tint: oklch(0.746 0.156 55.642 / 0.14);
+  --bui-red: oklch(0.666 0.18 21.433);
+  --bui-red-tint: oklch(0.666 0.18 21.433 / 0.14);
+
+  --bui-tooltip-bg: oklch(0.182 0.004 264.459);
+  --bui-tooltip-fg: oklch(0.964 0.002 247.839);
+  --bui-tooltip-muted: oklch(0.731 0.008 260.731);
+  --bui-tooltip-border: oklch(0.308 0.006 258.354);
+
+  --bui-shadow-hairline: 0 0 0 1px var(--bui-line);
+  /* Elevation rings go to a subtle *light* hairline in dark mode: the ring
+   * paints over the surface behind the element, so a low-alpha white edge
+   * dissolves into the shadow as one continuous stroke (per smooth-shadow-ring),
+   * graduated by how far the surface floats. */
+  --bui-shadow-btn: 0 0 0 1px oklch(1 0 0 / 0.1), 0 1px 2px oklch(0 0 0 / 0.3);
+  --bui-shadow-card:
+    0 0 0 1px oklch(1 0 0 / 0.11), 0 1px 2px oklch(0 0 0 / 0.2),
+    0 2px 6px oklch(0 0 0 / 0.2);
+  --bui-shadow-raised:
+    0 0 0 1px oklch(1 0 0 / 0.13), 0 2px 10px oklch(0 0 0 / 0.22);
+  --bui-shadow-overlay:
+    0 0 0 1px oklch(1 0 0 / 0.15), 0 8px 28px oklch(0 0 0 / 0.34);
+  --bui-shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.4);
+}
+
+
+.beautiful-agent-screen {
+  --bui-shadow-xs:0 0 4px 0 #0000000a;
+  --bui-shadow-sm:0 18px 47px 0 #00000008,0 7.5px 19px 0 #00000005,0 4px 10.5px 0 #00000005,0 2.3px 5.8px 0 #00000003,0 1.2px 3.1px 0 #00000003,0 .5px 1.3px 0 #00000003;
+  --bui-shadow-md:0 17.54px 23.39px 0 #0000000a,0 9.4px 12.5px 0 #00000008,0 5.25px 7px 0 #00000005,0 2.79px 3.72px -2px #00000003,0 1.16px 1.5px 0 #00000003;
+  --bui-shadow-lg:0 25px 50px 0 #0000000d,0 12px 24px 0 #0000000a,0 6px 12px 0 #00000008,0 3px 6px 0 #00000005,0 1.5px 3px 0 #00000005;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss01";
+}
+@theme inline {
+  /* colors */
+  --color-bui-page: var(--bui-page);
+  --color-bui-canvas: var(--bui-canvas);
+  --color-bui-surface: var(--bui-surface);
+  --color-bui-inset: var(--bui-inset);
+  --color-bui-ink: var(--bui-ink);
+  --color-bui-ink-2: var(--bui-ink-2);
+  --color-bui-ink-3: var(--bui-ink-3);
+  --color-bui-hover: var(--bui-hover);
+  --color-bui-hover-2: var(--bui-hover-2);
+  --color-bui-field: var(--bui-field);
+  --color-bui-line: var(--bui-line);
+  --color-bui-line-strong: var(--bui-line-strong);
+  --color-bui-accent: var(--bui-accent);
+  --color-bui-accent-ink: var(--bui-accent-ink);
+  --color-bui-accent-tint: var(--bui-accent-tint);
+  --color-bui-green: var(--bui-green);
+  --color-bui-green-tint: var(--bui-green-tint);
+  --color-bui-orange: var(--bui-orange);
+  --color-bui-orange-tint: var(--bui-orange-tint);
+  --color-bui-red: var(--bui-red);
+  --color-bui-red-tint: var(--bui-red-tint);
+
+  /* shadows */
+  --shadow-bui-hairline: var(--bui-shadow-hairline);
+  --shadow-bui-btn: var(--bui-shadow-btn);
+  --shadow-bui-inset-field: var(--bui-shadow-inset-field);
+  --shadow-bui-card: var(--bui-shadow-card);
+  --shadow-bui-raised: var(--bui-shadow-raised);
+  --shadow-bui-overlay: var(--bui-shadow-overlay);
+
+  /* radii — chips 6, controls 8, cards 10, windows 14, pills 999 */
+  --radius-bui-chip: 6px;
+  --radius-bui-control: 8px;
+  --radius-bui-card: 10px;
+  --radius-bui-window: 14px;
+
+  /* easing — strong curves; built-ins are too weak */
+  --ease-bui-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-bui-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-bui-link: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+
+.beautiful-agent-screen .primitive-icon-button { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 8px; }
+@keyframes bui-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes bui-pop-in { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }

@@ -39,7 +39,7 @@ export interface A11ySnapshot {
  */
 export function accessibilityWrapper(display: string | null): string {
 	return [
-		`d=${display && /^\d+$/.test(display) ? display : ""}`,
+		`d=${display && /^:?\d+$/.test(display) ? display.replace(/^:/, "") : ""}`,
 		'if [ -z "$d" ]; then',
 		"  me=$(id -u); best=9",
 		"  for s in /tmp/.X11-unix/X*; do",

@@ -36,7 +36,8 @@ function isStoredHost(value: unknown): value is StoredHost {
 		typeof host.host === "string" && !!host.host &&
 		Number.isInteger(host.port) &&
 		typeof host.username === "string" && !!host.username &&
-		(host.auth === "password" || host.auth === "key")
+		(host.auth === "password" || host.auth === "key") &&
+		(host.desktopMode === undefined || host.desktopMode === "host" || host.desktopMode === "sandbox")
 	);
 }
 
@@ -112,6 +113,7 @@ export class SshStore {
 			fingerprint: host.fingerprint ?? null,
 			hasSecret: !!secret,
 			vncPort: host.vncPort ?? null,
+			desktopMode: host.desktopMode === "sandbox" ? "sandbox" : "host",
 			hasVncPassword: !!vncSecret,
 		};
 	}
@@ -172,6 +174,8 @@ export class SshStore {
 			fingerprint: sameServer ? (current.fingerprint ?? null) : null,
 			...(secret ? { secret } : {}),
 			vncPort: input.vncPort ?? null,
+			desktopMode: input.desktopMode ?? current?.desktopMode ?? "host",
+			sandboxDir: input.sandboxDir ?? current?.sandboxDir,
 			...(vncSecret ? { vncSecret } : {}),
 		};
 		this.persist({

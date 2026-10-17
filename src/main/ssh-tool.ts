@@ -57,7 +57,7 @@ function need<T>(value: T | undefined, name: string, op: Op): T {
 }
 
 function describeHost(host: SshHost): string {
-	return `${host.name} — ${host.username}@${host.host}:${host.port}${host.remoteDir ? ` · dir ${host.remoteDir}` : ""} · id ${host.id}`;
+	return `${host.name} — ${host.username}@${host.host}:${host.port}${host.desktopMode === "sandbox" ? ` · gVisor sandbox · dir ${host.sandboxDir ?? "/home/neko/workspace"}` : host.remoteDir ? ` · dir ${host.remoteDir}` : ""} · id ${host.id}`;
 }
 
 export function pickHost(hosts: SshHost[], ref: string | undefined, find: (ref: string) => SshHost | null): SshHost {
@@ -84,7 +84,7 @@ export function createSshTool(cwd: string, options: { assertWritable?: (path: st
 		name: SSH_TOOL_NAME,
 		label: SSH_TOOL_NAME,
 		description:
-			"Work on the SSH servers the user saved in settings — no ssh/scp install needed, credentials stay with the app. exec runs a non-interactive shell command on the server; upload/download move files over SFTP between the workspace and the server; ls lists a remote directory; hosts shows what is saved. Use it to deploy and verify on the server after checking locally. Remote commands have real effects: run only what the task calls for, and prefer reversible steps.",
+			"Work on saved SSH environments; credentials stay with the app. For a host configured in sandbox mode, ALL commands, file transfers and terminals use its isolated gVisor desktop sandbox, never the host filesystem. exec runs a non-interactive shell; upload/download transfer files; ls lists a directory; hosts identifies each environment. The remote desktop uses the same sandbox. Remote commands have real effects: run only what the task calls for.",
 		promptSnippet: "ssh(op=hosts|exec|upload|download|ls, host?) runs commands and transfers files on the user's saved SSH servers.",
 		parameters: schema,
 		executionMode: "sequential",
@@ -109,7 +109,7 @@ export function createSshTool(cwd: string, options: { assertWritable?: (path: st
 						signal,
 					});
 					const status = result.timedOut
-						? `timed out after ${input.timeout ?? DEFAULT_EXEC_TIMEOUT_MS / 1000}s and was killed`
+						? `timed out after ${input.timeout ?? DEFAULT_EXEC_TIMEOUT_MS / 1000}s; termination was requested`
 						: result.signal ? `killed by ${result.signal}` : `exit code ${result.code ?? "unknown"}`;
 					text = [
 						`[${host.name}] ${status}`,

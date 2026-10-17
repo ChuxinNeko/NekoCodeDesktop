@@ -41,11 +41,12 @@ export function SshHostDialog({
 		privateKeyPath: host?.privateKeyPath ?? "",
 		remoteDir: host?.remoteDir ?? "",
 		secret: "",
-		desktop: host?.vncPort ? ("vnc" as const) : ("auto" as const),
+		desktop: host?.desktopMode === "sandbox" || !host ? ("sandbox" as const) : host?.vncPort ? ("vnc" as const) : ("auto" as const),
+		sandboxDir: host?.sandboxDir ?? "/home/neko/workspace",
 		vncPort: String(host?.vncPort ?? 5901),
 		vncPassword: "",
 	});
-	const field = (key: "name" | "host" | "port" | "username" | "privateKeyPath" | "remoteDir" | "secret" | "vncPort" | "vncPassword") => ({
+	const field = (key: "name" | "host" | "port" | "username" | "privateKeyPath" | "remoteDir" | "secret" | "vncPort" | "vncPassword" | "sandboxDir") => ({
 		value: draft[key],
 		onChange: (event: React.ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, [key]: event.target.value }),
 	});
@@ -58,7 +59,8 @@ export function SshHostDialog({
 		!!draft.host.trim() &&
 		!!draft.username.trim() &&
 		Number.isInteger(port) && port >= 1 && port <= 65535 &&
-		(draft.desktop === "auto" || (Number.isInteger(vncPort) && vncPort >= 1 && vncPort <= 65535)) &&
+		(draft.desktop !== "vnc" || (Number.isInteger(vncPort) && vncPort >= 1 && vncPort <= 65535)) &&
+		(draft.desktop !== "sandbox" || draft.sandboxDir.startsWith("/")) &&
 		(draft.auth === "password" ? keepsSecret || !!draft.secret : !!draft.privateKeyPath.trim());
 
 	const submit = () => {
@@ -76,6 +78,8 @@ export function SshHostDialog({
 			remoteDir: draft.remoteDir || null,
 			...(secret !== undefined ? { secret } : {}),
 			vncPort: draft.desktop === "vnc" ? vncPort : null,
+			desktopMode: draft.desktop === "sandbox" ? "sandbox" : "host",
+			sandboxDir: draft.sandboxDir,
 			// Empty keeps a saved VNC password; there is no way to clear one short of switching to automatic.
 			...(draft.desktop === "vnc" && (draft.vncPassword || !keepsVncPassword) ? { vncPassword: draft.vncPassword } : {}),
 		});
@@ -200,14 +204,14 @@ export function SshHostDialog({
 						)}
 
 						<div className="flex flex-col gap-1">
-							<Label>{t("ssh.remoteDir")}</Label>
-							<Input className="font-mono" placeholder="/srv/my-app" {...field("remoteDir")} />
-							<p className={hint}>{t("ssh.remoteDirHint")}</p>
+							<Label>{t(draft.desktop === "sandbox" ? "ssh.sandboxDir" : "ssh.remoteDir")}</Label>
+							<Input className="font-mono" placeholder={draft.desktop === "sandbox" ? "/home/neko/workspace" : "/srv/my-app"} {...field(draft.desktop === "sandbox" ? "sandboxDir" : "remoteDir")} />
+							<p className={hint}>{t(draft.desktop === "sandbox" ? "ssh.sandboxDirHint" : "ssh.remoteDirHint")}</p>
 						</div>
 						<div className="flex flex-col gap-1.5">
 							<Label>{t("ssh.desktop")}</Label>
 							<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
-								{(["auto", "vnc"] as const).map((mode) => (
+								{(["sandbox", "auto", "vnc"] as const).map((mode) => (
 									<button
 										key={mode}
 										type="button"
@@ -223,7 +227,12 @@ export function SshHostDialog({
 									</button>
 								))}
 							</div>
-							{draft.desktop === "auto" ? (
+							{draft.desktop === "sandbox" ? (
+								<div className="flex flex-col gap-2">
+									<p className={hint}>{t("ssh.desktop.sandboxHint")}</p>
+									<p className="rounded-lg bg-muted/50 p-2 text-xs leading-relaxed text-muted-foreground">{t("ssh.sandboxRequirements")}</p>
+								</div>
+							) : draft.desktop === "auto" ? (
 								<p className={hint}>{t("ssh.desktop.autoHint")}</p>
 							) : (
 								<div className="flex gap-2">

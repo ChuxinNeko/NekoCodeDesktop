@@ -79,6 +79,13 @@ export function installBrowserGuards(win: BrowserWindow, viewers: () => readonly
 		guests.set(guest.id, { guest, viewer });
 		guest.once("destroyed", () => guests.delete(guest.id));
 		guest.setWindowOpenHandler(() => ({ action: "deny" }));
+		// A focused webview consumes keyboard events before the host's dialog can
+		// see them. Forward Escape so the desktop viewer can collapse as well.
+		guest.on("before-input-event", (_event, input) => {
+			if (input.type === "keyDown" && input.key === "Escape" && !win.isDestroyed()) {
+				win.webContents.send("desktop:viewer-escape", viewer.partition);
+			}
+		});
 		guest.on("will-navigate", (event, url) => {
 			if (!isDesktopViewerUrl(viewer, url)) event.preventDefault();
 		});

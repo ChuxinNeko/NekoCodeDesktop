@@ -1,7 +1,7 @@
 import type { FusionConfig } from "../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
 import type { LanStatus } from "../shared/lan";
-import type { SshHostInput, SshStatus, SshTestResult } from "../shared/ssh";
+import type { SshHostInput, SshStatus, SshTestResult, SandboxDeployment } from "../shared/ssh";
 import type {
 	DesktopAction,
 	DesktopController,
@@ -9,6 +9,7 @@ import type {
 	DesktopKeyInput,
 	DesktopPointerInput,
 	DesktopState,
+	DesktopResolutionInfo,
 } from "../shared/remote-desktop";
 import type { AppVersionInfo, UpdateCheckResult, UpdateInstallState } from "../shared/updates";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
@@ -506,10 +507,17 @@ const api = {
 	sshTest: (id: string): Promise<SshTestResult> => ipcRenderer.invoke("ssh:test", id),
 	sshForgetHostKey: (id: string): Promise<SshStatus> => ipcRenderer.invoke("ssh:forgetHostKey", id),
 	sshChooseKey: (): Promise<string | null> => ipcRenderer.invoke("ssh:chooseKey"),
+	onSshChanged: (listener: (status: SshStatus) => void) => subscribe("ssh:changed", listener),
+	sshSandboxDeployments: (): Promise<SandboxDeployment[]> => ipcRenderer.invoke("ssh:sandboxDeployments"),
+	onSandboxDeployment: (listener: (state: SandboxDeployment) => void) => subscribe("ssh:sandboxDeployment", listener),
 
 	desktopStates: (): Promise<DesktopState[]> => ipcRenderer.invoke("desktop:states"),
 	desktopConnect: (hostId: string): Promise<DesktopState> => ipcRenderer.invoke("desktop:connect", hostId),
+	desktopResolutionInfo: (hostId: string): Promise<DesktopResolutionInfo> => ipcRenderer.invoke("desktop:resolutionInfo", hostId),
+	desktopSetResolution: (hostId: string, width: number, height: number): Promise<DesktopResolutionInfo> => ipcRenderer.invoke("desktop:setResolution", hostId, width, height),
 	desktopDisconnect: (hostId: string): Promise<void> => ipcRenderer.invoke("desktop:disconnect", hostId),
+	desktopSandboxStop: (hostId: string): Promise<void> => ipcRenderer.invoke("desktop:sandboxStop", hostId),
+	desktopSandboxReset: (hostId: string): Promise<void> => ipcRenderer.invoke("desktop:sandboxReset", hostId),
 	desktopSetController: (hostId: string, controller: DesktopController): Promise<DesktopState> =>
 		ipcRenderer.invoke("desktop:setController", hostId, controller),
 	desktopWatch: (hostId: string, watching: boolean): Promise<void> => ipcRenderer.invoke("desktop:watch", hostId, watching),
@@ -518,6 +526,7 @@ const api = {
 	onDesktopState: (listener: (states: DesktopState[]) => void) => subscribe("desktop:state", listener),
 	onDesktopFrame: (listener: (frame: DesktopFrame) => void) => subscribe("desktop:frame", listener),
 	onDesktopAction: (listener: (action: DesktopAction) => void) => subscribe("desktop:action", listener),
+	onDesktopViewerEscape: (listener: (partition: string) => void) => subscribe("desktop:viewer-escape", listener),
 
 	prList: (cwd: string, filter: PullRequestFilter): Promise<PullRequestListResult> =>
 		ipcRenderer.invoke("pr:list", cwd, filter),

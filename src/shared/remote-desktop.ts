@@ -3,6 +3,19 @@ export type DesktopController = "agent" | "user";
 
 export type DesktopPhase = "connecting" | "connected" | "closed";
 
+export interface DesktopResolutionInfo {
+	width: number;
+	height: number;
+	modes: Array<{ width: number; height: number }>;
+	/** XRDP owns the monitor layout; resize it from the RDP client. */
+	blockedReason: "rdp" | "multiple-monitors" | null;
+}
+
+export function validateDesktopResolution(width: number, height: number): void {
+	if (!Number.isInteger(width) || !Number.isInteger(height) || width < 256 || height < 256 || width > 4096 || height > 4096)
+		throw new Error("Resolution width and height must be whole numbers between 256 and 4096");
+}
+
 export interface DesktopState {
 	hostId: string;
 	hostName: string;

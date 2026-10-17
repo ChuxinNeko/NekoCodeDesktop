@@ -7,18 +7,23 @@ import { useTranslation } from "../../i18n";
 import { Button } from "../ui/button";
 
 /** A renderer-only guest. Its one-use URL never enters app state or agent tools. */
-export function McpDesktopViewer({ serverId, viewer, visible, revision, onRetry }: {
+export function McpDesktopViewer({ serverId, viewer, visible, revision, onRetry, onEscape }: {
 	serverId: string;
 	viewer: Viewer;
 	visible: boolean;
 	revision: number;
 	onRetry: () => void;
+	onEscape?: () => void;
 }) {
 	const { t } = useTranslation();
 	const host = useRef<HTMLDivElement>(null);
 	const [activated, setActivated] = useState(visible);
 	const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
 	useEffect(() => { if (visible) setActivated(true); }, [visible]);
+	useEffect(() => {
+		if (!onEscape) return;
+		return api.onDesktopViewerEscape(partition => { if (partition === viewer.partition) onEscape(); });
+	}, [onEscape, viewer.partition]);
 
 	useEffect(() => {
 		if (!activated || api.runtime !== "electron") return;

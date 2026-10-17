@@ -1,4 +1,13 @@
 export type SshAuthMethod = "password" | "key";
+export type SshDesktopMode = "host" | "sandbox";
+export const SANDBOX_HOME = "/home/neko";
+export const SANDBOX_WORKSPACE = `${SANDBOX_HOME}/workspace`;
+
+export interface SandboxDeployment {
+	hostId: string;
+	phase: "checking" | "dependencies" | "runtime" | "image" | "network" | "ready" | "error";
+	error?: string;
+}
 
 /**
  * A saved SSH server, as the settings page and the terminal see it. Secrets
@@ -25,6 +34,9 @@ export interface SshHost {
 	 */
 	vncPort: number | null;
 	hasVncPassword: boolean;
+	/** Missing on legacy hosts: use the existing host desktop. Sandbox routes all SSH work into gVisor. */
+	desktopMode?: SshDesktopMode;
+	sandboxDir?: string;
 }
 
 /**
@@ -44,6 +56,8 @@ export interface SshHostInput {
 	vncPort?: number | null;
 	/** Same rule as `secret`: absent keeps, empty clears. */
 	vncPassword?: string;
+	desktopMode?: SshDesktopMode;
+	sandboxDir?: string;
 }
 
 export interface SshStatus {
@@ -93,6 +107,10 @@ export function validateSshHostInput(value: unknown): SshHostInput {
 	const vncPort = input.vncPort === undefined || input.vncPort === null || input.vncPort === "" ? null : Number(input.vncPort);
 	if (vncPort !== null && (!Number.isInteger(vncPort) || vncPort < 1 || vncPort > 65535)) throw new Error("The VNC port must be 1–65535");
 	const vncPassword = input.vncPassword;
+	if (input.desktopMode !== undefined && input.desktopMode !== "host" && input.desktopMode !== "sandbox")
+		throw new Error("Invalid desktop environment");
+	const sandboxDir = optional("sandboxDir", 4096) ?? SANDBOX_WORKSPACE;
+	if (!sandboxDir.startsWith("/") || sandboxDir.includes("\0")) throw new Error("Sandbox directory must be an absolute Linux path");
 	if (vncPassword !== undefined && (typeof vncPassword !== "string" || vncPassword.length > MAX_SSH_SECRET_LENGTH))
 		throw new Error("Invalid VNC password");
 	return {
@@ -106,6 +124,8 @@ export function validateSshHostInput(value: unknown): SshHostInput {
 		remoteDir: optional("remoteDir", 4096),
 		...(secret !== undefined ? { secret } : {}),
 		vncPort,
+		...(input.desktopMode !== undefined ? { desktopMode: input.desktopMode } : {}),
+		...(input.sandboxDir !== undefined ? { sandboxDir } : {}),
 		...(vncPassword !== undefined ? { vncPassword } : {}),
 	};
 }

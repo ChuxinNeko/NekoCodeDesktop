@@ -108,10 +108,14 @@ export function createWebUiApi(runtime: WebUiRuntime): AgentApi {
 		onUpdateInstallState: () => () => {},
 		// SSH passwords are configured on the desktop; remote shells stay there too.
 		sshStatus: () => Promise.resolve({ hosts: [], canStoreSecrets: false }),
+		onSshChanged: () => () => {},
+		sshSandboxDeployments: () => Promise.resolve([]),
+		onSandboxDeployment: () => () => {},
 		desktopStates: () => Promise.resolve([]),
 		onDesktopState: () => () => {},
 		onDesktopFrame: () => () => {},
 		onDesktopAction: () => () => {},
+		onDesktopViewerEscape: () => () => {},
 	};
 	for (const [method, channel] of Object.entries(SUBSCRIPTIONS)) {
 		base[method] = (listener: (payload: never) => void) => subscribe(channel, listener);

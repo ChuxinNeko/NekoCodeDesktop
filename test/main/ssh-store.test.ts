@@ -27,6 +27,19 @@ function fakeEncryption(available = true) {
 const base = { name: "prod", host: "10.0.0.5", port: 22, username: "deploy", auth: "password" as const, secret: "hunter2" };
 
 describe("SshStore", () => {
+	test("keeps legacy hosts in host mode and persists explicit sandbox selection", () => {
+		const dir = tmp();
+		const store = new SshStore(dir, fakeEncryption());
+		const id = store.save(base).hosts[0].id;
+		expect(store.credentials(id).desktopMode).toBe("host");
+		store.save({ ...base, id, desktopMode: "sandbox", sandboxDir: "/home/neko/project" });
+		expect(new SshStore(dir, fakeEncryption()).credentials(id)).toMatchObject({ desktopMode: "sandbox", sandboxDir: "/home/neko/project" });
+		store.save({ ...base, id, name: "renamed" });
+		expect(store.credentials(id).desktopMode).toBe("sandbox");
+		expect(store.credentials(id).sandboxDir).toBe("/home/neko/project");
+		expect(() => store.save({ ...base, desktopMode: "container" })).toThrow("environment");
+		expect(() => store.save({ ...base, sandboxDir: "../../host" })).toThrow("absolute Linux path");
+	});
 	test("keeps the password encrypted and out of the renderer's view", () => {
 		const dir = tmp();
 		const store = new SshStore(dir, fakeEncryption());
