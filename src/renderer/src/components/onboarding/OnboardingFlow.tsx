@@ -2,6 +2,7 @@
 // Purpose: First-launch setup — name, working directory, theme, model, preferences.
 // Layer: App shell (rendered by main.tsx before <App /> until completed or skipped).
 
+import { AppearanceSettings } from "../settings/AppearanceSettings";
 import { useEffect, useMemo, useState } from "react";
 import type { ModelApiProtocol } from "../../../../shared/settings";
 import { PROTOCOL_DEFAULT_ROUTE } from "../../../../shared/model-protocol";
@@ -354,6 +355,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 												</button>
 											))}
 										</div>
+										<AppearanceSettings embedded />
 									</div>
 								) : null}
 
@@ -467,7 +469,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 								{error ? <p className="mt-4 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">{error}</p> : null}
 							</section>
 
-							<div className="flex items-center justify-between px-3 py-2.5">
+							<div className="sticky bottom-0 z-10 -mx-1.5 -mb-1.5 flex items-center justify-between rounded-b-[26px] bg-background px-[18px] py-2.5 [background-image:linear-gradient(color-mix(in_srgb,var(--secondary)_60%,transparent),color-mix(in_srgb,var(--secondary)_60%,transparent))]">
 								<button
 									type="button"
 									onClick={step === "models" || step === "workspace" ? skipStep : skipAll}
@@ -572,7 +574,6 @@ function ThemePreview({ mode }: { mode: ThemeMode }) {
 		<div className={cn("flex h-full flex-1 flex-col gap-1 p-1.5", dark ? "bg-[#161616]" : "bg-[#fafaf9]")}>
 			<span className={cn("h-1.5 w-8 rounded-full", dark ? "bg-white/70" : "bg-black/70")} />
 			<span className={cn("h-1.5 w-12 rounded-full", dark ? "bg-white/25" : "bg-black/20")} />
-			<span className="mt-auto h-3 rounded bg-gradient-to-r from-[#6a6df5] to-[#b24ef0]" />
 		</div>
 	);
 	return (

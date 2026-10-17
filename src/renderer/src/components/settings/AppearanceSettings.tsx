@@ -488,7 +488,7 @@ function CommunityThemesDialog({ onClose, onImport }: { onClose: () => void; onI
 	);
 }
 
-export function AppearanceSettings() {
+export function AppearanceSettings({ embedded = false }: { embedded?: boolean } = {}) {
 	const { t } = useTranslation();
 	const {
 		theme,
@@ -537,6 +537,7 @@ export function AppearanceSettings() {
 	return (
 		<div className="flex flex-col gap-6">
 			<SettingsGroup title={t("settings.appearance.group.theme")}>
+				{embedded ? null : (
 				<SettingsRow hint={t("settings.themeModeHint")} label={t("settings.themeMode")}>
 					<SegmentedControl
 						onChange={setTheme}
@@ -544,6 +545,7 @@ export function AppearanceSettings() {
 						value={theme}
 					/>
 				</SettingsRow>
+				)}
 
 				<SettingsRow hint={t("settings.codeThemeHint", { variant: variantLabel })} label={t("settings.codeTheme")}>
 					<Menu open={menuOpen} onOpenChange={setMenuOpen}>
