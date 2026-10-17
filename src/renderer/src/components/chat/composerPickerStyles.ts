@@ -11,6 +11,10 @@ export { COMPOSER_PICKER_SIZE, type ComposerPickerSize } from "./composerPickerS
 export const COMPOSER_SURFACE_SHADOW_CLASS_NAME =
   "shadow-[0_4px_18px_-6px_color-mix(in_srgb,var(--foreground)_7%,transparent)] dark:shadow-[0_6px_24px_-10px_rgba(0,0,0,0.30)]";
 
+/** Floating controls let transcript content remain visible through their frosted surface. */
+export const COMPOSER_FLOATING_CONTROL_CLASS_NAME =
+  "rounded-full border border-border/60 bg-background/65 shadow-md backdrop-blur-xl backdrop-saturate-150 hover:bg-background/80";
+
 // Uses the UI-sm token so picker labels sit slightly below the editor text size.
 // The sm: override is required to beat the Button component's base responsive text classes.
 export const COMPOSER_PICKER_TRIGGER_TEXT_CLASS_NAME =

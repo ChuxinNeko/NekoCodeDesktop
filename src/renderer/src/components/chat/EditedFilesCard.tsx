@@ -4,7 +4,7 @@
 //          in the transcript, with undo and review.
 // Layer: Chat component
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CheckpointSummary } from "../../../../shared/checkpoints";
 import { useTranslation } from "../../i18n";
 import {
@@ -17,6 +17,8 @@ import {
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Button } from "../ui/button";
+import { COMPOSER_FLOATING_CONTROL_CLASS_NAME } from "./composerPickerStyles";
+import { LiveChangesDiff } from "./LiveChangesDiff";
 import { DiffStat } from "../ui/diff-stat";
 
 /** Rows listed before the rest fold behind a "show more" line. */
@@ -29,12 +31,14 @@ const COLLAPSED_FILE_COUNT = 3;
  * This answers the question left once the turn is done: which files the answer
  * stands on, and how much each moved. The data is the turn's own checkpoint.
  *
- * While the run is in flight the composer shows only a capsule (file count and
- * line totals). The full card is rendered in the transcript after the turn
- * ends, so it scrolls with the conversation instead of staying pinned.
+ * While the run is in flight the composer shows a capsule (file count and
+ * line totals). Hovering it opens the diff in a preview above the capsule;
+ * the capsule itself stays the same size. The full card is rendered in the
+ * transcript after the turn ends, so it scrolls with the conversation.
  */
 export function EditedFilesCard({
 	checkpoint,
+	cwd,
 	live = false,
 	disabled,
 	onRestore,
@@ -43,6 +47,7 @@ export function EditedFilesCard({
 }: {
 	/** The checkpoint the turn started from; its `files` are the turn's edits. */
 	checkpoint: CheckpointSummary;
+	cwd?: string | null;
 	/** Compact capsule above the composer while this turn is still running. */
 	live?: boolean;
 	/** A run is in flight, so a rewind would race it. */
@@ -54,25 +59,115 @@ export function EditedFilesCard({
 }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
+	const [previewOpen, setPreviewOpen] = useState(false);
 	const files = checkpoint.files;
+	const detailId = useId();
+	const previewRef = useRef<HTMLDivElement>(null);
+	const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => () => {
+		if (openTimer.current) clearTimeout(openTimer.current);
+		if (closeTimer.current) clearTimeout(closeTimer.current);
+	}, []);
+
+	const cancelPreviewTimers = () => {
+		if (openTimer.current) clearTimeout(openTimer.current);
+		if (closeTimer.current) clearTimeout(closeTimer.current);
+		openTimer.current = null;
+		closeTimer.current = null;
+	};
+	const showPreview = () => {
+		if (closeTimer.current) clearTimeout(closeTimer.current);
+		closeTimer.current = null;
+		if (previewOpen || openTimer.current) return;
+		openTimer.current = setTimeout(() => {
+			openTimer.current = null;
+			setPreviewOpen(true);
+		}, 140);
+	};
+	const showPreviewNow = () => {
+		cancelPreviewTimers();
+		setPreviewOpen(true);
+	};
+	const hidePreview = () => {
+		if (openTimer.current) clearTimeout(openTimer.current);
+		openTimer.current = null;
+		if (closeTimer.current) clearTimeout(closeTimer.current);
+		closeTimer.current = setTimeout(() => {
+			closeTimer.current = null;
+			const current = previewRef.current;
+			const focused = document.activeElement;
+			if (current && focused instanceof Node && current.contains(focused)) return;
+			setPreviewOpen(false);
+		}, 120);
+	};
 
 	if (live) {
 		return (
-			<div className="mb-2 flex justify-center">
+			<div className="absolute bottom-2 left-1/2 z-30 max-w-full -translate-x-1/2">
 				<div
-					aria-label={t("fileEdit.changes")}
-					data-slot="edited-files"
-					data-live="true"
-					className="flex w-fit max-w-full items-center gap-3 rounded-full border border-border/70 bg-background px-3 py-1.5 shadow-md"
+					ref={previewRef}
+					className="relative w-fit max-w-full"
+					onMouseEnter={showPreview}
+					onMouseLeave={hidePreview}
+					onFocus={showPreviewNow}
+					onBlur={(event) => {
+						const next = event.relatedTarget;
+						if (next instanceof Node && event.currentTarget.contains(next)) return;
+						hidePreview();
+					}}
+					onKeyDown={(event) => {
+						if (event.key !== "Escape") return;
+						cancelPreviewTimers();
+						setPreviewOpen(false);
+						event.stopPropagation();
+					}}
 				>
-					<span className="min-w-0 truncate text-[length:var(--app-font-size-ui,12px)] font-medium" aria-live="polite">
-						{t("fileEdit.liveSummary", { count: files.length })}
-					</span>
-					<DiffStat
-						className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]"
-						insertions={checkpoint.additions}
-						deletions={checkpoint.deletions}
-					/>
+					{previewOpen ? (
+						<div
+							id={detailId}
+							role="region"
+							aria-label={t("fileEdit.changes")}
+							data-live-preview=""
+							className="absolute bottom-full left-1/2 z-30 w-[min(42rem,100cqi)] -translate-x-1/2 pb-2"
+						>
+							<div className="overflow-hidden rounded-2xl border border-border/60 bg-background/80 shadow-xl backdrop-blur-xl">
+								<LiveChangesDiff checkpoint={checkpoint} cwd={cwd} />
+								{onReview ? (
+									<button
+										type="button"
+										onClick={onReview}
+										className="w-full border-t border-border/60 px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+									>
+										{t("review.title")} ↗
+									</button>
+								) : null}
+							</div>
+						</div>
+					) : null}
+					<button
+						type="button"
+						aria-expanded={previewOpen}
+						aria-controls={previewOpen ? detailId : undefined}
+						aria-label={t("fileEdit.changes")}
+						data-slot="edited-files"
+						data-live="true"
+						className={cn(
+							COMPOSER_FLOATING_CONTROL_CLASS_NAME,
+							"flex h-8 w-fit max-w-full items-center gap-3 px-3 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+						)}
+					>
+						<span className="min-w-0 truncate text-[length:var(--app-font-size-ui,12px)] font-medium" aria-live="polite">
+							{t("fileEdit.liveSummary", { count: files.length })}
+						</span>
+						<DiffStat
+							className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]"
+							insertions={checkpoint.additions}
+							deletions={checkpoint.deletions}
+						/>
+						<ChevronUpIcon className="size-3 shrink-0" />
+					</button>
 				</div>
 			</div>
 		);

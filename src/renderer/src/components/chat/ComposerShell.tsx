@@ -556,9 +556,13 @@ export function ComposerShell(props: ComposerShellProps) {
 		: FileIcon;
 
 	return (
-		<div className={cn("px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-1 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]", props.className)}>
-			<ComposerColumnFrame>
-				{props.header}
+		<div className={cn("px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-0 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]", props.className)}>
+			<ComposerColumnFrame className="relative">
+				{props.header ? (
+					<div data-composer-floating-controls="" className="@container pointer-events-none absolute inset-x-0 bottom-full z-20 flex flex-wrap items-end justify-between gap-2 pb-2 [&>*]:pointer-events-auto">
+						{props.header}
+					</div>
+				) : null}
 				<div className={COMPOSER_INPUT_SHELL_CLASS_NAME}>
 					{mentionOpen ? (
 						<ComposerMentionMenu

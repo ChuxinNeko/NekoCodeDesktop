@@ -486,7 +486,7 @@ export function ChatView(props: ChatViewProps) {
 				<div
 					ref={scrollRef}
 					onScroll={onTranscriptScroll}
-					className={cn("min-h-0 flex-1 overflow-y-auto py-5", CHAT_COLUMN_GUTTER_CLASS_NAME)}
+					className={cn("min-h-0 flex-1 overflow-y-auto pt-5 pb-1", CHAT_COLUMN_GUTTER_CLASS_NAME)}
 				>
 					<div className={CHAT_COLUMN_FRAME_CLASS_NAME}>
 						{snapshot.cells.length === 0 ? (
@@ -526,6 +526,9 @@ export function ChatView(props: ChatViewProps) {
 							</>
 						)}
 					</div>
+					{goal && props.onGoalAction ? <GoalBanner goal={goal} onAction={props.onGoalAction} /> : null}
+					<WorkflowPanel workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />
+					<ExtensionPanel ui={snapshot.extensionUi} streaming={snapshot.streaming} onAnswer={answerExtensionUi} />
 					{/* Scroll headroom: lets a fresh turn's prompt reach its middle-upper
 					    position before the answer has produced anything. "Latest" and
 					    jump-to-bottom targets all stop at this spacer's top edge. */}
@@ -548,15 +551,12 @@ export function ChatView(props: ChatViewProps) {
 				) : null}
 			</div>
 
-			{goal && props.onGoalAction ? <GoalBanner goal={goal} onAction={props.onGoalAction} /> : null}
-			<WorkflowPanel workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />
-			<ExtensionPanel ui={snapshot.extensionUi} streaming={snapshot.streaming} onAnswer={answerExtensionUi} />
 			<Composer
 				predictionContext={props.mobile ? undefined : { sessionId: snapshot.session.id, cells: snapshot.cells }}
 				header={<>
 					{props.composerHeader}
 					{liveChanges && (snapshot.streaming || settling) ? (
-						<EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} live />
+						<EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} cwd={props.cwd} live onReview={props.onOpenReview} />
 					) : null}
 				</>}
 				loadCommands={props.loadCommands}
