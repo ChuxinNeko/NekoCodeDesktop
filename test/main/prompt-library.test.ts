@@ -307,6 +307,29 @@ describe("structural and GitHub tool guidance", () => {
 
 
 describe("work stage title discipline", () => {
+	test("overview requests have explicit scope and stop rules across interactive modes", () => {
+		for (const mode of WORK_MODES) {
+			const prompt = buildModePrompt({ ...base, mode });
+			expect(prompt).toContain("## 项目概览的范围与停止条件");
+			expect(prompt).toContain("默认不为概览运行测试、启动服务、检查远端 CI、追溯 Git 历史、创建临时副本或工作树");
+			expect(prompt).toContain("已经判断“信息足够”“准备总结”后，直接给出概览");
+			expect(prompt).toContain("用户明确要求深入审查、测试、排障或实现时，按其明确范围处理");
+			expect(prompt).toContain("项目概览的交付物是解释");
+			expect(prompt).toContain("即使当前处于 execute/debug 阶段");
+			expect(prompt).toContain("“只读”“没有风险”“顺便确认一下”“有助于报告”都不是概览中主动执行命令的理由");
+			expect(prompt).toContain("不要主动执行 git status、git diff、git log、git show、git check-ignore");
+			expect(prompt).toContain("“如何运行”→解释文档里的启动步骤，不等于实际启动");
+			expect(prompt).toContain("不要把概览纪律套用到明确的执行请求上");
+		}
+	});
+	test("overview behavior guidance leaves execution tools available", () => {
+		const context: PromptContext = { ...base, mode: "agent", phase: "execute", shellTools: ["powershell", "cmd"] };
+		const prompt = buildModePrompt(context);
+		expect(prompt).toContain("这是主动选工具的行为纪律，不是移除工具或新增权限拦截");
+		const tools = toolsForMode(context);
+		for (const name of ["powershell", "cmd", "read", "grep", "edit", "write", "switch_mode"])
+			expect(tools).toContain(name);
+	});
 	test("interactive sessions receive action-title instructions", () => {
 		for (const mode of WORK_MODES) {
 			const prompt = buildModePrompt({ ...base, mode });
@@ -314,16 +337,28 @@ describe("work stage title discipline", () => {
 			expect(prompt).toContain("### 读取项目入口");
 			expect(prompt).toContain("再调用工具");
 			expect(prompt).toContain("最终答复按任务正常组织");
+			expect(prompt).toContain("不能只给第一个阶段写标题");
+			expect(prompt).toContain("不因技能文件、工具结果或内部思考使用英文而切换语言");
+			expect(prompt).toContain("追踪请求入口与路由分发");
+			expect(prompt).toContain("不把几十次调用一直塞在“读取项目入口”下面");
+			expect(prompt).toContain("不按调用数量切段，不为凑阶段增加调查");
 		}
 	});
 	test("custom prompts retain the runtime UI convention", () => {
 		configureCustomPrompt(() => "My custom instructions");
-		try { expect(buildModePrompt({ ...base, mode: "agent" })).toContain("## 工作阶段标题"); }
+		try {
+			const prompt = buildModePrompt({ ...base, mode: "agent" });
+			expect(prompt).toContain("## 工作阶段标题");
+			expect(prompt).toContain("## 项目概览的范围与停止条件");
+		}
 		finally { configureCustomPrompt(() => null); }
 	});
 	test("does not add UI narration to workers, automation or structured Fusion stages", () => {
-		for (const extra of [{ child: true }, { headless: true }, { fastContext: true }, { interactive: false }])
-			expect(buildModePrompt({ ...base, mode: "agent", ...extra })).not.toContain("## 工作阶段标题");
+		for (const extra of [{ child: true }, { headless: true }, { fastContext: true }, { interactive: false }]) {
+			const prompt = buildModePrompt({ ...base, mode: "agent", ...extra });
+			expect(prompt).not.toContain("## 工作阶段标题");
+			expect(prompt).not.toContain("## 项目概览的范围与停止条件");
+		}
 		expect(buildModePrompt({ ...base, mode: "agent", fusionEngineInstructions: "Structured stage" })).toBe("Structured stage");
 	});
 });

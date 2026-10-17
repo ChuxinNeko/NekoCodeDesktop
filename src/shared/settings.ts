@@ -62,6 +62,8 @@ export interface OAuthProviderSummary {
 export interface OAuthUsageWindow {
 	/** "5h", "Weekly", "Premium requests", a model name, … */
 	label: string;
+	/** Antigravity models consume one of two shared allowances. */
+	sharedGroup?: "gemini" | "other";
 	/** 0–100. Absent when the provider reports only counts, or only a reset. */
 	usedPercent?: number;
 	/** Counts, when the provider gives them: `used` of `limit`. */

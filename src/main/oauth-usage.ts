@@ -434,9 +434,6 @@ async function xaiUsage(ctx: UsageContext): Promise<OAuthUsageSnapshot> {
 
 // --- Antigravity ----------------------------------------------------------------
 
-/** Buckets shown at most: a long model list would bury the few that matter. */
-const MAX_ANTIGRAVITY_WINDOWS = 8;
-
 /**
  * `loadCodeAssist` names the tier and, on paid tiers, the Google One AI credit
  * balance (CLIProxyAPI's `updateAntigravityCreditsBalance`);
@@ -469,25 +466,32 @@ export function parseAntigravityUsage(loadAssist: unknown, models: unknown, now:
 				return model ? [[id, model] as [string, Record<string, unknown>]] : [];
 			});
 
-	const byLabel = new Map<string, OAuthUsageWindow>();
+	const groups = new Map<"gemini" | "other", OAuthUsageWindow>();
 	for (const [id, model] of entries) {
 		const quota = record(first(model, "quotaInfo", "quota_info"));
 		if (!quota) continue;
 		const remaining = num(first(quota, "remainingFraction", "remaining_fraction"));
 		const resetsAt = timeOf(first(quota, "resetTime", "reset_time"));
 		if (remaining === undefined && resetsAt === undefined) continue;
-		const label = str(first(model, "displayName", "display_name")) ?? id;
-		if (!label) continue;
+		const identity = id.trim() || str(first(model, "displayName", "display_name"));
+		if (!identity) continue;
+		const sharedGroup = /gemini/i.test(identity) ? "gemini" : "other";
+		const label = sharedGroup === "gemini" ? "Gemini" : "Other models";
 		const usedPercent = remaining !== undefined ? clampPercent(Math.round((1 - remaining) * 100)) : undefined;
-		const previous = byLabel.get(label);
-		// Variants of one model share a bucket; keep the most used.
-		if (previous && (previous.usedPercent ?? -1) >= (usedPercent ?? -1)) continue;
-		byLabel.set(label, { label, usedPercent, ...(resetsAt ? { resetsAt } : {}) });
+		const previous = groups.get(sharedGroup);
+		// Shared allowances must never be summed or averaged across models.
+		// Keep the lowest reported balance and its reset; on ties use the later
+		// reset so the result is deterministic and does not promise an early refill.
+		if (previous) {
+			const difference = (usedPercent ?? -1) - (previous.usedPercent ?? -1);
+			if (difference < 0 || (difference === 0 && (resetsAt ?? 0) <= (previous.resetsAt ?? 0))) continue;
+		}
+		groups.set(sharedGroup, { label, sharedGroup, usedPercent, ...(resetsAt ? { resetsAt } : {}) });
 	}
-	// The ones running out first are the ones worth seeing.
-	const windows = [...byLabel.values()]
-		.sort((a, b) => (b.usedPercent ?? -1) - (a.usedPercent ?? -1))
-		.slice(0, MAX_ANTIGRAVITY_WINDOWS);
+	const windows = (["gemini", "other"] as const).flatMap((group) => {
+		const window = groups.get(group);
+		return window ? [window] : [];
+	});
 	return snapshot("antigravity", now, { windows, metrics, ...(plan ? { plan } : {}) });
 }
 

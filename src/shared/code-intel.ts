@@ -32,6 +32,7 @@ export interface CodeIntelModels {
 }
 
 export interface CodeIntelStatus {
+	prediction: { enabled: boolean; modelKey: string | null };
 	/** Whether sessions get `semantic_search`. */
 	indexEnabled: boolean;
 	/** The model that rewrites queries and reranks results; null keeps search keyword-only. */
@@ -44,6 +45,7 @@ export interface CodeIntelStatus {
 }
 
 export interface CodeIntelUpdate {
+	prediction?: Partial<CodeIntelStatus["prediction"]>;
 	indexEnabled?: boolean;
 	searchModel?: string | null;
 	completion?: Partial<CodeIntelStatus["completion"]>;
@@ -79,4 +81,11 @@ export interface CompletionRequest {
 export interface CompletionResponse {
 	/** What to insert at the cursor; empty for nothing worth showing. */
 	text: string;
+}
+
+export interface PromptPredictionRequest {
+	id: string;
+	userText: string;
+	answerText: string;
+	language: "zh-CN" | "en";
 }

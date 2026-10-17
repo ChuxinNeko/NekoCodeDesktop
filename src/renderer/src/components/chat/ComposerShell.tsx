@@ -1,3 +1,5 @@
+import { usePromptPrediction } from "../../hooks/usePromptPrediction";
+import { canAcceptPrediction, type PredictionContext } from "../../lib/promptPrediction";
 import type { ContextUsage, PromptImageAttachment, SendPromptRequest } from "../../../../shared/agent";
 import {
 	MAX_PROMPT_IMAGE_BYTES,
@@ -52,6 +54,9 @@ const MENTION_DEBOUNCE_MS = 80;
 const PILL_GAP_PX = 6;
 
 interface ComposerShellProps {
+	predictionContext?: PredictionContext;
+	/** Allows the welcome surface to place the shared composer in its hero card. */
+	className?: string;
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	disabled: boolean;
@@ -128,6 +133,9 @@ export function ComposerShell(props: ComposerShellProps) {
 
 	const matches = query === null ? [] : filterCommands(commands, query);
 	const menuOpen = query !== null;
+
+	const prediction = usePromptPrediction(props.predictionContext, streaming === true,
+		disabled || !!text || !!command || images.length > 0 || menuOpen || !!props.insertion);
 
 	/** The `@query` being typed at the caret, and what it currently offers. */
 	const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
@@ -512,6 +520,16 @@ export function ComposerShell(props: ComposerShellProps) {
 				if (event.key === "Tab") return;
 			}
 		}
+		if (!menuOpen && !mentionOpen && prediction.text) {
+			if (event.key === "Escape") { event.preventDefault(); prediction.dismiss(); return; }
+			if (canAcceptPrediction(event.key, event.shiftKey, event.ctrlKey, event.altKey, event.metaKey, event.nativeEvent.isComposing)) {
+				event.preventDefault();
+				changeText(prediction.text);
+				prediction.dismiss();
+				return;
+			}
+		}
+
 		// Backspace into the pill removes it, the way a chip in any tag field does.
 		if (
 			event.key === "Backspace" &&
@@ -538,7 +556,7 @@ export function ComposerShell(props: ComposerShellProps) {
 		: FileIcon;
 
 	return (
-		<div className="px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-1 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]">
+		<div className={cn("px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-1 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]", props.className)}>
 			<ComposerColumnFrame>
 				{props.header}
 				<div className={COMPOSER_INPUT_SHELL_CLASS_NAME}>
@@ -633,6 +651,11 @@ export function ComposerShell(props: ComposerShellProps) {
 											</span>
 										</span>
 									) : null}
+									{prediction.text ? <div aria-hidden="true" data-prompt-prediction="" className={cn("pointer-events-none absolute inset-x-0 top-0 pr-12 text-muted-foreground/45", COMPOSER_EDITOR_TYPOGRAPHY_CLASS_NAME)}>
+										<span className="line-clamp-2 break-words">{prediction.text}</span>
+										<kbd className="absolute right-0 top-0 rounded border border-border/60 px-1 text-[10px] leading-5">Tab</kbd>
+									</div> : null}
+
 									<textarea
 										autoFocus={props.autoFocus}
 										ref={textareaRef}
@@ -651,9 +674,11 @@ export function ComposerShell(props: ComposerShellProps) {
 										placeholder={
 											command
 												? (command.argumentHint ?? t("commands.argsPlaceholder"))
-												: (props.placeholder ?? t("composer.placeholder"))
+												: (prediction.text ? "" : props.placeholder ?? t("composer.placeholder"))
 										}
 										rows={1}
+										aria-label={t("composer.placeholder")}
+										aria-description={prediction.text ? t("codeIntel.prediction.acceptHint", { text: prediction.text }) : undefined}
 										style={command ? { textIndent: `${String(indent)}px` } : undefined}
 										className={cn(
 											"block w-full resize-none bg-transparent outline-none",

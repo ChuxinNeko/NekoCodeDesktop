@@ -337,6 +337,7 @@ export function AcpChatView(props: AcpChatViewProps) {
 				</div>
 			) : null}
 			<ComposerShell
+				predictionContext={!props.mobile && snapshot ? { sessionId: snapshot.id, cells: snapshot.cells } : undefined}
 				insertion={props.insertion}
 				onInsertionConsumed={props.onInsertionConsumed}
 				allowImageAttachments={props.allowImages !== false && (snapshot ? snapshot.supportsImages : true)}

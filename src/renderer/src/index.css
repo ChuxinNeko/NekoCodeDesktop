@@ -3759,3 +3759,75 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 .team-typing span:nth-child(3) { animation-delay: .3s; }
 @keyframes team-typing { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: .7; transform: translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) { .team-typing span { animation: none; } }
+
+/* Beautiful UI Prompt Bar: enter from the composer and glide one shared highlight. */
+@keyframes prompt-bar-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.prompt-bar-menu {
+  transform-origin: bottom center;
+  animation: prompt-bar-pop-in 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.prompt-bar-highlight {
+  transition: top 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    height 220ms cubic-bezier(0.23, 1, 0.32, 1), opacity 150ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-bar-menu { animation: none; }
+  .prompt-bar-highlight { transition: none; }
+}
+
+/* The welcome card keeps its composer and project tray together in the hero. */
+.welcome-composer-card,
+.welcome-quick-start {
+  background: color-mix(in srgb, var(--foreground) 4%, var(--background));
+}
+
+.welcome-quick-start:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+}
+
+.welcome-composer {
+  padding: 0;
+  --composer-radius: 17px;
+  --app-density-composer-editor-min-height: 3.5rem;
+  --app-density-composer-editor-padding-x: 0.875rem;
+  --app-density-composer-editor-padding-x-end: 0.875rem;
+  --app-density-composer-editor-padding-top: 0.875rem;
+  --app-density-composer-editor-padding-bottom: 0.5rem;
+}
+
+.welcome-composer .chat-composer-surface {
+  background: var(--popover);
+  border-color: color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.welcome-composer textarea { font-size: 14px; }
+.welcome-composer textarea::placeholder {
+  color: color-mix(in srgb, var(--foreground) 45%, transparent);
+}
+
+.welcome-composer-card [data-slot="composer-toolbar"] {
+  flex-wrap: wrap;
+  row-gap: 0.25rem;
+}
+
+.welcome-composer-card > div:last-child button {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.welcome-workspace > div {
+  margin: 0;
+  padding: 0;
+  width: auto;
+}
+
+@media (max-height: 540px) {
+  .welcome-hero { padding-top: 3rem; padding-bottom: 2rem; }
+}

@@ -139,7 +139,7 @@ describe("xAI billing", () => {
 });
 
 describe("Antigravity loadCodeAssist + fetchAvailableModels", () => {
-	test("tier, Google One AI credits, and the models closest to running out", () => {
+	test("tier, Google One AI credits, and two shared model allowances", () => {
 		const usage = parseAntigravityUsage(
 			{
 				currentTier: { id: "standard-tier", name: "Gemini Code Assist" },
@@ -156,7 +156,10 @@ describe("Antigravity loadCodeAssist + fetchAvailableModels", () => {
 				models: {
 					"gemini-3-pro": { displayName: "Gemini 3 Pro", quotaInfo: { remainingFraction: 0.25, resetTime: "2026-09-25T05:00:00Z" } },
 					"gemini-3-pro-high": { displayName: "Gemini 3 Pro", quotaInfo: { remainingFraction: 0.5 } },
+					"gemini-flash": { displayName: "Gemini Flash", quotaInfo: { remainingFraction: 0.8 } },
 					"claude-sonnet": { displayName: "Claude Sonnet", quotaInfo: { remainingFraction: 1 } },
+					"claude-opus": { displayName: "Claude Opus", quotaInfo: { remainingFraction: 0.6 } },
+					"gpt-oss": { displayName: "GPT OSS", quotaInfo: { remainingFraction: 0.9 } },
 					"no-quota": { displayName: "Internal" },
 				},
 			},
@@ -165,9 +168,31 @@ describe("Antigravity loadCodeAssist + fetchAvailableModels", () => {
 		expect(usage.plan).toBe("Google AI Pro");
 		expect(usage.metrics).toEqual([{ label: "AI credits", value: 1000, format: "number" }]);
 		expect(usage.windows).toEqual([
-			{ label: "Gemini 3 Pro", usedPercent: 75, resetsAt: Date.parse("2026-09-25T05:00:00Z") },
-			{ label: "Claude Sonnet", usedPercent: 0 },
+			{ label: "Gemini", sharedGroup: "gemini", usedPercent: 75, resetsAt: Date.parse("2026-09-25T05:00:00Z") },
+			{ label: "Other models", sharedGroup: "other", usedPercent: 40 },
 		]);
+	});
+
+	test("array responses, missing fractions, zero balances and reset ties are order independent", () => {
+		const models = [
+			{ id: "gemini-pro", quota_info: { remaining_fraction: 0, reset_time: "2026-10-16T06:00:00Z" } },
+			{ id: "gemini-flash", quotaInfo: { remainingFraction: 0, resetTime: "2026-10-16T08:00:00Z" } },
+			{ id: "gemini-unknown", quotaInfo: { resetTime: "2026-10-17T08:00:00Z" } },
+			{ id: "claude-opus", quotaInfo: { resetTime: "2026-10-16T07:00:00Z" } },
+			{ id: "gpt-oss", quotaInfo: { remainingFraction: 1 } },
+			{ id: "unavailable", quotaInfo: {} },
+		];
+		const usage = parseAntigravityUsage({}, { models }, NOW);
+		expect(usage.windows).toEqual([
+			{ label: "Gemini", sharedGroup: "gemini", usedPercent: 100, resetsAt: Date.parse("2026-10-16T08:00:00Z") },
+			{ label: "Other models", sharedGroup: "other", usedPercent: 0 },
+		]);
+		expect(parseAntigravityUsage({}, { models: [...models].reverse() }, NOW).windows).toEqual(usage.windows);
+	});
+
+	test("missing model quotas do not invent shared allowances", () => {
+		expect(parseAntigravityUsage({}, { models: { "gemini-pro": {} } }, NOW).windows).toEqual([]);
+		expect(parseAntigravityUsage({}, undefined, NOW).windows).toEqual([]);
 	});
 });
 

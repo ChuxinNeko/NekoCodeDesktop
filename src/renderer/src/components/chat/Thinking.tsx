@@ -21,7 +21,7 @@ export function lastThinkingLine(thinking: string): string {
  * the tail is what keeps a bounded box readable while it streams; it gives way
  * as soon as the user scrolls up, and takes over again at the bottom.
  */
-export function ThinkingStream({ text }: { text: string }) {
+export function ThinkingStream({ text, tabIndex, className }: { text: string; tabIndex?: number; className?: string }) {
 	const ref = useRef<HTMLPreElement>(null);
 	const followRef = useRef(true);
 
@@ -34,6 +34,7 @@ export function ThinkingStream({ text }: { text: string }) {
 	return (
 		<pre
 			ref={ref}
+			tabIndex={tabIndex}
 			onScroll={() => {
 				const el = ref.current;
 				if (!el) return;
@@ -49,6 +50,7 @@ export function ThinkingStream({ text }: { text: string }) {
 				"max-h-[7.5em] overflow-y-auto overscroll-contain leading-[1.5]",
 				"whitespace-pre-wrap break-words border-l border-border/60 pl-3",
 				"font-thinking text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70",
+				className,
 			)}
 		>
 			{text}

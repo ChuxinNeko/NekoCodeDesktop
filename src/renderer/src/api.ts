@@ -1,5 +1,5 @@
 import type { FusionConfig } from "../../shared/fusion";
-import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, CompletionRequest, CompletionResponse, IndexStatus } from "../../shared/code-intel";
+import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../../shared/code-intel";
 import type { LanStatus } from "../../shared/lan";
 import type { SshHostInput, SshStatus, SshTestResult } from "../../shared/ssh";
 import type {
@@ -453,6 +453,8 @@ export interface AgentApi {
 	codeIndexRebuild(cwd: string): Promise<IndexStatus>;
 	onCodeIndexChanged(listener: (status: IndexStatus) => void): () => void;
 	/** One inline suggestion at the cursor; empty text for none. */
+	promptPredict(request: PromptPredictionRequest): Promise<CompletionResponse>;
+	promptPredictCancel(id: string): Promise<void>;
 	tabComplete(request: CompletionRequest): Promise<CompletionResponse>;
 	tabCompleteCancel(id: string): Promise<void>;
 	/** The user's own system prompts and which is in use; the default prompt's text is never sent. */

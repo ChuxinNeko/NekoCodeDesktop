@@ -7,7 +7,7 @@ import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createWorkflowSession } from "../../src/main/workflow-runtime";
 import { configureTeamSettings } from "../../src/main/team-settings";
 import { TEAM_THREAD_ENTRY, type TeamThreadTurn } from "../../src/shared/team-thread";
-import { DEFAULT_TEAM, isTeamSettings, mentionedMembers, TEAM_AVATAR_COLORS, TEAM_AVATAR_SHAPES, teamAvatarOf, type TeamSettings } from "../../src/shared/team";
+import { DEFAULT_TEAM, isTeamSettings, mentionedMembers, TEAM_AVATAR_COLORS, TEAM_AVATAR_IMAGE_MAX_CHARS, TEAM_AVATAR_SHAPES, teamAvatarOf, type TeamSettings } from "../../src/shared/team";
 
 type Script = (stage: string, n: number, context: string) => ToolCall | string;
 const chat = "anthropic/claude-opus-4-5", cheap = "anthropic/claude-sonnet-4-5";
@@ -124,5 +124,16 @@ describe("team avatars", () => {
 		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...DEFAULT_TEAM.members[0], avatar: { shape: "nope", color: "teal" } }] })).toBe(false);
 		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...DEFAULT_TEAM.members[0], avatar: "orbit" }] })).toBe(false);
 		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...DEFAULT_TEAM.members[0], avatar: undefined }] })).toBe(true);
+	});
+
+	test("an uploaded avatar image rides along and is kept by teamAvatarOf", () => {
+		const image = "data:image/png;base64,iVBORw0KGgo=";
+		const member = { ...DEFAULT_TEAM.members[0], avatar: { shape: "orb" as const, color: "teal" as const, image } };
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [member] })).toBe(true);
+		expect(teamAvatarOf(member).image).toBe(image);
+		// A blob URL, a non-image data URL, or one past the cap is not a valid avatar.
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...member, avatar: { shape: "orb", color: "teal", image: "blob:x" } }] })).toBe(false);
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...member, avatar: { shape: "orb", color: "teal", image: "data:text/plain;base64,QQ==" } }] })).toBe(false);
+		expect(isTeamSettings({ ...DEFAULT_TEAM, members: [{ ...member, avatar: { shape: "orb", color: "teal", image: `data:image/png;base64,${"A".repeat(TEAM_AVATAR_IMAGE_MAX_CHARS)}` } }] })).toBe(false);
 	});
 });

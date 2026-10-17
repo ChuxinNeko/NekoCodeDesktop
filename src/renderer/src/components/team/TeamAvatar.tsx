@@ -55,7 +55,22 @@ export function TeamAvatarGlyph({ avatar, size = 20, className, title, seed = ""
 }
 
 export function TeamAvatar({ member, size, className, blink }: { member: Pick<TeamMember, "id" | "avatar" | "name">; size?: number; className?: string; blink?: boolean }) {
-	return <TeamAvatarGlyph avatar={teamAvatarOf(member)} size={size} className={className} title={`@${member.name}`} seed={member.id} blink={blink} />;
+	const avatar = teamAvatarOf(member);
+	// An uploaded picture wins over the shape: it is what the user chose to see.
+	if (avatar.image) {
+		return (
+			<img
+				alt={`@${member.name}`}
+				className={cn("shrink-0 rounded-full object-cover", className)}
+				height={size}
+				src={avatar.image}
+				style={size ? { width: size, height: size } : undefined}
+				title={`@${member.name}`}
+				width={size}
+			/>
+		);
+	}
+	return <TeamAvatarGlyph avatar={avatar} size={size} className={className} title={`@${member.name}`} seed={member.id} blink={blink} />;
 }
 
 /** The whole team, like a group chat icon: up to three members huddled together. */

@@ -27,12 +27,25 @@ export const TEAM_AVATAR_SHAPES = ["orb", "pyramid", "gem"] as const;
 export const TEAM_AVATAR_COLORS = ["teal", "orange", "indigo", "violet", "blue", "coral"] as const;
 export type TeamAvatarShape = (typeof TEAM_AVATAR_SHAPES)[number];
 export type TeamAvatarColor = (typeof TEAM_AVATAR_COLORS)[number];
-export interface TeamAvatar { shape: TeamAvatarShape; color: TeamAvatarColor }
+/**
+ * A user-uploaded picture, held as a `data:` URL so the choice travels with the
+ * member wherever the roster is read — no file path to keep in step. It is
+ * downscaled to a small square in the renderer before it gets here, so the cap
+ * is generous headroom rather than a working limit.
+ */
+export const TEAM_AVATAR_IMAGE_MAX_CHARS = 512 * 1024;
+export interface TeamAvatar { shape: TeamAvatarShape; color: TeamAvatarColor; image?: string }
+
+/** A data URL of an image, within the size the roster will carry. */
+export function isTeamAvatarImage(value: unknown): value is string {
+	return typeof value === "string" && value.startsWith("data:image/") && value.length <= TEAM_AVATAR_IMAGE_MAX_CHARS;
+}
 
 export function isTeamAvatar(value: unknown): value is TeamAvatar {
 	const avatar = value as TeamAvatar;
 	return !!avatar && typeof avatar === "object" && (TEAM_AVATAR_SHAPES as readonly string[]).includes(avatar.shape) &&
-		(TEAM_AVATAR_COLORS as readonly string[]).includes(avatar.color);
+		(TEAM_AVATAR_COLORS as readonly string[]).includes(avatar.color) &&
+		(avatar.image === undefined || isTeamAvatarImage(avatar.image));
 }
 
 export function teamHash(text: string): number {

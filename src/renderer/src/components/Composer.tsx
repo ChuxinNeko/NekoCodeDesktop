@@ -1,3 +1,4 @@
+import type { PredictionContext } from "../lib/promptPrediction";
 import { useState } from "react";
 import type { SlashCommandSummary } from "../../../shared/commands";
 import type { MentionCandidate } from "../../../shared/mentions";
@@ -10,6 +11,7 @@ import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
 
 interface ComposerProps {
+	predictionContext?: PredictionContext;
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
 	loadMentions?: (query: string) => Promise<MentionCandidate[]>;
 	insertion?: ComposerInsertion | null;
@@ -45,6 +47,7 @@ export function Composer(props: ComposerProps) {
 	const supportsImages = props.models.find((model) => model.key === props.modelKey)?.imageInput === true;
 	return (
 		<ComposerShell
+			predictionContext={props.predictionContext}
 			header={props.header}
 			insertion={props.insertion}
 			onInsertionConsumed={props.onInsertionConsumed}

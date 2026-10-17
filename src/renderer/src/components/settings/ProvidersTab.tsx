@@ -21,6 +21,7 @@ import {
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -233,9 +234,10 @@ export function ProvidersTab({
 	onManageModels: (id: string) => void;
 }) {
 	const { t } = useTranslation();
-	// Deleting a provider takes its key with it, so the trash icon arms a second
-	// click rather than firing on the first.
-	const [confirmId, setConfirmId] = useState<string | null>(null);
+	// Deleting a provider takes its key with it, so the trash icon opens a modal
+	// confirmation rather than firing — and rather than swapping the row's buttons
+	// for a confirm strip, which shifts everything around it.
+	const [removing, setRemoving] = useState<ModelProfileSummary | null>(null);
 	const [pastedCode, setPastedCode] = useState("");
 	const signedIn = accounts.filter((account) => account.signedIn);
 
@@ -396,55 +398,30 @@ export function ProvidersTab({
 									{profile.kind === "custom-api" ? ` · ${PROTOCOL_LABELS[profile.api]}` : ""}
 								</span>
 								<div className="flex-1" />
-								{confirmId === profile.id ? (
-									<>
-										<Button
-											onClick={() => setConfirmId(null)}
-											size="xs"
-											variant="ghost"
-											disabled={busy}
-										>
-											{t("common.cancel")}
-										</Button>
-										<Button
-											onClick={() => {
-												setConfirmId(null);
-												onDelete(profile.id);
-											}}
-											size="xs"
-											variant="destructive-outline"
-											disabled={busy}
-										>
-											{t("providers.confirmDelete")}
-										</Button>
-									</>
-								) : (
-									<>
-										<Button
-											onClick={() => onManageModels(profile.id)}
-											size="xs"
-											variant="chrome-outline"
-										>
-											{t("providers.manageModels")}
-										</Button>
-										<Button
-											onClick={() => onDraftChange(providerDraftFrom(profile))}
-											size="icon-xs"
-											variant="chrome-outline"
-											title={t("common.edit")}
-										>
-											<PencilIcon className="size-3.5" />
-										</Button>
-										<Button
-											onClick={() => setConfirmId(profile.id)}
-											size="icon-xs"
-											variant="destructive-outline"
-											title={t("common.delete")}
-										>
-											<TrashCanIcon className="size-3.5" />
-										</Button>
-									</>
-								)}
+								<Button
+									onClick={() => onManageModels(profile.id)}
+									size="xs"
+									variant="chrome-outline"
+								>
+									{t("providers.manageModels")}
+								</Button>
+								<Button
+									onClick={() => onDraftChange(providerDraftFrom(profile))}
+									size="icon-xs"
+									variant="chrome-outline"
+									title={t("common.edit")}
+								>
+									<PencilIcon className="size-3.5" />
+								</Button>
+								<Button
+									onClick={() => setRemoving(profile)}
+									size="icon-xs"
+									variant="destructive-outline"
+									title={t("common.delete")}
+									disabled={busy}
+								>
+									<TrashCanIcon className="size-3.5" />
+								</Button>
 							</div>
 							<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 								{profile.baseUrl}
@@ -475,6 +452,35 @@ export function ProvidersTab({
 					onLogin={onLogin}
 				/>
 			) : null}
+
+			<ConfirmDialog
+				open={removing !== null}
+				onOpenChange={(open) => {
+					if (!open && !busy) setRemoving(null);
+				}}
+				title={t("providers.removeTitle", { name: removing?.name ?? "" })}
+				description={t("providers.removeDescription")}
+				footer={
+					<>
+						<Button disabled={busy} onClick={() => setRemoving(null)} size="sm" variant="chrome-outline">
+							{t("common.cancel")}
+						</Button>
+						<Button
+							disabled={busy}
+							onClick={() => {
+								if (!removing) return;
+								const id = removing.id;
+								setRemoving(null);
+								onDelete(id);
+							}}
+							size="sm"
+							variant="destructive"
+						>
+							{t("common.delete")}
+						</Button>
+					</>
+				}
+			/>
 		</div>
 	);
 }

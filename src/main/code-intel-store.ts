@@ -44,7 +44,9 @@ export class CodeIntelStore {
 			}
 		}
 		const completion = (parsed.completion ?? {}) as Record<string, unknown>;
+		const prediction = (parsed.prediction ?? {}) as Record<string, unknown>;
 		this.file = {
+			prediction: { enabled: prediction.enabled === true, modelKey: readKey(prediction.modelKey) },
 			indexEnabled: typeof parsed.indexEnabled === "boolean" ? parsed.indexEnabled : true,
 			searchModel: readKey(parsed.searchModel),
 			completion: {
@@ -58,7 +60,9 @@ export class CodeIntelStore {
 	/** Apply a change from the settings page. It arrives over IPC, so each field is checked. */
 	update(patch: CodeIntelUpdate): CodeIntelStatus {
 		const current = this.status();
-		const next: CodeIntelStatus = { ...current, completion: { ...current.completion } };
+		const next: CodeIntelStatus = { ...current, completion: { ...current.completion }, prediction: { ...current.prediction } };
+		if (typeof patch.prediction?.enabled === "boolean") next.prediction.enabled = patch.prediction.enabled;
+		if (patch.prediction?.modelKey !== undefined) next.prediction.modelKey = modelKey(patch.prediction.modelKey);
 		if (typeof patch.indexEnabled === "boolean") next.indexEnabled = patch.indexEnabled;
 		if (patch.searchModel !== undefined) next.searchModel = modelKey(patch.searchModel);
 		if (typeof patch.completion?.enabled === "boolean") next.completion.enabled = patch.completion.enabled;

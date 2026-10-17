@@ -553,6 +553,7 @@ export function ChatView(props: ChatViewProps) {
 			<WorkflowPanel workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />
 			<ExtensionPanel ui={snapshot.extensionUi} streaming={snapshot.streaming} onAnswer={answerExtensionUi} />
 			<Composer
+				predictionContext={props.mobile ? undefined : { sessionId: snapshot.session.id, cells: snapshot.cells }}
 				header={<>
 					{props.composerHeader}
 					{liveChanges ? <EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} live={snapshot.streaming || settling}

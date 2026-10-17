@@ -16,8 +16,19 @@ function tmp(): string {
 }
 
 describe("CodeIntelStore", () => {
+	test("prediction settings persist independently and reject invalid model keys", () => {
+		const dir = tmp();
+		const store = new CodeIntelStore(dir);
+		store.update({ prediction: { enabled: true, modelKey: "p/fast" } });
+		store.update({ completion: { enabled: true } });
+		expect(new CodeIntelStore(dir).status().prediction).toEqual({ enabled: true, modelKey: "p/fast" });
+		store.update({ prediction: { enabled: false } });
+		expect(store.status().prediction.modelKey).toBe("p/fast");
+		expect(() => store.update({ prediction: { modelKey: "invalid" } })).toThrow();
+	});
 	test("starts with the index on, no search model, and completion off", () => {
 		expect(new CodeIntelStore(tmp()).status()).toEqual({
+			prediction: { enabled: false, modelKey: null },
 			indexEnabled: true,
 			searchModel: null,
 			completion: { enabled: false, modelKey: null },
@@ -29,6 +40,7 @@ describe("CodeIntelStore", () => {
 		const store = new CodeIntelStore(dir);
 		store.update({ searchModel: "nekocode-abc/deepseek-chat", completion: { enabled: true, modelKey: "deepseek/deepseek-chat" } });
 		expect(new CodeIntelStore(dir).status()).toEqual({
+			prediction: { enabled: false, modelKey: null },
 			indexEnabled: true,
 			searchModel: "nekocode-abc/deepseek-chat",
 			completion: { enabled: true, modelKey: "deepseek/deepseek-chat" },

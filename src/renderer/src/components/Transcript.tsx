@@ -11,13 +11,13 @@ import {
 	type WorkItem,
 	type WorkRow,
 } from "../../../shared/transcript";
-import { groupWorkStages, type WorkStage } from "../lib/workStages";
+import { groupWorkStages, workStageLabel, type WorkStage } from "../lib/workStages";
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
 import { completedTurnChanges } from "../lib/turnChanges";
 import { useReducedMotion } from "../lib/motion";
 import { DisclosureRegion } from "./ui/disclosure-region";
-import { useTranslation, type TranslateFn } from "../i18n";
+import { useTranslation } from "../i18n";
 import { elapsedSeconds, formatElapsed, useNow } from "../lib/elapsed";
 import { cn } from "../lib/utils";
 import { ChevronDownIcon, ChevronRightIcon, CircleAlertIcon, FileIcon, Undo2Icon } from "../lib/icons";
@@ -35,10 +35,9 @@ import {
 	ToolLine,
 	ToolOutputContext,
 	toolPhase,
-	toolSummary,
 	workUnits,
 } from "./chat/ToolCalls";
-import { lastThinkingLine, ThinkingBlock, ThinkingStream } from "./chat/Thinking";
+import { ThinkingBlock, ThinkingStream } from "./chat/Thinking";
 import { SourceList } from "./chat/WebSources";
 import { Markdown } from "./chat/Markdown";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
@@ -430,27 +429,14 @@ const NoticeCell = memo(function NoticeCell({ cell }: { cell: Extract<AgentCell,
 
 /** The shimmer that stands in for the step the model has not shown yet. */
 function PlanningLine() {
+	const { t } = useTranslation();
 	return (
 		<div
 			className={cn("text-[length:var(--app-font-size-chat,12px)]", MUTED_LABEL_TEXT_CLASS_NAME)}
 		>
-			<span className="shimmer">Planning Next Step</span>
+			<span className="shimmer">{t("workFlow.planning")}</span>
 		</div>
 	);
-}
-
-/** One line standing in for a step, for the header of a collapsed work group. */
-function workItemSummary(item: WorkItem, t: TranslateFn): string {
-	switch (item.kind) {
-		case "thinking":
-			return lastThinkingLine(item.cell.thinking);
-		case "tool":
-			return toolSummary(item.cell, t);
-		case "notice":
-			return item.cell.text;
-		case "message":
-			return lastThinkingLine(item.cell.text);
-	}
 }
 
 /** A remark the model made on the way, inside the run it was part of. */
@@ -507,7 +493,7 @@ const WorkingBlock = memo(function WorkingBlock({
 	waiting: boolean;
 	settling: boolean;
 }) {
-	const { t } = useTranslation();
+	const { t, language } = useTranslation();
 	const [open, setOpen] = useState(active);
 	const reducedMotion = useReducedMotion();
 	useEffect(() => { if (settling || !active) setOpen(false); }, [settling, active]);
@@ -515,13 +501,21 @@ const WorkingBlock = memo(function WorkingBlock({
 	const end = active ? now : row.endedAt;
 	const seconds = elapsedSeconds(row.startedAt, end);
 	const tools = workToolCount(row);
-	const stages = useMemo(() => groupWorkStages(row.items), [row.items]);
-	const last = row.items[row.items.length - 1];
+	const stages = useMemo(() => groupWorkStages(row.items, language), [row.items, language]);
+	const lastStage = stages[stages.length - 1];
+	const currentThinking = useMemo(() => {
+		if (!active || settling) return null;
+		for (let index = row.items.length - 1; index >= 0; index--) {
+			const item = row.items[index];
+			if (item.kind === "thinking" && item.cell.thinking.trim()) return item;
+		}
+		return null;
+	}, [row.items, active, settling]);
 	// Collapsed, the block says what it is standing in for: the step running
 	// right now while it runs, under the header; once it stops, the size of what
 	// is folded away, beside it — one line, so a finished turn reads as a rule.
-	const summary = active ? (waiting ? "Planning Next Step" : last ? workItemSummary(last, t) : "") : "";
-	const size = active ? null : `${tools} tool ${tools === 1 ? "call" : "calls"}`;
+	const summary = active ? (waiting ? t("workFlow.planning") : lastStage ? workStageLabel(lastStage, t) : "") : "";
+	const size = active ? null : t(tools === 1 ? "workFlow.toolCall" : "workFlow.toolCalls", { count: tools });
 
 	return (
 		<div className="flex flex-col gap-1.5">
@@ -539,8 +533,8 @@ const WorkingBlock = memo(function WorkingBlock({
 				{active ? reducedMotion ? <span aria-hidden="true" className="size-3 rounded-full bg-primary/40" /> : <ThinkingOrb state="solving" size={20} /> : null}
 				<span>
 					{active
-						? `Working for ${formatElapsed(seconds)}`
-						: `Worked for ${formatElapsed(seconds)}`}
+						? t("workFlow.workingFor", { duration: formatElapsed(seconds) })
+						: t("workFlow.workedFor", { duration: formatElapsed(seconds) })}
 				</span>
 				{size ? (
 					<span className="font-normal text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70">
@@ -554,7 +548,14 @@ const WorkingBlock = memo(function WorkingBlock({
 						<WorkStageRow key={stage.id} stage={stage} active={active}
 							current={active && index === stages.length - 1 && !waiting} />
 					))}
-					{waiting ? <li className="relative pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
+					{currentThinking ? (
+						<li className="min-w-0 pb-3 pl-6 pt-1" data-work-current-thinking="">
+							<section aria-label={t("workFlow.currentThinking")} className="min-w-0 space-y-1.5">
+								<ThinkingStream key={currentThinking.id} text={currentThinking.cell.thinking} tabIndex={0} className="h-[7.5em] min-h-0" />
+							</section>
+						</li>
+					) : null}
+					{waiting ? <li data-work-planning="" className="relative min-h-8 pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
 						<span aria-hidden="true" className="absolute left-0 top-2.5 size-2 rounded-full bg-primary/50 motion-safe:animate-pulse" />
 						<PlanningLine />
 					</li> : null}
@@ -586,8 +587,7 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	const detailId = useId();
 	const failed = stage.items.some((item) => item.kind === "tool" && item.cell.status === "error" || item.kind === "notice" && item.cell.level === "error");
 	const running = active && (current || stage.items.some((item) => item.kind === "tool" && (item.cell.status === "running" || item.cell.status === "pending")));
-	const first = stage.items[0];
-	const title = stage.title || (first?.kind === "tool" ? toolSummary(first.cell, t) : "") || t(`workFlow.${stage.category}`);
+	const title = workStageLabel(stage, t);
 	return (
 		<li className="group/work-stage relative min-w-0 pb-3 pl-6 last:pb-0" data-work-stage={stage.id}>
 			<span aria-hidden="true" className="absolute bottom-0 left-[3px] top-4 w-px bg-border/60 group-last/work-stage:hidden" />
@@ -604,7 +604,6 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 			</button>
 			<DisclosureRegion open={open} id={detailId}>
 				<div className="flex min-w-0 flex-col gap-2 pb-1 pt-2" data-work-stage-details="">
-					<div className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/60">{t(`workFlow.${stage.category}`)}</div>
 					{workUnits(stage.items, active).map((unit) => {
 						if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
 						const item = unit.item;
@@ -622,7 +621,8 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 /**
  * True while the run is streaming but the model has produced nothing visible
  * for the current step yet — the tail is the user's prompt, a settled tool
- * call, or an assistant cell that has neither text nor thinking. A running
+ * call, or an assistant cell still preparing a visible response. Thinking
+ * deltas do not end that waiting state. A running
  * tool speaks for itself, so it suppresses the line.
  */
 function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
@@ -636,7 +636,7 @@ function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 		case "tool":
 			return last.status === "done" || last.status === "error";
 		case "assistant":
-			return last.streaming && !last.text && !last.thinking;
+			return !last.text && (last.streaming || !!last.thinking);
 	}
 }
 

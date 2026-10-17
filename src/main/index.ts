@@ -1,3 +1,4 @@
+import { PromptPredictionService } from "./prompt-prediction";
 import { TaskManager } from "./task-manager";
 import { TaskNotifier } from "./task-notifier";
 import { AppPreferencesStore } from "./app-preferences";
@@ -116,7 +117,7 @@ import { SemanticIndexService } from "./semantic-index/service";
 import { configureSemanticSearch, createSemanticSearchTool, semanticSearchEnabled } from "./semantic-search-tool";
 import { TabCompletionService } from "./tab-completion";
 import { askModel, type ModelCallRuntime } from "./model-call";
-import type { CodeIntelModels, CodeIntelUpdate, CompletionRequest } from "../shared/code-intel";
+import type { CodeIntelModels, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest } from "../shared/code-intel";
 import { codeIntelModelList } from "./code-intel-models";
 import { PromptStore } from "./prompt-store";
 import { configureCustomPrompt } from "./prompt-library";
@@ -259,6 +260,10 @@ function semanticIndexService(): SemanticIndexService {
 		},
 	});
 	return semanticIndex;
+}
+let promptPrediction: PromptPredictionService | null = null;
+function promptPredictionService(): PromptPredictionService {
+ return promptPrediction ??= new PromptPredictionService({ settings: () => codeIntel().status().prediction, getRuntime: modelCallRuntime });
 }
 let tabCompletion: TabCompletionService | null = null;
 function tabCompletionService(): TabCompletionService {
@@ -714,8 +719,8 @@ function createWindow(): void {
 	const material = activeMaterial;
 	const backdrop = material === "mica" || material === "acrylic";
 	const win = new BrowserWindow({
-		width: 1440,
-		height: 900,
+		width: 1152,
+		height: 720,
 		minWidth: 1100,
 		minHeight: 700,
 		title: "NekoCode Desktop",
@@ -1723,6 +1728,11 @@ function registerIpc(): void {
 		};
 	});
 	ipcMain.handle("codeIntel:rebuild", (_e, cwd: string) => semanticIndexService().rebuild(cwd));
+	ipcMain.handle("codeIntel:predictPrompt", (event, request: PromptPredictionRequest) => {
+		if (!request || typeof request.id !== "string") return { text: "" };
+		return promptPredictionService().predict({ ...request, id: `${event.sender.id}:${request.id}` });
+	});
+	ipcMain.handle("codeIntel:cancelPromptPrediction", (event, id: string) => promptPrediction?.cancel(`${event.sender.id}:${id}`));
 	ipcMain.handle("codeIntel:complete", (_e, request: CompletionRequest) => tabCompletionService().complete(request));
 	ipcMain.handle("codeIntel:cancelComplete", (_e, id: string) => tabCompletion?.cancel(id));
 	ipcMain.handle("settings:saveWebTools", async (_e, patch: WebToolsUpdate) => ({

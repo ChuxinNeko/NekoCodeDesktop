@@ -185,7 +185,7 @@ export function CodeIntelSettings({ cwd, onOpenProviders }: { cwd: string | null
 	const [status, setStatus] = useState<CodeIntelStatus | null>(null);
 	const [models, setModels] = useState<CodeIntelModels | null>(null);
 	const [index, setIndex] = useState<IndexStatus | null>(null);
-	const [editing, setEditing] = useState<"search" | "completion" | null>(null);
+	const [editing, setEditing] = useState<"search" | "completion" | "prediction" | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -328,6 +328,32 @@ export function CodeIntelSettings({ cwd, onOpenProviders }: { cwd: string | null
 				/>
 			</div>
 
+			<h3 className="font-medium">{t("codeIntel.prediction.title")}</h3>
+			<div className="divide-y divide-[color:var(--app-surface-divider)]">
+				<SettingsRow label={t("codeIntel.prediction.enabled")} hint={t("codeIntel.prediction.enabledHint")}>
+					<Switch
+						aria-label={t("codeIntel.prediction.enabled")}
+						checked={status?.prediction?.enabled ?? false}
+						disabled={!status || busy}
+						onCheckedChange={(checked: boolean) => save({ prediction: { enabled: checked } })}
+					/>
+				</SettingsRow>
+			</div>
+			<div className="rounded-xl border border-[color:var(--app-surface-divider)] p-4">
+				<ModelCard
+					title={t("codeIntel.prediction.model")}
+					options={models?.chat ?? null}
+					current={status?.prediction?.modelKey ?? null}
+					emptyHint={t("codeIntel.noModels")}
+					missingHint={t("codeIntel.missingModel")}
+					unsetHint={t(status?.prediction?.enabled ? "codeIntel.prediction.missing" : "codeIntel.prediction.unset")}
+					setHint={t("codeIntel.prediction.usage")}
+					dimmed={!!status?.prediction && !status.prediction.enabled}
+					onPick={() => setEditing("prediction")}
+					onOpenProviders={onOpenProviders}
+				/>
+			</div>
+
 			{error && !editing ? (
 				<p role="alert" className="rounded-lg bg-destructive/10 p-3 text-destructive">
 					{error}
@@ -358,6 +384,19 @@ export function CodeIntelSettings({ cwd, onOpenProviders }: { cwd: string | null
 					error={error}
 					onClose={closeDialog}
 					onSave={(key) => save({ completion: { modelKey: key, enabled: true } })}
+				/>
+			) : null}
+			{editing === "prediction" && status && models ? (
+				<ModelDialog
+					title={t("codeIntel.prediction.dialogTitle")}
+					description={t("codeIntel.prediction.dialogDescription")}
+					hint={t("codeIntel.prediction.pickHint")}
+					options={models.chat}
+					current={status.prediction.modelKey}
+					busy={busy}
+					error={error}
+					onClose={closeDialog}
+					onSave={(key) => save({ prediction: { modelKey: key, enabled: true } })}
 				/>
 			) : null}
 		</section>

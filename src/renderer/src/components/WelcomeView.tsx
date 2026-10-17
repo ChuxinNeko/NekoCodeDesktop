@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { SlashCommandSummary } from "../../../shared/commands";
 import type { MentionCandidate } from "../../../shared/mentions";
@@ -6,7 +7,9 @@ import type { WorkMode } from "../../../shared/workflow";
 import type { AgentDefaults, ExecutionMode, SendPromptRequest, ThinkingLevel } from "../../../shared/agent";
 import { api } from "../api";
 import { useTranslation } from "../i18n";
-import { XIcon } from "../lib/icons";
+import { useTheme } from "../hooks/useTheme";
+import { cn } from "../lib/utils";
+import { BookIcon, BugIcon, CodeIcon, FlaskConicalIcon, GitPullRequestIcon, ListTodoIcon, MoonIcon, PencilIcon, SunIcon, XIcon } from "../lib/icons";
 import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
 import { ProjectPicker } from "./chat/ProjectPicker";
@@ -35,25 +38,40 @@ interface WelcomeViewProps {
 	composerHeader?: React.ReactNode;
 }
 
-/**
- * What the chat surface shows before a session is open: the prompt that starts
- * one.
- *
- * The composer sits at the bottom, in the same place it occupies during a
- * session, so sending the first prompt swaps the content above it without the
- * input moving. The header carries the working directory; the toolbar has the same
- * model/thinking/mode pickers a session shows — the picks are held in the main
- * process and applied when the session is created.
- */
+const QUICK_STARTS = [
+	{ key: "explore", icon: BookIcon },
+	{ key: "build", icon: CodeIcon },
+	{ key: "fix", icon: BugIcon },
+	{ key: "review", icon: GitPullRequestIcon },
+	{ key: "refactor", icon: PencilIcon },
+	{ key: "test", icon: FlaskConicalIcon },
+	{ key: "plan", icon: ListTodoIcon },
+] as const;
+
+/** A focused starting surface; the session reuses the same composer controls. */
 export function WelcomeView(props: WelcomeViewProps) {
 	const { t } = useTranslation();
 	const { cwd, busy, error, defaults } = props;
+	const { resolvedTheme, setTheme } = useTheme();
+	const [hour, setHour] = useState(() => new Date().getHours());
+	const [quickInsertion, setQuickInsertion] = useState<ComposerInsertion | null>(null);
+	useEffect(() => {
+		const timer = setInterval(() => setHour(new Date().getHours()), 60_000);
+		return () => clearInterval(timer);
+	}, []);
+	const greeting = hour < 6 || hour >= 18 ? "evening" : hour < 12 ? "morning" : "afternoon";
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
-				<ProjectPicker cwd={cwd} disabled={busy} onPickProject={props.onPickProject} />
-			</header>
+		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+			<div className="absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 bg-background p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
+				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
+					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
+						onClick={() => setTheme(mode)}
+						className={cn("flex size-8 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring", resolvedTheme === mode && "bg-muted text-foreground")}>
+						<Icon className="size-4" />
+					</button>
+				))}
+			</div>
 			{error ? (
 				<div className="flex items-center gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
 					<span className="min-w-0 flex-1 truncate">{error}</span>
@@ -63,53 +81,72 @@ export function WelcomeView(props: WelcomeViewProps) {
 				</div>
 			) : null}
 
-			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-				<h1 className="text-[length:var(--app-font-size-ui-lg,13px)] font-medium">
-					{t("welcome.title")}
+			<div className="welcome-hero mx-auto flex w-full max-w-[44rem] flex-1 flex-col justify-center px-5 py-20 sm:px-8">
+				<h1 className="mb-7 text-center text-[clamp(22px,2.5vw,28px)] font-medium leading-snug tracking-[-0.035em] text-foreground">
+					{t(`welcome.greeting.${greeting}`)}
 				</h1>
-				<p className="max-w-md text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					{t("welcome.subtitle")}
-				</p>
+				<div className="welcome-composer-card rounded-[20px] p-[3px]">
+					<ComposerShell
+						className="welcome-composer"
+						insertion={props.insertion ?? quickInsertion}
+						onInsertionConsumed={(id) => {
+							if (id === quickInsertion?.id) setQuickInsertion(null);
+							else props.onInsertionConsumed?.(id);
+						}}
+						autoFocus
+						disabled={busy || !cwd}
+						onSend={props.onStart}
+						supportsImages={defaults?.models.find((model) => model.key === defaults.modelKey)?.imageInput === true}
+						allowImageAttachments={props.allowImageAttachments}
+						placeholder={t("welcome.placeholder")}
+						// No session yet, so this lists the built-in skills; the session the
+						// first prompt creates is what expands whatever gets picked here.
+						loadCommands={props.loadCommands ?? (() => api.agentCommands())}
+						// The first prompt creates the session, which is what expands these.
+						loadMentions={props.loadMentions}
+						toolbar={
+							<>
+								{defaults ? (
+									<ComposerPickers
+										models={defaults.models}
+										modelKey={defaults.modelKey}
+										fusion={defaults.fusion}
+										thinkingLevel={defaults.thinkingLevel}
+										thinkingLevels={defaults.thinkingLevels}
+										mode={defaults.mode}
+										workMode={defaults.workMode}
+										agentPhase={defaults.agentPhase}
+										disabled={busy}
+										onSetFusion={props.onSetFusion}
+										onSetModel={props.onSetModel}
+										onSetThinking={props.onSetThinking}
+										onSetMode={props.onSetMode}
+										onSetWorkMode={props.onSetWorkMode}
+									/>
+								) : null}
+							</>
+						}
+					/>
+					<div className="flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1">
+						<div className="min-w-0 max-w-full"><ProjectPicker cwd={cwd} disabled={busy} onPickProject={props.onPickProject} /></div>
+						{props.composerHeader ? <div className="welcome-workspace min-w-0">{props.composerHeader}</div> : null}
+					</div>
+				</div>
+				<div className="mt-4 flex flex-col items-center gap-2" role="group" aria-label={t("welcome.quickStarts")}>
+					{[QUICK_STARTS.slice(0, 4), QUICK_STARTS.slice(4)].map((row, index) => (
+						<div key={index} className="flex flex-wrap justify-center gap-2">
+							{row.map(({ key, icon: Icon }) => (
+								<button key={key} type="button" disabled={busy}
+									onClick={() => setQuickInsertion({ id: crypto.randomUUID(), text: t(`welcome.quick.${key}.prompt`) })}
+									className="welcome-quick-start inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-2 text-[12px] leading-none text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50">
+									<Icon className="size-3.5" />
+									{t(`welcome.quick.${key}.label`)}
+								</button>
+							))}
+						</div>
+					))}
+				</div>
 			</div>
-
-			<ComposerShell
-				header={props.composerHeader}
-				insertion={props.insertion}
-				onInsertionConsumed={props.onInsertionConsumed}
-				autoFocus
-				disabled={busy || !cwd}
-				onSend={props.onStart}
-				supportsImages={defaults?.models.find((model) => model.key === defaults.modelKey)?.imageInput === true}
-				allowImageAttachments={props.allowImageAttachments}
-				placeholder={t("composer.placeholder")}
-				// No session yet, so this lists the built-in skills; the session the
-				// first prompt creates is what expands whatever gets picked here.
-				loadCommands={props.loadCommands ?? (() => api.agentCommands())}
-				// The first prompt creates the session, which is what expands these.
-				loadMentions={props.loadMentions}
-				toolbar={
-					<>
-						{defaults ? (
-							<ComposerPickers
-								models={defaults.models}
-								modelKey={defaults.modelKey}
-								fusion={defaults.fusion}
-								thinkingLevel={defaults.thinkingLevel}
-								thinkingLevels={defaults.thinkingLevels}
-								mode={defaults.mode}
-								workMode={defaults.workMode}
-								agentPhase={defaults.agentPhase}
-								disabled={busy}
-								onSetFusion={props.onSetFusion}
-								onSetModel={props.onSetModel}
-								onSetThinking={props.onSetThinking}
-								onSetMode={props.onSetMode}
-								onSetWorkMode={props.onSetWorkMode}
-							/>
-						) : null}
-					</>
-				}
-			/>
 		</div>
 	);
 }

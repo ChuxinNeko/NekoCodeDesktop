@@ -49,6 +49,9 @@ function barTone(remainingPercent: number): string {
 function UsageWindow({ window, now }: { window: OAuthUsageWindow; now: number }) {
 	const { t, language } = useTranslation();
 	const number = new Intl.NumberFormat(language, { maximumFractionDigits: 1 });
+	const label = window.sharedGroup
+		? t(window.sharedGroup === "gemini" ? "oauth.usage.geminiShared" : "oauth.usage.otherShared")
+		: window.label;
 	// Providers report what is used; what matters when choosing a model is what is left.
 	const remainingPercent = window.usedPercent === undefined ? undefined : 100 - window.usedPercent;
 	const figures = window.unlimited
@@ -72,7 +75,7 @@ function UsageWindow({ window, now }: { window: OAuthUsageWindow; now: number })
 	return (
 		<div className="flex flex-col gap-1">
 			<div className="flex items-baseline gap-2 text-[length:var(--app-font-size-ui-xs,10px)]">
-				<span className="min-w-0 truncate font-medium text-foreground">{window.label}</span>
+				<span className="min-w-0 truncate font-medium text-foreground">{label}</span>
 				<span className="shrink-0 tabular-nums text-muted-foreground">{figures}</span>
 				<div className="flex-1" />
 				{reset ? <span className="shrink-0 text-muted-foreground">{reset}</span> : null}
@@ -80,7 +83,7 @@ function UsageWindow({ window, now }: { window: OAuthUsageWindow; now: number })
 			{window.unlimited || remainingPercent === undefined ? null : (
 				<span
 					role="meter"
-					aria-label={window.label}
+					aria-label={label}
 					aria-valuemin={0}
 					aria-valuemax={100}
 					aria-valuenow={Math.round(remainingPercent)}
@@ -158,6 +161,11 @@ export function OAuthUsage({ provider }: { provider: OAuthProviderId }) {
 				<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{t("oauth.usage.loading")}</span>
 			) : null}
 			{usage?.windows.map((window) => <UsageWindow key={window.label} window={window} now={now} />)}
+			{usage?.windows.some((window) => window.sharedGroup) ? (
+				<span className="text-[length:var(--app-font-size-ui-xs,10px)] leading-relaxed text-muted-foreground">
+					{t("oauth.usage.antigravitySharedHint")}
+				</span>
+			) : null}
 			{usage && usage.metrics.length > 0 ? (
 				<dl className="flex flex-wrap gap-x-4 gap-y-1 text-[length:var(--app-font-size-ui-xs,10px)]">
 					{usage.metrics.map((metric) => (

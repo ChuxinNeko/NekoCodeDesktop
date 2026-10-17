@@ -1,5 +1,5 @@
 import type { FusionConfig } from "../shared/fusion";
-import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
+import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
 import type { LanStatus } from "../shared/lan";
 import type { SshHostInput, SshStatus, SshTestResult } from "../shared/ssh";
 import type {
@@ -472,6 +472,8 @@ const api = {
 	codeIntelModels: (): Promise<CodeIntelModels> => ipcRenderer.invoke("codeIntel:models"),
 	codeIndexRebuild: (cwd: string): Promise<IndexStatus> => ipcRenderer.invoke("codeIntel:rebuild", cwd),
 	onCodeIndexChanged: (listener: (status: IndexStatus) => void) => subscribe("codeIntel:indexChanged", listener),
+	promptPredict: (request: PromptPredictionRequest): Promise<CompletionResponse> => ipcRenderer.invoke("codeIntel:predictPrompt", request),
+	promptPredictCancel: (id: string): Promise<void> => ipcRenderer.invoke("codeIntel:cancelPromptPrediction", id),
 	tabComplete: (request: CompletionRequest): Promise<CompletionResponse> => ipcRenderer.invoke("codeIntel:complete", request),
 	tabCompleteCancel: (id: string): Promise<void> => ipcRenderer.invoke("codeIntel:cancelComplete", id),
 	promptsList: (): Promise<PromptsSnapshot> => ipcRenderer.invoke("prompts:list"),

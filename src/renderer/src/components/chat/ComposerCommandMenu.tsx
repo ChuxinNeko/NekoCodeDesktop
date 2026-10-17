@@ -1,15 +1,7 @@
-import { useEffect, useRef } from "react";
 import type { SlashCommandSummary } from "../../../../shared/commands";
 import { useTranslation } from "../../i18n";
-import { cn } from "../../lib/utils";
-import { FileIcon, PluginIcon, SkillCubeIcon, ZapIcon } from "../../lib/icons";
-import {
-	COMPOSER_COMMAND_MENU_FLOATING_WRAPPER_CLASS_NAME,
-	COMPOSER_COMMAND_MENU_ITEM_ACTIVE_CLASS_NAME,
-	COMPOSER_COMMAND_MENU_ITEM_CLASS_NAME,
-	COMPOSER_COMMAND_MENU_SURFACE_CLASS_NAME,
-	COMPOSER_SURFACE_SHADOW_CLASS_NAME,
-} from "./composerPickerStyles";
+import PromptBar from "../PromptBar";
+import { COMPOSER_COMMAND_MENU_FLOATING_WRAPPER_CLASS_NAME } from "./composerPickerStyles";
 
 /**
  * Rank commands against what has been typed after the slash.
@@ -54,84 +46,29 @@ interface ComposerCommandMenuProps {
 	onPick: (command: SlashCommandSummary) => void;
 }
 
-/**
- * The list that opens when a message starts with a slash.
- *
- * Deliberately not a Base UI menu: it is driven entirely from the textarea's
- * keyboard handler, and a real menu would take focus away from the field the
- * user is still typing into.
- */
+/** Command data and keyboard selection remain owned by ComposerShell. */
 export function ComposerCommandMenu(props: ComposerCommandMenuProps) {
 	const { t } = useTranslation();
-	const listRef = useRef<HTMLDivElement | null>(null);
-
-	// Follow the keyboard selection rather than the pointer: arrowing past the
-	// bottom of a long skill list has to bring the row into view.
-	useEffect(() => {
-		const row = listRef.current?.querySelector(`[data-index="${String(props.activeIndex)}"]`);
-		row?.scrollIntoView({ block: "nearest" });
-	}, [props.activeIndex]);
-
 	return (
 		<div className={COMPOSER_COMMAND_MENU_FLOATING_WRAPPER_CLASS_NAME}>
-			<div
-				className={cn(
-					COMPOSER_COMMAND_MENU_SURFACE_CLASS_NAME,
-					COMPOSER_SURFACE_SHADOW_CLASS_NAME,
-				)}
-			>
-				{props.commands.length === 0 ? (
-					<div className="px-3 py-2.5 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						{t("commands.empty")}
-					</div>
-				) : (
-					<div
-						ref={listRef}
-						className="max-h-[min(18rem,45vh)] overflow-y-auto overscroll-contain p-1"
-						role="listbox"
-					>
-						{props.commands.map((command, index) => {
-							const Icon =
-								command.kind === "skill" ? SkillCubeIcon
-								: command.kind === "builtin" ? ZapIcon
-								: command.kind === "extension" ? PluginIcon
-								: FileIcon;
-							return (
-								<div
-									key={`${command.kind}:${command.name}`}
-									data-index={index}
-									role="option"
-									aria-selected={index === props.activeIndex}
-									className={cn(
-										COMPOSER_COMMAND_MENU_ITEM_CLASS_NAME,
-										index === props.activeIndex && COMPOSER_COMMAND_MENU_ITEM_ACTIVE_CLASS_NAME,
-									)}
-									// Pointer-down rather than click: the textarea must not lose
-									// focus and close the menu before the pick lands.
-									onPointerDown={(event) => {
-										event.preventDefault();
-										props.onPick(command);
-									}}
-									onPointerMove={() => props.onHighlight(index)}
-								>
-									<Icon className="size-3.5 shrink-0 opacity-70" />
-									<span className="shrink-0 font-mono text-[length:var(--app-font-size-ui,12px)]">
-										/{command.name}
-									</span>
-									{command.argumentHint ? (
-										<span className="shrink-0 font-mono text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70">
-											{command.argumentHint}
-										</span>
-									) : null}
-									<span className="min-w-0 flex-1 truncate text-right text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-										{command.description}
-									</span>
-								</div>
-							);
-						})}
-					</div>
-				)}
-			</div>
+			<PromptBar
+				items={props.commands.map((command) => ({
+					key: `${command.kind}:${command.name}`,
+					name: `/${command.name}`,
+					description: command.description,
+					argumentHint: command.argumentHint,
+				}))}
+				activeIndex={props.activeIndex}
+				label={t("picker.slashCommands")}
+				emptyLabel={t("commands.empty")}
+				searchHint={t("commands.searchHint")}
+				keyboardHint={t("commands.keyboardHint")}
+				onHighlight={props.onHighlight}
+				onPick={(index) => {
+					const command = props.commands[index];
+					if (command) props.onPick(command);
+				}}
+			/>
 		</div>
 	);
 }
