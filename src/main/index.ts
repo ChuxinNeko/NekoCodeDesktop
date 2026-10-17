@@ -719,8 +719,8 @@ function createWindow(): void {
 	const material = activeMaterial;
 	const backdrop = material === "mica" || material === "acrylic";
 	const win = new BrowserWindow({
-		width: 1152,
-		height: 720,
+		width: 1267,
+		height: 792,
 		minWidth: 1100,
 		minHeight: 700,
 		title: "NekoCode Desktop",

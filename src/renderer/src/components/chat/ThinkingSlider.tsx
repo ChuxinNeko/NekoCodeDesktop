@@ -7,13 +7,13 @@ import { useCallback, useEffect, useRef } from "react";
 import type { ThinkingLevel } from "../../../../shared/agent";
 import { cn } from "../../lib/utils";
 
-const TRACK_HEIGHT = 32;
-/** LED-matrix cell pitch in CSS px: 5px cell + 1px gap gives 5 rows on the 32px track. */
-const CELL = 6;
+const TRACK_HEIGHT = 26;
+/** LED-matrix cell pitch in CSS px: 4px cell + 1px gap gives 5 rows on the 26px track. */
+const CELL = 5;
 const GAP = 1;
 /** Ripple radiating right to left from the thumb: px/s, band width px, lifetime s. */
-const WAVE_SPEED = 170;
-const WAVE_WIDTH = 16;
+const WAVE_SPEED = 140;
+const WAVE_WIDTH = 13;
 const WAVE_LIFE = 1.4;
 
 interface Cell {

@@ -38,6 +38,23 @@ import {
 	COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME,
 } from "./composerPickerStyles";
 
+const THINKING_SCALE: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** The model's own level closest to the requested one, so a switch to a model
+ *  without that level shows (and snaps to) a sensible stop instead of the first. */
+function nearestThinkingLevel(level: ThinkingLevel, available: ThinkingLevel[]): ThinkingLevel {
+	if (available.includes(level)) return level;
+	const target = THINKING_SCALE.indexOf(level);
+	let best = available[0] ?? "off";
+	let bestDistance = Infinity;
+	for (const candidate of available) {
+		const distance = Math.abs(THINKING_SCALE.indexOf(candidate) - target);
+		// Ties go to the lower level: cheaper and never surprising.
+		if (distance < bestDistance) { best = candidate; bestDistance = distance; }
+	}
+	return best;
+}
+
 const WORK_MODE_KEYS: Record<WorkMode, TranslationKey> = {
 	agent: "workMode.agent",
 	ask: "workMode.ask",
@@ -87,7 +104,8 @@ interface ComposerPickersProps {
  */
 export function ComposerPickers(props: ComposerPickersProps) {
 	const { t } = useTranslation();
-	const { models, modelKey, thinkingLevel, thinkingLevels, mode } = props;
+	const { models, modelKey, thinkingLevels, mode } = props;
+	const thinkingLevel = nearestThinkingLevel(props.thinkingLevel, thinkingLevels);
 	// A model with nothing but "off" cannot think at all; say so instead of
 	// offering a menu whose every entry would snap back.
 	const thinkingSupported = thinkingLevels.length > 1;
@@ -226,7 +244,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 			>
 				<MenuTrigger render={trigger(triggerLabel + triggerSuffix, <ZapIcon className="size-3.5" />)} />
 				<ComposerPickerMenuPopup
-					align="start"
+					align="end"
 					side="top"
 					fixedWidth
 					className="[--available-height:min(32rem,80vh)]"
