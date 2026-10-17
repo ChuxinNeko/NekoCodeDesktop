@@ -11,8 +11,12 @@ export function activeTurnChanges(cells: readonly AgentCell[], checkpoints: read
 	return undefined;
 }
 
-/** Keep a completed turn's file summary at its final row, including stopped runs. */
-export function completedTurnChanges(rows: readonly TranscriptRow[], checkpoints: readonly CheckpointSummary[], streaming: boolean, composerCheckpointId?: string): Map<string, CheckpointSummary> {
+/**
+ * Keep a completed turn's file summary on its final row, including stopped runs.
+ * A turn that is still streaming stays out of this map; the composer shows a
+ * live capsule for it instead, and the card joins the transcript once it ends.
+ */
+export function completedTurnChanges(rows: readonly TranscriptRow[], checkpoints: readonly CheckpointSummary[], streaming: boolean): Map<string, CheckpointSummary> {
 	const byPrompt = new Map(checkpoints.filter((checkpoint) => checkpoint.cellId !== null).map((checkpoint) => [checkpoint.cellId, checkpoint]));
 	const cards = new Map<string, CheckpointSummary>();
 	let checkpoint: CheckpointSummary | undefined;
@@ -21,7 +25,7 @@ export function completedTurnChanges(rows: readonly TranscriptRow[], checkpoints
 		if (row.kind === "user") checkpoint = byPrompt.get(row.cell.id);
 		const next = rows[i + 1];
 		const ended = next === undefined ? !streaming : next.kind === "user";
-		if (ended && checkpoint && checkpoint.files.length > 0 && checkpoint.id !== composerCheckpointId) cards.set(row.id, checkpoint);
+		if (ended && checkpoint && checkpoint.files.length > 0) cards.set(row.id, checkpoint);
 	}
 	return cards;
 }

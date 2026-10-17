@@ -516,7 +516,6 @@ export function ChatView(props: ChatViewProps) {
 							onOpenTask={props.onOpenTask}
 							onOpenFile={props.onOpenFile}
 							checkpoints={snapshot.checkpoints}
-							composerCheckpointId={liveChanges?.id}
 							onRestoreCheckpoint={props.onRestoreCheckpoint}
 							onOpenReview={props.onOpenReview}
 							onLoadToolOutput={props.onLoadToolOutput}
@@ -556,9 +555,9 @@ export function ChatView(props: ChatViewProps) {
 				predictionContext={props.mobile ? undefined : { sessionId: snapshot.session.id, cells: snapshot.cells }}
 				header={<>
 					{props.composerHeader}
-					{liveChanges ? <EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} live={snapshot.streaming || settling}
-						disabled={busy || snapshot.streaming || settling} onRestore={props.onRestoreCheckpoint}
-						onReview={props.onOpenReview} onOpenFile={props.onOpenFile} /> : null}
+					{liveChanges && (snapshot.streaming || settling) ? (
+						<EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} live />
+					) : null}
 				</>}
 				loadCommands={props.loadCommands}
 				loadMentions={props.loadMentions}
