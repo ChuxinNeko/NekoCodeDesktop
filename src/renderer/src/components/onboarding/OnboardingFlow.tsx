@@ -3,9 +3,8 @@
 // Layer: App shell (rendered by main.tsx before <App /> until completed or skipped).
 
 import { AppearanceSettings } from "../settings/AppearanceSettings";
+import { ProviderModelSettings } from "../settings/ProviderModelSettings";
 import { useEffect, useMemo, useState } from "react";
-import type { ModelApiProtocol } from "../../../../shared/settings";
-import { PROTOCOL_DEFAULT_ROUTE } from "../../../../shared/model-protocol";
 import type { AppPreferences, CommandShellOption } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
 import { LANGUAGE_OPTIONS, useTranslation, type TranslationKey } from "../../i18n";
@@ -30,23 +29,6 @@ const STEP_LABEL: Record<StepId, TranslationKey> = {
 	preferences: "onboarding.step.preferences",
 };
 
-const PROTOCOLS: { id: ModelApiProtocol; label: string; placeholder: string }[] = [
-	{ id: "openai-completions", label: "OpenAI Chat", placeholder: "https://api.openai.com" },
-	{ id: "openai-responses", label: "OpenAI Responses", placeholder: "https://api.openai.com" },
-	{ id: "anthropic-messages", label: "Anthropic", placeholder: "https://api.anthropic.com" },
-];
-
-interface ModelDraft {
-	name: string;
-	api: ModelApiProtocol;
-	baseUrl: string;
-	apiKey: string;
-	modelIds: string;
-	reasoning: boolean;
-}
-
-const EMPTY_MODEL: ModelDraft = { name: "", api: "openai-completions", baseUrl: "", apiKey: "", modelIds: "", reasoning: false };
-
 const COMMAND_SHELL_KEYS: Record<string, TranslationKey> = {
 	auto: "settings.commandShell.auto",
 	powershell: "settings.commandShell.powershell",
@@ -57,18 +39,6 @@ const COMMAND_SHELL_KEYS: Record<string, TranslationKey> = {
 	zsh: "settings.commandShell.zsh",
 	sh: "settings.commandShell.sh",
 };
-
-function parseModelIds(text: string): string[] {
-	return Array.from(new Set(text.split(/[\s,;，；]+/).map((id) => id.trim()).filter(Boolean)));
-}
-
-function modelDraftFilled(draft: ModelDraft): boolean {
-	return !!(draft.name.trim() || draft.baseUrl.trim() || draft.apiKey.trim() || draft.modelIds.trim());
-}
-
-function modelDraftValid(draft: ModelDraft): boolean {
-	return !!draft.name.trim() && /^https?:\/\//i.test(draft.baseUrl.trim()) && parseModelIds(draft.modelIds).length > 0;
-}
 
 function shortPath(path: string): string {
 	return path.length > 44 ? `…${path.slice(-43)}` : path;
@@ -126,12 +96,23 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 	const [index, setIndex] = useState(0);
 	const [name, setName] = useState(readUserName);
 	const [cwd, setCwd] = useState<string | null>(null);
-	const [model, setModel] = useState<ModelDraft>(EMPTY_MODEL);
-	const [savedModel, setSavedModel] = useState<string | null>(null);
+	const [modelCount, setModelCount] = useState(0);
 	const [preferences, setPreferences] = useState<AppPreferences | null>(null);
 	const [shells, setShells] = useState<CommandShellOption[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	// The embedded provider settings save on their own; mirror the count in the checklist.
+	useEffect(() => {
+		if (STEPS[index] !== "models") return;
+		let alive = true;
+		const refresh = () => {
+			void api.modelList().then((list) => { if (alive && Array.isArray(list)) setModelCount(list.length); }).catch(() => {});
+		};
+		refresh();
+		const timer = window.setInterval(refresh, 1500);
+		return () => { alive = false; window.clearInterval(timer); };
+	}, [index]);
 
 	useEffect(() => {
 		api.preferencesGet().then(setPreferences).catch(() => undefined);
@@ -171,39 +152,8 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 		}
 	};
 
-	/** Saves the model form when it was filled in; an untouched form is a skip. */
-	const saveModel = async (): Promise<boolean> => {
-		if (!modelDraftFilled(model) || savedModel) return true;
-		if (!modelDraftValid(model)) {
-			setError(t("onboarding.models.invalid"));
-			return false;
-		}
-		setBusy(true);
-		setError(null);
-		try {
-			const saved = await api.modelSave({
-				kind: "custom-api",
-				name: model.name.trim(),
-				baseUrl: model.baseUrl.trim().replace(/\/+$/, ""),
-				route: PROTOCOL_DEFAULT_ROUTE[model.api],
-				api: model.api,
-				apiKey: model.apiKey.trim() || undefined,
-				modelIds: parseModelIds(model.modelIds),
-				reasoning: model.reasoning,
-			});
-			setSavedModel(saved.name);
-			return true;
-		} catch (cause) {
-			setError(errorMessage(cause));
-			return false;
-		} finally {
-			setBusy(false);
-		}
-	};
-
 	const next = async () => {
 		setError(null);
-		if (step === "models" && !(await saveModel())) return;
 		if (last) finish();
 		else setIndex((value) => value + 1);
 	};
@@ -223,9 +173,9 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 		profile: trimmedName || t("onboarding.skipped"),
 		workspace: cwd ? shortPath(cwd) : defaultDir ? t("onboarding.workspace.home") : t("onboarding.skipped"),
 		theme: t(`onboarding.theme.${theme}` as TranslationKey),
-		models: savedModel ?? t("onboarding.skipped"),
+		models: modelCount > 0 ? t("onboarding.models.count", { count: modelCount }) : t("onboarding.skipped"),
 		preferences: t("onboarding.preferences.summary"),
-	}), [trimmedName, cwd, defaultDir, theme, savedModel, t]);
+	}), [trimmedName, cwd, defaultDir, theme, modelCount, t]);
 
 	const themeOptions: { id: ThemeMode; icon: React.ReactNode }[] = [
 		{ id: "light", icon: <SunIcon className="size-4" /> },
@@ -362,54 +312,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 								{step === "models" ? (
 									<div className="flex flex-col gap-4">
 										<Heading title={t("onboarding.models.title")} hint={t("onboarding.models.hint")} />
-										{savedModel ? (
-											<p className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-[length:var(--app-font-size-ui,12px)]">
-												<CheckIcon className="size-3.5" />
-												{t("onboarding.models.saved", { name: savedModel })}
-											</p>
-										) : (
-											<>
-												<div className="grid grid-cols-2 gap-3">
-													<Field label={t("onboarding.models.name")}>
-														<Input className={inputClass} value={model.name} placeholder="My provider" onChange={(e) => setModel({ ...model, name: e.target.value })} />
-													</Field>
-													<Field label={t("onboarding.models.protocol")}>
-														<div className="flex h-9 items-center gap-0.5 rounded-lg bg-secondary p-0.5">
-															{PROTOCOLS.map((protocol) => (
-																<button
-																	key={protocol.id}
-																	type="button"
-																	onClick={() => setModel({ ...model, api: protocol.id })}
-																	className={cn(
-																		"h-full flex-1 truncate rounded-md px-1.5 text-[length:var(--app-font-size-ui-sm,11px)] transition-colors",
-																		model.api === protocol.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-																	)}
-																>
-																	{protocol.label}
-																</button>
-															))}
-														</div>
-													</Field>
-												</div>
-												<Field label={t("onboarding.models.baseUrl")}>
-													<Input className={cn(inputClass, "font-mono")} value={model.baseUrl} placeholder={PROTOCOLS.find((p) => p.id === model.api)?.placeholder} onChange={(e) => setModel({ ...model, baseUrl: e.target.value })} />
-												</Field>
-												<div className="grid grid-cols-2 gap-3">
-													<Field label={t("onboarding.models.apiKey")}>
-														<Input className={cn(inputClass, "font-mono")} type="password" autoComplete="off" value={model.apiKey} placeholder="sk-…" onChange={(e) => setModel({ ...model, apiKey: e.target.value })} />
-													</Field>
-													<Field label={t("onboarding.models.modelIds")}>
-														<Input className={cn(inputClass, "font-mono")} value={model.modelIds} placeholder="gpt-4.1, o4-mini" onChange={(e) => setModel({ ...model, modelIds: e.target.value })} />
-													</Field>
-												</div>
-												<ToggleRow
-													title={t("onboarding.models.reasoning")}
-													hint={t("onboarding.models.reasoningHint")}
-													checked={model.reasoning}
-													onChange={(reasoning) => setModel({ ...model, reasoning })}
-												/>
-											</>
-										)}
+										<ProviderModelSettings />
 									</div>
 								) : null}
 
