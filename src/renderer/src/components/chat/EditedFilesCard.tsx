@@ -1,40 +1,37 @@
 // FILE: EditedFilesCard.tsx
-// Purpose: The turn-closing "edited N files" summary — the Codex-style rollup of
-//          every file a turn's edits touched, with undo (checkpoint restore) and
-//          review as the card's two actions.
+// Purpose: The turn's file-change summary. While a turn is running it is a capsule
+//          floating above the composer; once the turn ends it is a scrolling card
+//          in the transcript, with undo and review.
 // Layer: Chat component
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import type { CheckpointSummary } from "../../../../shared/checkpoints";
 import { useTranslation } from "../../i18n";
-import { FileTypeIcon } from "../../lib/fileIcons";
 import {
+	AddPlusIcon,
 	ChevronDownIcon,
+	ChevronRightIcon,
 	ChevronUpIcon,
-	PencilIcon,
 	Undo2Icon,
 } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Button } from "../ui/button";
 import { DiffStat } from "../ui/diff-stat";
-import { DisclosureRegion } from "../ui/disclosure-region";
 
 /** Rows listed before the rest fold behind a "show more" line. */
-const COLLAPSED_FILE_COUNT = 5;
+const COLLAPSED_FILE_COUNT = 3;
 
 /**
  * Current turn changes above the composer, or a completed turn's saved summary.
  *
- * The per-call diff cards inside the work group show each edit as it happens;
- * this answers the question that is left once the turn is done: which files is
- * the answer standing on, and how much did each move? The data is the turn's
- * own checkpoint — the journal already sums each tool call's lines per path, so
- * the card is a render of what the transcript recorded, not a second diff.
+ * The per-call diff cards inside the work group show each edit as it happens.
+ * This answers the question left once the turn is done: which files the answer
+ * stands on, and how much each moved. The data is the turn's own checkpoint.
  *
- * Live lists have bounded height and hide undo until the run settles. Completed
- * summaries remain in the transcript; undo stays disabled while another run
- * is in flight.
+ * While the run is in flight the composer shows only a capsule (file count and
+ * line totals). The full card is rendered in the transcript after the turn
+ * ends, so it scrolls with the conversation instead of staying pinned.
  */
 export function EditedFilesCard({
 	checkpoint,
@@ -46,7 +43,7 @@ export function EditedFilesCard({
 }: {
 	/** The checkpoint the turn started from; its `files` are the turn's edits. */
 	checkpoint: CheckpointSummary;
-	/** Active editing presentation; the latest summary can also remain after settling. */
+	/** Compact capsule above the composer while this turn is still running. */
 	live?: boolean;
 	/** A run is in flight, so a rewind would race it. */
 	disabled?: boolean;
@@ -57,66 +54,90 @@ export function EditedFilesCard({
 }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
-	const [listOpen, setListOpen] = useState(true);
-	const listId = useId();
 	const files = checkpoint.files;
+
+	if (live) {
+		return (
+			<div className="mb-2 flex justify-center">
+				<div
+					aria-label={t("fileEdit.changes")}
+					data-slot="edited-files"
+					data-live="true"
+					className="flex w-fit max-w-full items-center gap-3 rounded-full border border-border/70 bg-background px-3 py-1.5 shadow-md"
+				>
+					<span className="min-w-0 truncate text-[length:var(--app-font-size-ui,12px)] font-medium" aria-live="polite">
+						{t("fileEdit.liveSummary", { count: files.length })}
+					</span>
+					<DiffStat
+						className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]"
+						insertions={checkpoint.additions}
+						deletions={checkpoint.deletions}
+					/>
+				</div>
+			</div>
+		);
+	}
+
 	const shown = expanded ? files : files.slice(0, COLLAPSED_FILE_COUNT);
 	const hidden = files.length - shown.length;
 
 	return (
-		<section aria-label={t("fileEdit.changes")} data-slot="edited-files" data-live={live || undefined}
-			className={cn("overflow-hidden rounded-xl border border-border/60 bg-background", live && "mb-2 shadow-sm")}>
-			<div className="flex items-center gap-1.5 px-2.5 py-1.5">
-				<button type="button" onClick={() => setListOpen((value) => !value)} aria-expanded={listOpen} aria-controls={listId}
-					className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-					{!live ? <PencilIcon className="size-3.5 shrink-0 text-muted-foreground" /> : null}
-					<span className="min-w-0 truncate text-[length:var(--app-font-size-ui-sm,11px)] font-medium" aria-live="polite">
-						{t(live ? "fileEdit.liveSummary" : "fileEdit.summary", { count: files.length })}
+		<section
+			aria-label={t("fileEdit.changes")}
+			data-slot="edited-files"
+			className="overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm"
+		>
+			<div className="flex items-start justify-between gap-3 px-3 py-2.5">
+				<div className="flex min-w-0 items-start gap-2.5">
+					<span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/30 text-muted-foreground">
+						<AddPlusIcon className="size-4" />
 					</span>
-					<DiffStat className="shrink-0 text-[length:var(--app-font-size-ui-xs,10px)]" insertions={checkpoint.additions} deletions={checkpoint.deletions} />
-					{listOpen ? <ChevronUpIcon className="size-3 shrink-0 text-muted-foreground" /> : <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />}
-				</button>
-				{onRestore && !live ? (
-					<Button
-						disabled={disabled}
-						onClick={() => onRestore(checkpoint)}
-						size="xs"
-						variant="chrome-outline"
-					>
-						<Undo2Icon className="size-3.5" />
-						{t("fileEdit.undo")}
-					</Button>
-				) : null}
-				{onReview ? (
-					<Button onClick={onReview} size="xs" variant="chrome-outline">
-						{t("nav.review")}
-					</Button>
-				) : null}
+					<div className="min-w-0">
+						<div className="truncate text-[length:var(--app-font-size-ui-lg,13px)] font-medium">
+							{t("fileEdit.summary", { count: files.length })}
+						</div>
+						{onReview ? (
+							<button
+								type="button"
+								onClick={onReview}
+								className="mt-0.5 inline-flex items-center gap-0.5 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground transition-colors hover:text-foreground"
+							>
+								{t("fileEdit.review")}
+								<ChevronRightIcon className="size-3" />
+							</button>
+						) : null}
+					</div>
+				</div>
+				<div className="flex shrink-0 items-center gap-1.5">
+					{onRestore ? (
+						<Button disabled={disabled} onClick={() => onRestore(checkpoint)} size="xs" variant="chrome-outline">
+							<Undo2Icon className="size-3.5" />
+							{t("fileEdit.undo")}
+						</Button>
+					) : null}
+					{onReview ? (
+						<Button onClick={onReview} size="xs" variant="chrome-outline">
+							{t("fileEdit.review")}
+						</Button>
+					) : null}
+				</div>
 			</div>
-			<DisclosureRegion id={listId} open={listOpen}>
-			<div className={cn("border-t border-border/60 py-0.5", live && "max-h-36 overflow-y-auto overscroll-contain")}>
+			<div className="border-t border-border/60 py-1">
 				{shown.map((file) => {
-					const basename = file.path.split("/").filter(Boolean).pop() ?? file.path;
-					const stat =
-						file.additions > 0 || file.deletions > 0 ? (
-							<DiffStat
-								className="shrink-0 text-[length:var(--app-font-size-ui-xs,10px)]"
-								insertions={file.additions}
-								deletions={file.deletions}
-							/>
-						) : null;
 					const rowClass = cn(
-						"flex w-full items-center gap-1.5 px-2.5 py-1 text-left",
-						"text-[length:var(--app-font-size-ui-sm,11px)]",
-						live && "workflow-file-enter",
+						"flex w-full items-center gap-3 px-3 py-1.5 text-left",
+						"text-[length:var(--app-font-size-ui,12px)]",
 					);
 					const rowBody = (
 						<>
-							<FileTypeIcon name={basename} className="size-3.5 shrink-0" />
-							<span className="min-w-0 flex-1 truncate font-mono" title={file.path}>
+							<span className="min-w-0 flex-1 truncate" title={file.path}>
 								{file.path}
 							</span>
-							{stat}
+							<DiffStat
+								className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]"
+								insertions={file.additions}
+								deletions={file.deletions}
+							/>
 						</>
 					);
 					return onOpenFile ? (
@@ -139,26 +160,25 @@ export function EditedFilesCard({
 						type="button"
 						onClick={() => setExpanded((value) => !value)}
 						className={cn(
-							"flex w-full items-center gap-1 px-2.5 py-1 text-left transition-colors",
-							"text-[length:var(--app-font-size-ui-xs,10px)] hover:text-foreground",
+							"flex w-full items-center gap-1 px-3 py-1.5 text-left transition-colors",
+							"text-[length:var(--app-font-size-ui-sm,11px)] hover:text-foreground",
 							MUTED_LABEL_TEXT_CLASS_NAME,
 						)}
 					>
 						{expanded ? (
 							<>
-								<ChevronUpIcon className="size-3 shrink-0" />
 								{t("fileEdit.showLess")}
+								<ChevronUpIcon className="size-3 shrink-0" />
 							</>
 						) : (
 							<>
-								<ChevronDownIcon className="size-3 shrink-0" />
 								{t("fileEdit.showMore", { count: hidden })}
+								<ChevronDownIcon className="size-3 shrink-0" />
 							</>
 						)}
 					</button>
 				) : null}
 			</div>
-			</DisclosureRegion>
 		</section>
 	);
 }

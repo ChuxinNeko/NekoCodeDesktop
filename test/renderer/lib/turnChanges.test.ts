@@ -12,11 +12,11 @@ export const checkpoint: CheckpointSummary = { id: "checkpoint", sessionId: "ses
 	files: [{ path: "a.ts", additions: 4, deletions: 2 }], additions: 4, deletions: 2, shellRuns: 0 };
 
 describe("turn file changes", () => {
-	test("keeps the latest completed changes above the composer without duplicating the transcript card", () => {
+	test("keeps the latest completed changes in the transcript once the turn ends", () => {
 		const cells = [user("prompt"), tool, reply];
 		const rows = foldSettledTurns(groupTranscriptRows(cells), false);
 		expect(activeTurnChanges(cells, [checkpoint])).toBe(checkpoint);
-		expect(completedTurnChanges(rows, [checkpoint], false, checkpoint.id).size).toBe(0);
+		expect([...completedTurnChanges(rows, [checkpoint], false).values()]).toEqual([checkpoint]);
 		const next = [...cells, user("next")];
 		expect(activeTurnChanges(next, [checkpoint])).toBeUndefined();
 		expect(completedTurnChanges(groupTranscriptRows(next), [checkpoint], true).size).toBe(1);
