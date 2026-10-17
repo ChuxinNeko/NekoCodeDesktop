@@ -1,0 +1,7 @@
+{
+  "name": "nekocode-pi-kernel",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Vendored PI runtime; dependencies and builds are managed by the NekoCode workspace root"
+}

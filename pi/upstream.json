@@ -1,0 +1,389 @@
+{
+  "repository": "https://github.com/earendil-works/pi",
+  "version": "1.3.0",
+  "commit": "8efd314fa3d3232ce197d8d7a6a5660530b9d83e",
+  "previousUpstreamBase": "a276dabe57911253350bffb93cb7d7aff6a73261",
+  "previousNekoCodeCommit": "069de6bfc65c8f6788a195aa8bf03ebef9bae8b7",
+  "mergeMethod": "three-way, with manual semantic resolution of overlapping changes and upstream deletions",
+  "customizedFiles": [
+    {
+      "path": "packages/agent/package.json",
+      "previousBlob": "dc527574cac91e582e04701b6eb2237b14062c96",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "38a8d4249aebfd565ddce8818f84ece2e6a4986d04ddc52eb36fadcfea492ec5"
+    },
+    {
+      "path": "packages/agent/src/agent-loop.ts",
+      "previousBlob": "dc4d4357fefd79971881af83da63306a652e46d5",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "294947fffa4a533884d5e31f4efa771b5c15bd552a8a7f752cd4ab96f8cb1a68"
+    },
+    {
+      "path": "packages/agent/src/agent.ts",
+      "previousBlob": "5983f5fa1f236495f4521a41b296be695c128fa0",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "2e05bab35036a632b24c7aef49116c8c863ad1a3579559496c04cc896030e51b"
+    },
+    {
+      "path": "packages/agent/src/types.ts",
+      "previousBlob": "31d03a6bc0dc2ea79126caefd821fd560354e18d",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "099d77b25edff0bd8adff5a39472f1d0e860c3a8fb1726ed359a40d77b84e721"
+    },
+    {
+      "path": "packages/agent/test/agent-loop.test.ts",
+      "previousBlob": "6c3f456ac9f9c76fab9634cfb37d503bb2379e7b",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "72432aefac26d50316da52e20d812c6ff46eb034e7fe5a7aec0abde72acce14b"
+    },
+    {
+      "path": "packages/ai/package.json",
+      "previousBlob": "c322e63c0fe126947747978cefc02319c6b7e904",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "cb944a5348808f57a6e456c49c29311f1a66cadcd35352bdfcb40c0f4796fa45"
+    },
+    {
+      "path": "packages/ai/scripts/generate-models.ts",
+      "previousBlob": "fd97e4fd2e0a37fa276a65dab8e69ff55f53b05c",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "a00dc284da0bdde58ff4e38450a33de1fa4ef2c40d57a10f419db37350947bd9"
+    },
+    {
+      "path": "packages/ai/src/api/openai-codex-responses.ts",
+      "previousBlob": "eb70e0d694d8f358236b9723ee02c1c3374b49af",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "aa5637fcfe10b2d3630f316348b1ab2b2d79c8602c9efe3c39fc7a848ae92ef0"
+    },
+    {
+      "path": "packages/ai/src/auth/oauth/openai-codex.ts",
+      "previousBlob": "dba763527e524fec5eb8ca57b47dc432a1838b06",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "00a2b6a09784a9cd7a8e5956c3896c4dc2e3536ee71ad9b6e71da3c9f9fe4c8f"
+    },
+    {
+      "path": "packages/ai/src/providers/opencode-go.ts",
+      "previousBlob": "42cda00f6057c7edcc825a6b50ce124ee320f395",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "aee7367398cf29698af3048a0a8b42cae4650c2325a9ffaae047ef60a4f6a8c5"
+    },
+    {
+      "path": "packages/ai/src/utils/error-body.ts",
+      "previousBlob": "2aec1a7d40158fdb00877a0f24619ba42fc63ee5",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "1cc977ce95202c59be95f681ee9f8810ac9bf760a3471cea9b2844d989a57cdf"
+    },
+    {
+      "path": "packages/ai/src/utils/pi-user-agent.ts",
+      "previousBlob": "1a9e48f2bd1fb1edd37926d64c7d36c6509fdb54",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "74fb9aab7c6c951e70f87cdba9ccdc42ba324351f714e5a7aac29348062c397d"
+    },
+    {
+      "path": "packages/ai/test/anthropic-auth-token.test.ts",
+      "previousBlob": "7739047ffc2d1dff5ed2cfb739785111a835de9c",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "74ee59caa98d5d6efc8bcf3b2f216f2f5bacc8f3674d468128d5f11d5a37d65a"
+    },
+    {
+      "path": "packages/ai/test/azure-openai-base-url.test.ts",
+      "previousBlob": "ffabd8a690ec674ff05a7d0f556d7ee231140a99",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "95f3f6deab6ce3c3ddb572e84039095e98ba9cba91bb172313dfbd58fe6be6c5"
+    },
+    {
+      "path": "packages/ai/test/error-body.test.ts",
+      "previousBlob": "db37eddf782379aad85b332666394e341f40e2f4",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "5fad5b33e6efcebc4203d72c47b93f5e5627e58b58f027fd44908ca2fb8a9de6"
+    },
+    {
+      "path": "packages/ai/test/google-raw-stop-reason.test.ts",
+      "previousBlob": "c82966edbbb6a748ce62d8b889cad729af96a382",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "06c9af8baf67a1d093b03354e0ec8ce2b04ea13625abd6080e720764c04f17b6"
+    },
+    {
+      "path": "packages/ai/test/google-vertex-api-key-resolution.test.ts",
+      "previousBlob": "52952b870664c4cd018980ba1eb248ba9f2de085",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "87d73f83964091a666e16290f52eceb0b35053e89594f3061a7a03e70e07cf02"
+    },
+    {
+      "path": "packages/ai/test/mistral-http-transport.test.ts",
+      "previousBlob": "201133805814da80a88beb147cf640a9e6251c89",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "9688da86b97023c84a10e88ab11cf80ee09d8dec0310c8768f086c9d497993c2"
+    },
+    {
+      "path": "packages/ai/test/openai-codex-stream.test.ts",
+      "previousBlob": "2e5b5a30f8443804c833665c9ec624e4abc3f3b2",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "d9b66af14cc2229c514cdadac5d585cc03aca1513a9b568260c11555dccab92f"
+    },
+    {
+      "path": "packages/ai/test/xai-responses.test.ts",
+      "previousBlob": "4d561b4bfa2cef69d5db5f6a69d566294378d201",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "2e24c45d37c23d695d48619d8c51f45c5503e002edd730bd69a8fafb4dc6be12"
+    },
+    {
+      "path": "packages/chord/package.json",
+      "previousBlob": "dddba47ed715f270d06405763febb078b91dacef",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "0864a1cba594ee02456bffd6b2809079999390f1b099012bca37bfa6a8f1670f"
+    },
+    {
+      "path": "packages/client/package.json",
+      "previousBlob": "83401b3af9958bc627374870b59ecf9e2cd91d31",
+      "disposition": "upstream-removed-publishing-metadata-only"
+    },
+    {
+      "path": "packages/codemode/package.json",
+      "previousBlob": "84965ed127611fe70da65a2d72d75bf6fb5ac5fb",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "530c70bcc7d1ff9cbaed3cdda5f53bf866724c0636b95241eb22445479cb0e8f"
+    },
+    {
+      "path": "packages/coding-agent/package.json",
+      "previousBlob": "edb7ed5f5227c3dd223924c4b38f1c61f3b04db8",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "e572119696db9049dd0a2f50f7fe8f32f973a8dc95273202192748e6ca7946fe"
+    },
+    {
+      "path": "packages/coding-agent/src/config.ts",
+      "previousBlob": "4ade62124f358e1513228f950b7f77781ffef1d4",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "0fc3e834f556a0570d18eb4379bd468d8565e677d6d0f2b559cadbf321ae1a80"
+    },
+    {
+      "path": "packages/coding-agent/src/core/agent-session.ts",
+      "previousBlob": "23e2441869d87514e9ad4ae833885cd8be112888",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "5711f2d3b2e24bb53dce7a46e1e1ac2e5203f6ee875a5d8e84d4fc4735f316bc"
+    },
+    {
+      "path": "packages/coding-agent/src/core/compaction/compaction.ts",
+      "previousBlob": "fae7d09f4cb5887fdf16f50f64f204b55166e72b",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "7c6e58c3b9d30c3f5003e1edcecc01bcdef37f54160e3f423e562f6fe4393810"
+    },
+    {
+      "path": "packages/coding-agent/src/core/extensions/loader.ts",
+      "previousBlob": "e5273eea4d51e80b12549e73c9ba23924ebbfed5",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "df58e8af7b296432912ec04bbacdba66078f2ba483b36c09fe26de5e86fb2ecf"
+    },
+    {
+      "path": "packages/coding-agent/src/core/package-manager.ts",
+      "previousBlob": "d014637ce54bda662168ac5d6a2754ce394e9fae",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "f87123a75b67151e230a7dcf75f8ed3ebd6a511cc1f6e4a6f870a053175b8ae8"
+    },
+    {
+      "path": "packages/coding-agent/src/core/prompt-templates.ts",
+      "previousBlob": "86370eadcd42ad1b7b41fb27d8e4624fa6c4e290",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "1bf3ff14db44586ac4a27412f46d2dd009240844dd1de1ce4dfb5cd1c34b3a32"
+    },
+    {
+      "path": "packages/coding-agent/src/core/resource-loader.ts",
+      "previousBlob": "2021889de23019a7fbbc9213e11000d484222cfb",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "8f4a53e8de64fefdb6c7b6067e673ec28a422cec1e7a3e1397252410cad30cf9"
+    },
+    {
+      "path": "packages/coding-agent/src/core/sdk.ts",
+      "previousBlob": "33ad6213902eb713c6ef0523e7eaf1d38a8d806b",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "6af6c398146e44a424df9b29e62d62a72c227da660b7c3489678374422fff203"
+    },
+    {
+      "path": "packages/coding-agent/src/core/settings-manager.ts",
+      "previousBlob": "21652a1985a8a66aeb9f256a5e7767f0da5f655d",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "7b725211381805300afb4c6b7c926b6800d730ab21b1131832eb1eefc1b6e437"
+    },
+    {
+      "path": "packages/coding-agent/src/core/system-prompt.ts",
+      "previousBlob": "b61aab763be615795118672ba07a4ed0547bd7c7",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "27b15448ac7e44f7b9de93140620074305a3746282c62c17ac6959e5d2ba2f77"
+    },
+    {
+      "path": "packages/coding-agent/src/core/trust-manager.ts",
+      "previousBlob": "99d98e489ec3feafd53566346ba1623e8c5f4465",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "dc9e8e003e16b72b54db1c3db15f976e90be08172b0f2e13a938cf6d2b034204"
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/mcp/config.ts",
+      "previousBlob": "75b5733791269294cf811b34e70ce8040e74fbd3",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "c317fba3529bc73719e4e48d0d36a02af96f863848c779695fe8c8e8957c4b57"
+    },
+    {
+      "path": "packages/coding-agent/src/index.ts",
+      "previousBlob": "2a353fdb725c0321459ce071f1ef2ed1c158db9e",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "8cd846070f76e01de57d92f462cd64cf55b9e6071991ebb6ecd44b908415ac68"
+    },
+    {
+      "path": "packages/coding-agent/test/system-prompt.test.ts",
+      "previousBlob": "de79fd700e7a81191534e31c5288f1829a03fd9d",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "c3d2f980df4fd86959bc39cad2df94b4b90ce04b44452a6648b823a70e119dbf"
+    },
+    {
+      "path": "packages/durable/package.json",
+      "previousBlob": "4b9d8d573a7e971bd21c6a5be122c5802d99a894",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "54cea4214081e72f6579a42976cb7f6783c2d66294fcc29e1bfe71ca1f19af02"
+    },
+    {
+      "path": "packages/mcp/package.json",
+      "previousBlob": "2f727f5fab46c95d8274ae17ae77aaacc3f797d7",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "83b717e0eb2939048c54f62e30aaa50f933f4c29314b5b553de904e3f13313f6"
+    },
+    {
+      "path": "packages/protocol/package.json",
+      "previousBlob": "efd16358625b7e78681d7077d9d7e6bd63ad8972",
+      "disposition": "upstream-removed-publishing-metadata-only"
+    },
+    {
+      "path": "packages/server/package.json",
+      "previousBlob": "374ea4a3820c76d58c68cdb013f9dc4886e0c060",
+      "disposition": "upstream-removed-publishing-metadata-only"
+    },
+    {
+      "path": "packages/telemetry/package.json",
+      "previousBlob": "267742fd37a92282d708d2a131b347ff76af7eb1",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "5033841d5e6b6e0c0b4b80b9e79aa693c7a02fbcbb25eeaf4379c47d04bd05e4"
+    },
+    {
+      "path": "packages/tui/package.json",
+      "previousBlob": "d0481d68c6482b88f8bda9a4fff5765aa3050bb9",
+      "disposition": "retained-or-merged",
+      "mergedSha256": "28f04a323c3342e9a03edf4655eea2e10f84808e9461e8dc3153ad26850f841d"
+    }
+  ],
+  "localOnlyFiles": [
+    {
+      "path": "packages/coding-agent/test/agent-session-compaction-hook.test.ts",
+      "sha256": "b367ddbf0ea1df7f0b41b08a40dab858b27df8211db50481d8874aa97052571b"
+    },
+    {
+      "path": "packages/prompt/README.md",
+      "sha256": "78718abd06b50207662216855a7fa41b197fb93efa2fe94166f4371d661a2d4e"
+    },
+    {
+      "path": "packages/prompt/agent/phases.json",
+      "sha256": "da99c5727a49c3cf43144b1494dc5a6cba12b4c044953efc9a084aa4d207626c"
+    },
+    {
+      "path": "packages/prompt/agent/phases/answer.md",
+      "sha256": "d1846e2387090c3d39dea40c3a5f9d9f84cc33f70f8ddb7cab1a96c0837e4846"
+    },
+    {
+      "path": "packages/prompt/agent/phases/debug.md",
+      "sha256": "ce31b92038843835e8ef911e516ebdc4f15034fa61fb69d01c5e6848eb1000a6"
+    },
+    {
+      "path": "packages/prompt/agent/phases/delegate.md",
+      "sha256": "91fe6646c356242eaf86574fbf5017a744ca1394d65e77253d59ed394f12b728"
+    },
+    {
+      "path": "packages/prompt/agent/phases/execute.md",
+      "sha256": "8f4ff10a0d6dcbff306a646c37a32699ba3d5365d6b3c6bf094d44c0e3427138"
+    },
+    {
+      "path": "packages/prompt/agent/phases/plan.md",
+      "sha256": "922fd011b535602bbb4316982e277782170d8485ffd9b4c12364c7f6a2661029"
+    },
+    {
+      "path": "packages/prompt/agent/prompt.md",
+      "sha256": "d076d08fe9d95f7abe9b6465449cc617065122a8bece2329219d9799dbc77b5d"
+    },
+    {
+      "path": "packages/prompt/ask/prompt.md",
+      "sha256": "24e1b5d44dce4fd4d35ffe4c97b96980cb31b9a2d0756052c1c35d35a3713038"
+    },
+    {
+      "path": "packages/prompt/ask/tools.json",
+      "sha256": "8b8b94046434d923664b03002d0c3682a16a265d1b0c556954c4c69f02a1bcdf"
+    },
+    {
+      "path": "packages/prompt/commit/prompt.md",
+      "sha256": "e1574280dbef0702328a35afbf613ce4558cc1e3f52c0f3f27a709e5cf3583c7"
+    },
+    {
+      "path": "packages/prompt/common_prefix.md",
+      "sha256": "e788319876acb58b6a656a9983af0240e44eedc027ac6abd5b107fef28cbb09e"
+    },
+    {
+      "path": "packages/prompt/compaction/prompt.md",
+      "sha256": "a948a3fd50c1a1bf09153231d2db09140af228914b34cf529f802678a54c7daa"
+    },
+    {
+      "path": "packages/prompt/debug/prompt.md",
+      "sha256": "4218bf172ea9b5beeb2399e2ee23a4a0e9f316f2bc5ae1093ef4001dc792017e"
+    },
+    {
+      "path": "packages/prompt/debug/system_reminder_continuing.txt",
+      "sha256": "cecd7aa608b165eb2bf7b4a61df3cbe1b3eab45f4bb1e795e4a4eca55b598cef"
+    },
+    {
+      "path": "packages/prompt/debug/system_reminder_initial.txt",
+      "sha256": "0dbd48149cef100c08b44e82d1f06732982e136e45bbe78d214148a2684983d7"
+    },
+    {
+      "path": "packages/prompt/debug/tools.json",
+      "sha256": "ed14b5a67d5923f67df1e92c3d8eec7413952c2053416e643133f470c0af4d98"
+    },
+    {
+      "path": "packages/prompt/multitask/prompt.md",
+      "sha256": "fbb769ceeefd2ace721418fd81e224f69ea24378bab27b2fce12c327afba5c4c"
+    },
+    {
+      "path": "packages/prompt/multitask/tools.json",
+      "sha256": "8a7bfd737fb0ac9e1366e9ef06e343d33a274cf730db3c838787208d162e37ca"
+    },
+    {
+      "path": "packages/prompt/plan/prompt.md",
+      "sha256": "fe1f5b1472637c439f253bd7208836ed072e6f83e96a03da43e1b580c78edc72"
+    },
+    {
+      "path": "packages/prompt/plan/system_reminder.txt",
+      "sha256": "01a38ac5126abe4a65b614cd937931aa1488b8a720681357ac7aec6ddfb922ac"
+    },
+    {
+      "path": "packages/prompt/plan/tools.json",
+      "sha256": "f55e644cbf3a4678ea9220e6e6fea818823a7bd4e45f3ef1c3b43f58910fca11"
+    },
+    {
+      "path": "packages/prompt/subagent/prompt.md",
+      "sha256": "b4aeed1e046901cc144a915428ac89dfdb9c0c9ccef4c641af00132c6511a464"
+    },
+    {
+      "path": "packages/prompt/subagent/tools.json",
+      "sha256": "b0088f75455bbc49ca4635db7d0be7372a8957cb4313851853e4a6ddbfd16903"
+    }
+  ],
+  "conflictResolutions": {
+    "packages/ai/scripts/generate-models.ts": "Retain regional and legacy Kimi keys; use new upstream Chat Completions model builder.",
+    "packages/ai/src/api/openai-codex-responses.ts": "Retain branded identity defaults, configurable header precedence, credential-derived authorization.",
+    "packages/ai/src/providers/opencode-go.ts": "Upstream includes the previous local Google Generative AI fix and new inference endpoints.",
+    "packages/coding-agent/src/core/agent-session.ts": "Combine preserveLoadout with new wildcard matcher.",
+    "packages/coding-agent/package.json": "Retain .nekocode and disabled publishing; adopt new schemas scripts and dependency versions.",
+    "packages/durable/package.json": "Retain disabled publishing; adopt new benchmark scripts and dependency versions."
+  },
+  "upstreamRemovedPackages": [
+    "client",
+    "protocol",
+    "server"
+  ],
+  "upstreamAddedPackages": [
+    "env"
+  ]
+}

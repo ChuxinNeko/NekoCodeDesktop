@@ -156,6 +156,50 @@ describe("defaultTools setting", () => {
 		toolLessSession.dispose();
 	});
 
+	it("applies +name and -name tool options to the default selection", async () => {
+		const inactiveTool: InlineExtension = (pi) => {
+			pi.registerTool({
+				name: "inactive_tool",
+				label: "Inactive Tool",
+				description: "Extension tool registered inactive",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+				defaultActive: false,
+			});
+			pi.registerTool({
+				name: "active_tool",
+				label: "Active Tool",
+				description: "Extension tool registered active",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			});
+		};
+
+		const session = await createSession(["+grep"], { tools: ["+inactive_tool", "-write"] }, [inactiveTool]);
+		expect(session.getActiveToolNames().sort()).toEqual([
+			"active_tool",
+			"bash",
+			"edit",
+			"grep",
+			"inactive_tool",
+			"read",
+		]);
+		session.dispose();
+
+		const toolLess = await createSession(["read"], { noTools: "all", tools: ["+inactive_tool"] }, [inactiveTool]);
+		expect(toolLess.getActiveToolNames()).toEqual(["inactive_tool"]);
+		toolLess.dispose();
+	});
+
+	it("rejects invalid tool modifier options", async () => {
+		await expect(createSession([], { tools: ["read", "+grep"] })).rejects.toThrow(
+			"Invalid tools option: tool names cannot be mixed with +name or -name entries",
+		);
+		await expect(createSession([], { tools: ["-gr*"] })).rejects.toThrow(
+			"Invalid tools option: +name and -name entries take exact tool names, not patterns: -gr*",
+		);
+	});
+
 	describe("reload", () => {
 		const inactiveTool: InlineExtension = (pi) => {
 			pi.registerTool({
@@ -211,6 +255,17 @@ describe("defaultTools setting", () => {
 			session.dispose();
 		});
 
+		it("keeps tools removed by -name tool options removed on reload", async () => {
+			writeSettings({ defaultTools: ["read"] });
+			const session = await createFileSession({ tools: ["-bash", "+grep"] });
+			expect(session.getActiveToolNames()).toEqual(["read", "grep"]);
+
+			writeSettings({ defaultTools: ["read", "bash", "inactive_tool"] });
+			await session.reload();
+			expect(session.getActiveToolNames().sort()).toEqual(["grep", "inactive_tool", "read"]);
+			session.dispose();
+		});
+
 		it("keeps explicit tool options on reload", async () => {
 			const allowlisted = await createFileSession({ tools: ["read"] });
 			writeSettings({ defaultTools: ["+grep"] });
@@ -231,6 +286,104 @@ describe("defaultTools setting", () => {
 			await excluded.reload();
 			expect(excluded.getActiveToolNames().sort()).toEqual(["bash", "edit", "inactive_tool", "read", "write"]);
 			excluded.dispose();
+		});
+	});
+
+	// #10785
+	describe("resume", () => {
+		const extensionTools: InlineExtension = (pi) => {
+			pi.registerTool({
+				name: "inactive_tool",
+				label: "Inactive Tool",
+				description: "Extension tool registered inactive",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+				defaultActive: false,
+			});
+			pi.registerTool({
+				name: "active_tool",
+				label: "Active Tool",
+				description: "Extension tool registered active",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			});
+		};
+
+		/** A session whose transcript records the loadout `toolNames`, as a run records it. */
+		function createRecordedSession(toolNames: string[]): SessionManager {
+			const sessionManager = SessionManager.inMemory(tempDir);
+			sessionManager.appendMessage({
+				role: "system",
+				content: "",
+				toolsAdded: toolNames.map((name) => ({ name, description: name, parameters: Type.Object({}) })),
+				timestamp: Date.now(),
+			});
+			return sessionManager;
+		}
+
+		async function resume(sessionManager: SessionManager, options: ToolOptions = {}) {
+			const settingsManager = SettingsManager.inMemory();
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+				extensionFactories: [extensionTools],
+			});
+			await resourceLoader.reload();
+			return (
+				await createAgentSession({
+					cwd: tempDir,
+					agentDir,
+					model: getModel("anthropic", "claude-sonnet-4-5")!,
+					settingsManager,
+					sessionManager,
+					resourceLoader,
+					...options,
+				})
+			).session;
+		}
+
+		it("restores the loadout the transcript records", async () => {
+			// active_tool was deactivated during the session, inactive_tool activated.
+			const session = await resume(createRecordedSession(["read", "grep", "inactive_tool"]));
+			expect(session.getActiveToolNames().sort()).toEqual(["grep", "inactive_tool", "read"]);
+			session.dispose();
+		});
+
+		it("does not restore excluded tools", async () => {
+			const session = await resume(createRecordedSession(["read", "grep", "inactive_tool"]), {
+				excludeTools: ["inactive_tool"],
+			});
+			expect(session.getActiveToolNames().sort()).toEqual(["grep", "read"]);
+			session.dispose();
+		});
+
+		it("uses explicit tool options instead of the recorded loadout", async () => {
+			const recorded = ["read", "grep", "inactive_tool"];
+
+			const allowlisted = await resume(createRecordedSession(recorded), { tools: ["read", "write"] });
+			expect(allowlisted.getActiveToolNames()).toEqual(["read", "write"]);
+			allowlisted.dispose();
+
+			const builtinless = await resume(createRecordedSession(recorded), { noTools: "builtin" });
+			expect(builtinless.getActiveToolNames()).toEqual(["active_tool"]);
+			builtinless.dispose();
+		});
+
+		it("applies +name and -name tool options to the recorded loadout", async () => {
+			const session = await resume(createRecordedSession(["read", "grep", "inactive_tool"]), {
+				tools: ["-grep", "+write"],
+			});
+			expect(session.getActiveToolNames().sort()).toEqual(["inactive_tool", "read", "write"]);
+			session.dispose();
+		});
+
+		it("uses the default tools when the transcript records no loadout", async () => {
+			const sessionManager = SessionManager.inMemory(tempDir);
+			sessionManager.appendMessage({ role: "user", content: "hi", timestamp: Date.now() });
+			const session = await resume(sessionManager);
+			expect(session.getActiveToolNames().sort()).toEqual(["active_tool", "bash", "edit", "read", "write"]);
+			session.dispose();
 		});
 	});
 

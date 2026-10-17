@@ -27,6 +27,24 @@ test("packageSource reads both spellings of a package entry", () => {
 });
 
 describe("withEnabledPackages", () => {
+	test("legacy .pi project settings remain usable and an explicit .nekocode directory takes precedence", async () => {
+		const { SettingsManager, DefaultPackageManager, getProjectConfigDir } = await pi();
+		const cwd = temp();
+		const agentDir = temp();
+		const legacy = join(cwd, ".pi");
+		mkdirSync(legacy);
+		writeFileSync(join(legacy, "settings.json"), JSON.stringify({ packages: ["npm:legacy"] }));
+		const settings = SettingsManager.create(cwd, agentDir);
+		expect(getProjectConfigDir(cwd)).toBe(legacy);
+		expect(settings.getProjectSettings().packages).toEqual(["npm:legacy"]);
+		expect(new DefaultPackageManager({ cwd, agentDir, settingsManager: settings }).listConfiguredPackages().map((entry) => entry.source)).toEqual(["npm:legacy"]);
+		const branded = join(cwd, ".nekocode");
+		mkdirSync(branded);
+		writeFileSync(join(branded, "settings.json"), JSON.stringify({ packages: ["npm:branded"] }));
+		expect(getProjectConfigDir(cwd)).toBe(branded);
+		expect(SettingsManager.create(cwd, agentDir).getProjectSettings().packages).toEqual(["npm:branded"]);
+	});
+
 	test("hides disabled packages from reads, leaving the files alone", async () => {
 		const { SettingsManager } = await pi();
 		const cwd = temp();

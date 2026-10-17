@@ -7,7 +7,6 @@ import { createProvider, type Provider } from "../models.ts";
 import { OPENCODE_GO_MODELS } from "./opencode-go.models.ts";
 import { withOpenCodeSessionHeader } from "./opencode-headers.ts";
 
-// OpenCode Go also serves Gemini models over the Google Generative AI protocol, like OpenCode Zen.
 type OpenCodeGoApi = "anthropic-messages" | "google-generative-ai" | "openai-completions" | "openai-responses";
 
 export function opencodeGoProvider(): Provider<OpenCodeGoApi> {

@@ -1,3 +1,4 @@
+import { utf8ByteLength } from "@earendil-works/chord/output";
 /**
  * Shared truncation utilities for tool outputs.
  *
@@ -5,7 +6,7 @@
  * - Line limit (default: 2000 lines)
  * - Byte limit (default: 50KB)
  *
- * Never returns partial lines. Tool output streams are bounded by `src/harness/output.ts` instead.
+ * Never returns partial lines. Tool output streams are bounded by `OutputBuffer` from `@earendil-works/chord/output` instead.
  */
 
 export const DEFAULT_MAX_LINES = 2000;
@@ -43,40 +44,8 @@ export interface TruncationOptions {
 	maxBytes?: number;
 }
 
-interface RuntimeBuffer {
-	byteLength(content: string, encoding: "utf8"): number;
-}
-
-const runtimeBuffer = (globalThis as { Buffer?: RuntimeBuffer }).Buffer;
-const nonAsciiPattern = /[^\x00-\x7f]/;
-
-export function utf8ByteLength(content: string): number {
-	if (runtimeBuffer) return runtimeBuffer.byteLength(content, "utf8");
-
-	const firstNonAscii = content.search(nonAsciiPattern);
-	if (firstNonAscii === -1) return content.length;
-
-	let bytes = firstNonAscii;
-	for (let i = firstNonAscii; i < content.length; i++) {
-		const code = content.charCodeAt(i);
-		if (code <= 0x7f) {
-			bytes += 1;
-		} else if (code <= 0x7ff) {
-			bytes += 2;
-		} else if (code >= 0xd800 && code <= 0xdbff && i + 1 < content.length) {
-			const next = content.charCodeAt(i + 1);
-			if (next >= 0xdc00 && next <= 0xdfff) {
-				bytes += 4;
-				i++;
-			} else {
-				bytes += 3;
-			}
-		} else {
-			bytes += 3;
-		}
-	}
-	return bytes;
-}
+// One implementation, shared with the output buffer.
+export { utf8ByteLength };
 
 function splitLinesForCounting(content: string): string[] {
 	if (content.length === 0) return [];
@@ -106,17 +75,34 @@ export function formatSize(bytes: number): string {
  * returns empty content with firstLineExceedsLimit=true.
  */
 export function truncateHead(content: string, options: TruncationOptions = {}): TruncationResult {
+	return truncateHeadOf(
+		content,
+		{ lines: splitLinesForCounting(content).length, bytes: utf8ByteLength(content) },
+		options,
+	);
+}
+
+/**
+ * `truncateHead` of a text known by a prefix and its totals (`lines` counted like `truncateHead`, ignoring a trailing
+ * newline). The prefix must be the whole text, or longer than `maxBytes + 1` UTF-8 bytes, or hold at least `maxLines`
+ * newlines; then the result equals `truncateHead` of the whole text.
+ */
+export function truncateHeadOf(
+	prefix: string,
+	totals: { readonly lines: number; readonly bytes: number },
+	options: TruncationOptions = {},
+): TruncationResult {
 	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
-	const totalBytes = utf8ByteLength(content);
-	const lines = splitLinesForCounting(content);
-	const totalLines = lines.length;
+	const totalBytes = totals.bytes;
+	const lines = splitLinesForCounting(prefix);
+	const totalLines = totals.lines;
 
 	// Check if no truncation needed
 	if (totalLines <= maxLines && totalBytes <= maxBytes) {
 		return {
-			content,
+			content: prefix,
 			truncated: false,
 			truncatedBy: null,
 			totalLines,

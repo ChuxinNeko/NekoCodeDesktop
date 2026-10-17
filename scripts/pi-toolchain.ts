@@ -43,10 +43,8 @@ export function buildSteps(): BuildStep[] {
 		{ pkg: "mcp", script: "build" },
 		{ pkg: "ai", script: "build:offline" },
 		{ pkg: "durable", script: "build" },
+		{ pkg: "env", script: "build" },
 		{ pkg: "agent", script: "build" },
-		{ pkg: "protocol", script: "build" },
-		{ pkg: "client", script: "build" },
-		{ pkg: "server", script: "build" },
 		{ pkg: "coding-agent", script: "build" },
 	];
 }
@@ -183,8 +181,15 @@ function run(cmd: string, args: string[], opts: { cwd?: string; extraPath?: stri
 
 function build(): void {
 	const bin = writeToolchain();
-	const aiData = join(PI, "packages", "ai", "src", "providers", "data");
-	if (!existsSync(aiData)) {
+	// A previous PI version can leave a data directory whose provider files no
+	// longer match the new catalog (for example the Azure provider rename).
+	const aiPackage = join(PI, "packages", "ai");
+	const modelDataCheck = spawnSync("bun", ["run", "--cwd", aiPackage, "check:model-data"], {
+		env: withPath(bin), encoding: "utf8",
+	});
+	if (modelDataCheck.error) throw modelDataCheck.error;
+	if (modelDataCheck.status !== 0) {
+		console.log("PI model data is missing or stale; refreshing it for the current kernel.");
 		run("bun", ["run", "--cwd", join(PI, "packages", "ai"), "hydrate-model-data"], {
 			extraPath: bin,
 		});
