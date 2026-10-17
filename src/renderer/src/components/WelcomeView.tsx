@@ -9,6 +9,7 @@ import { api } from "../api";
 import { useTranslation } from "../i18n";
 import { useTheme } from "../hooks/useTheme";
 import { cn } from "../lib/utils";
+import { readUserName } from "../lib/onboarding";
 import { BookIcon, BugIcon, CodeIcon, FlaskConicalIcon, GitPullRequestIcon, ListTodoIcon, MoonIcon, PencilIcon, SunIcon, XIcon } from "../lib/icons";
 import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
@@ -53,6 +54,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 	const { t } = useTranslation();
 	const { cwd, busy, error, defaults } = props;
 	const { resolvedTheme, setTheme } = useTheme();
+	const userName = readUserName();
 	const [hour, setHour] = useState(() => new Date().getHours());
 	const [quickInsertion, setQuickInsertion] = useState<ComposerInsertion | null>(null);
 	useEffect(() => {
@@ -83,7 +85,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 
 			<div className="welcome-hero mx-auto flex w-full max-w-[44rem] flex-1 flex-col justify-center px-5 py-20 sm:px-8">
 				<h1 className="mb-7 text-center text-[clamp(22px,2.5vw,28px)] font-medium leading-snug tracking-[-0.035em] text-foreground">
-					{t(`welcome.greeting.${greeting}`)}
+					{userName ? t(`welcome.greetingNamed.${greeting}`, { name: userName }) : t(`welcome.greeting.${greeting}`)}
 				</h1>
 				<div className="welcome-composer-card rounded-[20px] p-[3px]">
 					<ComposerShell

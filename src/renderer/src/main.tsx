@@ -1,6 +1,8 @@
-import { StrictMode, useEffect } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { OnboardingFlow } from "./components/onboarding/OnboardingFlow";
+import { isOnboarded } from "./lib/onboarding";
 import { HostDirectoryPickerProvider } from "./components/HostDirectoryPicker";
 import { I18nProvider } from "./i18n";
 import "./index.css";
@@ -33,11 +35,17 @@ function BootSplashDismisser() {
 	return null;
 }
 
+/** First launch shows the setup flow; finishing or skipping it opens the app. */
+function Root() {
+	const [onboarded, setOnboarded] = useState(isOnboarded);
+	return onboarded ? <App /> : <OnboardingFlow onDone={() => setOnboarded(true)} />;
+}
+
 createRoot(container).render(
 	<StrictMode>
 		<I18nProvider>
 			<HostDirectoryPickerProvider>
-				<App />
+				<Root />
 			</HostDirectoryPickerProvider>
 		</I18nProvider>
 		<BootSplashDismisser />
