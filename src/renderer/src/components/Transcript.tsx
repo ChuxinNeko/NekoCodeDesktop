@@ -566,7 +566,7 @@ const WorkingBlock = memo(function WorkingBlock({
 					className={cn(
 						"truncate border-l border-border/60 pl-3",
 						"text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground/70",
-						active && waiting && "shimmer",
+						active && "shimmer",
 					)}
 				>
 					{summary}
@@ -595,7 +595,7 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 			<button type="button" aria-expanded={open} aria-controls={detailId}
 				onClick={() => setOpen((value) => !value)}
 				className="flex max-w-full items-start gap-1.5 rounded py-0.5 text-left text-[length:var(--app-font-size-chat-body,13px)] leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
-				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "text-foreground/80", failed && "text-destructive")}>
+				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "shimmer text-foreground/80", failed && "text-destructive")}>
 					{title}
 				</span>
 				<ChevronRightIcon aria-hidden="true" className="workflow-chevron mt-1 size-3.5 shrink-0 opacity-60" data-open={open} />
@@ -621,9 +621,8 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 /**
  * True while the run is streaming but the model has produced nothing visible
  * for the current step yet — the tail is the user's prompt, a settled tool
- * call, or an assistant cell still preparing a visible response. Thinking
- * deltas do not end that waiting state. A running
- * tool speaks for itself, so it suppresses the line.
+ * call, or an assistant cell that has not started to think or answer. Thinking
+ * output or a running tool speaks for itself, so it suppresses the line.
  */
 function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 	if (!streaming) return false;
@@ -636,7 +635,9 @@ function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 		case "tool":
 			return last.status === "done" || last.status === "error";
 		case "assistant":
-			return !last.text && (last.streaming || !!last.thinking);
+			// Once the model is visibly thinking, that stream is the progress: the
+			// planning line is only for the gap before the next step shows up.
+			return !last.text && last.streaming && !last.thinking;
 	}
 }
 
