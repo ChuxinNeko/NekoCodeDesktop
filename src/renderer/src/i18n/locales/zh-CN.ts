@@ -600,6 +600,16 @@ export const zhCN: Record<TranslationKey, string> = {
 		"该模型未标记为支持推理。请在“设置 → 模型”中为其端点开启“支持推理”。",
 	"picker.mode": "执行权限",
 	"picker.slashCommands": "斜杠命令…",
+	"picker.searchModels": "搜索模型…",
+	"picker.thinkingDepth": "思考深度",
+	"picker.noMatchingModels": "没有匹配的模型",
+	"thinkingLevel.off": "关",
+	"thinkingLevel.minimal": "极低",
+	"thinkingLevel.low": "低",
+	"thinkingLevel.medium": "中",
+	"thinkingLevel.high": "高",
+	"thinkingLevel.xhigh": "超高",
+	"thinkingLevel.max": "最大",
 
 	// Settings ------------------------------------------------------------------
 	"settings.title": "设置",

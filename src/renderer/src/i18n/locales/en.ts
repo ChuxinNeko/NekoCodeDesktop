@@ -606,6 +606,16 @@ export const en = {
 		"This model is not marked as reasoning-capable. Turn on “Supports reasoning” for its endpoint in Settings → Models.",
 	"picker.mode": "Execution permission",
 	"picker.slashCommands": "Slash commands…",
+	"picker.searchModels": "Search models…",
+	"picker.thinkingDepth": "Thinking depth",
+	"picker.noMatchingModels": "No matching models",
+	"thinkingLevel.off": "Off",
+	"thinkingLevel.minimal": "Minimal",
+	"thinkingLevel.low": "Low",
+	"thinkingLevel.medium": "Medium",
+	"thinkingLevel.high": "High",
+	"thinkingLevel.xhigh": "Extra high",
+	"thinkingLevel.max": "Max",
 
 	// Settings ------------------------------------------------------------------
 	"settings.title": "Settings",

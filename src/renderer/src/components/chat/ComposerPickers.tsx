@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FusionConfig } from "../../../../shared/fusion";
 import { FusionPicker } from "./FusionPicker";
 import { TeamPicker } from "./TeamPicker";
@@ -17,7 +17,7 @@ import {
 } from "../../../../shared/agent";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { BrainIcon, ChevronDownIcon, ZapIcon } from "../../lib/icons";
+import { ChevronDownIcon, SearchIcon, ZapIcon } from "../../lib/icons";
 import { Button } from "../ui/button";
 import {
 	Menu,
@@ -27,15 +27,14 @@ import {
 	MenuRadioGroup,
 	MenuRadioItem,
 	MenuSeparator,
-	MenuSub,
-	MenuSubTrigger,
 	MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ThinkingSlider } from "./ThinkingSlider";
 import { ComposerPickerMenuPopup, ComposerPickerMenuSubPopup } from "./ComposerPickerMenuPopup";
 import {
 	COMPOSER_PICKER_MENU_OPTION_CLASS_NAME,
-	COMPOSER_PICKER_MODEL_SUBMENU_HEIGHT_CLASS_NAME,
+	COMPOSER_PICKER_MENU_POPUP_BODY_CLASS_NAME,
+	COMPOSER_PICKER_SEARCH_HEADER_CLASS_NAME,
 	COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME,
 } from "./composerPickerStyles";
 
@@ -93,6 +92,9 @@ export function ComposerPickers(props: ComposerPickersProps) {
 	// offering a menu whose every entry would snap back.
 	const thinkingSupported = thinkingLevels.length > 1;
 	const [modelMenuOpen, setModelMenuOpen] = useState(false);
+	const [query, setQuery] = useState("");
+	const searchRef = useRef<HTMLInputElement>(null);
+	const levelText = (level: ThinkingLevel) => t(`thinkingLevel.${level}` as TranslationKey);
 
 	const active = models.find((option) => option.key === modelKey);
 	const providerGroups = Array.from(
@@ -109,6 +111,18 @@ export function ComposerPickers(props: ComposerPickersProps) {
 		([, group]) => group,
 	);
 	const triggerLabel = props.fusion?.strategy === "team" ? t("team.title") : props.fusion ? "Fusion" : active ? modelLabel(active, models) : t("picker.noModel");
+
+	const needle = query.trim().toLowerCase();
+	const filteredGroups = needle
+		? providerGroups
+			.map((group) => ({
+				...group,
+				models: group.models.filter((model) =>
+					`${modelName(model, models)} ${group.name}`.toLowerCase().includes(needle)),
+			}))
+			.filter((group) => group.models.length > 0)
+		: providerGroups;
+	const triggerSuffix = !props.fusion && thinkingSupported ? ` · ${levelText(thinkingLevel)}` : "";
 
 	const trigger = (label: string, icon: React.ReactNode, active = false) => (
 		<Button
@@ -203,110 +217,107 @@ export function ComposerPickers(props: ComposerPickersProps) {
 
 			<Menu
 				open={modelMenuOpen}
-				onOpenChange={setModelMenuOpen}
+				onOpenChange={(open) => {
+					setModelMenuOpen(open);
+					if (open) requestAnimationFrame(() => searchRef.current?.focus());
+					else setQuery("");
+				}}
 				keepOpenOnSubmenuInteraction
 			>
-				<MenuTrigger render={trigger(triggerLabel, <ZapIcon className="size-3.5" />)} />
+				<MenuTrigger render={trigger(triggerLabel + triggerSuffix, <ZapIcon className="size-3.5" />)} />
 				<ComposerPickerMenuPopup
 					align="start"
 					side="top"
 					fixedWidth
-					className={COMPOSER_PICKER_MODEL_SUBMENU_HEIGHT_CLASS_NAME}
+					className="[--available-height:min(32rem,80vh)]"
 				>
-					<MenuGroup>
-						<MenuGroupLabel>{t("picker.provider")}</MenuGroupLabel>
-						{providerGroups.length === 0 ? (
-							<MenuItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} disabled>
-								{t("picker.noModels")}
-							</MenuItem>
-						) : (
-							providerGroups.map((provider) => (
-								<MenuSub key={provider.id} keepOpenOnFocusOut>
-									<MenuSubTrigger className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}>
-										<span className="min-w-0 flex-1 truncate">{provider.name}</span>
-									</MenuSubTrigger>
-									<ComposerPickerMenuSubPopup
-										fixedWidth
-										side="inline-end"
-										className={COMPOSER_PICKER_MODEL_SUBMENU_HEIGHT_CLASS_NAME}
-									>
-										{/* The label belongs inside the radio group: Base UI takes the group
-										    context from MenuRadioGroup, and a label outside one throws as
-										    soon as the menu opens. */}
-										<MenuRadioGroup
-											value={props.fusion ? "" : modelKey ?? ""}
-											onValueChange={(value) => {
-												props.onSetModel(value);
-												setModelMenuOpen(false);
-											}}
-										>
-											<MenuGroupLabel>{provider.name}</MenuGroupLabel>
-											{provider.models.map((option) => (
-												<MenuRadioItem
-													key={option.key}
-													className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
-													value={option.key}
-												>
-													<span className="truncate">{modelName(option, models)}</span>
-												</MenuRadioItem>
-											))}
-										</MenuRadioGroup>
-									</ComposerPickerMenuSubPopup>
-								</MenuSub>
-							))
-						)}
-					</MenuGroup>
+					<div className={cn(COMPOSER_PICKER_SEARCH_HEADER_CLASS_NAME, "top-0 flex items-center gap-2 px-2.5")}>
+						<SearchIcon className="size-3.5 shrink-0 opacity-60" />
+						<input
+							ref={searchRef}
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							// Keep typing out of the menu's typeahead / roving focus handling.
+							onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }}
+							placeholder={t("picker.searchModels")}
+							className="font-system-ui h-6 min-w-0 flex-1 bg-transparent text-[length:var(--app-font-size-ui,12px)] outline-none placeholder:text-muted-foreground/60"
+						/>
+					</div>
+					<div className={cn(COMPOSER_PICKER_MENU_POPUP_BODY_CLASS_NAME, "max-h-[11.5rem] shrink-0")}>
+						<MenuRadioGroup
+							value={props.fusion ? "" : modelKey ?? ""}
+							onValueChange={(value) => {
+								props.onSetModel(value);
+								setModelMenuOpen(false);
+							}}
+						>
+							{providerGroups.length === 0 ? (
+								<MenuItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} disabled>
+									{t("picker.noModels")}
+								</MenuItem>
+							) : filteredGroups.length === 0 ? (
+								<MenuItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} disabled>
+									{t("picker.noMatchingModels")}
+								</MenuItem>
+							) : (
+								filteredGroups.map((provider) => (
+									<div key={provider.id}>
+										<MenuGroupLabel className="uppercase">{provider.name}</MenuGroupLabel>
+										{provider.models.map((option) => (
+											<MenuRadioItem
+												key={option.key}
+												className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
+												value={option.key}
+											>
+												<span className="truncate">{modelName(option, models)}</span>
+											</MenuRadioItem>
+										))}
+									</div>
+								))
+							)}
+						</MenuRadioGroup>
+					</div>
 					<MenuSeparator />
 					<FusionPicker models={models} modelKey={modelKey} fusion={props.fusion} onApply={props.onSetFusion} />
 					<TeamPicker models={models} modelKey={modelKey} fusion={props.fusion} onApply={props.onSetFusion} />
+					{props.fusion ? null : (
+						<>
+							<MenuSeparator />
+							<div className="relative z-1 space-y-2 px-3 pb-3 pt-2">
+								<div className="flex items-center justify-between text-[length:var(--app-font-size-ui,12px)]">
+									<span className="text-[var(--color-text-foreground-secondary)]">{t("picker.thinkingDepth")}</span>
+									<span className="font-medium text-[var(--color-text-foreground)]">
+										{thinkingSupported ? levelText(thinkingLevel) : levelText("off")}
+									</span>
+								</div>
+								{thinkingSupported ? (
+									<ThinkingSlider
+										levels={thinkingLevels}
+										value={thinkingLevel}
+										onChange={props.onSetThinking}
+										ariaLabel={t("picker.thinkingDepth")}
+										valueText={levelText}
+									/>
+								) : (
+									<>
+										<ThinkingSlider
+											levels={["off", "max"]}
+											value="off"
+											onChange={() => {}}
+											disabled
+											ariaLabel={t("picker.thinkingDepth")}
+											valueText={levelText}
+										/>
+										<p className="text-[length:var(--app-font-size-ui-sm,11px)] leading-snug text-muted-foreground">
+											{t("picker.thinkingUnsupported")}
+										</p>
+									</>
+								)}
+							</div>
+						</>
+					)}
 				</ComposerPickerMenuPopup>
 			</Menu>
-
-			{props.fusion ? null : thinkingSupported ? (
-				<Menu>
-					<MenuTrigger
-						render={trigger(
-							thinkingLevel,
-							<BrainIcon className="size-3.5" />,
-							thinkingLevel !== "off",
-						)}
-					/>
-					<ComposerPickerMenuPopup align="start" side="top">
-						<MenuRadioGroup
-							value={thinkingLevel}
-							onValueChange={(value) => props.onSetThinking(value as ThinkingLevel)}
-						>
-							<MenuGroupLabel>{t("picker.thinking")}</MenuGroupLabel>
-							{thinkingLevels.map((level) => (
-								<MenuRadioItem
-									key={level}
-									className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME}
-									value={level}
-								>
-									{level}
-								</MenuRadioItem>
-							))}
-						</MenuRadioGroup>
-					</ComposerPickerMenuPopup>
-				</Menu>
-			) : (
-				<Tooltip>
-					<TooltipTrigger
-						render={
-							<Button
-								className={cn(COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME, "border-transparent")}
-								disabled
-								size="chip"
-								variant="ghost"
-							/>
-						}
-					>
-						<BrainIcon className="size-3.5" />
-						<span className="truncate text-[var(--color-text-foreground-secondary)]">off</span>
-					</TooltipTrigger>
-					<TooltipPopup side="top">{t("picker.thinkingUnsupported")}</TooltipPopup>
-				</Tooltip>
-			)}
 		</>
 	);
 }
