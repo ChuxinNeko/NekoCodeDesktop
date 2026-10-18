@@ -22,6 +22,7 @@ import {
   TextBox,
   Xmark,
 } from "iconoir-react";
+import { selectionActionsPosition, selectionActionsPositionStyle, type SelectionActionsPosition } from "../../lib/selectionActionsPosition";
 import { Button } from "../beautiful-ui/Button";
 import { Shimmer } from "../beautiful-ui/Shimmer";
 import { StreamText } from "../beautiful-ui/StreamText";
@@ -101,6 +102,7 @@ const primary =
 
 export type SelectionActionsProps = {
   range: Range;
+  pointerOffsetX?: number;
   labels: SelectionActionsLabels;
   actionLabels: Record<"explain" | "improve" | "shorten" | "tone" | "grammar", string>;
   onAction: (action: string, custom?: boolean) => Promise<void> | void;
@@ -111,6 +113,7 @@ export type SelectionActionsProps = {
 
 export default function SelectionActions({
   range,
+  pointerOffsetX,
   actionLabels,
   labels: copy,
   onAction,
@@ -134,13 +137,11 @@ export default function SelectionActions({
   const [prompt, setPrompt] = useState("");
   const [typingWidth, setTypingWidth] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [anchor, setAnchor] = useState({ x: 0, y: 0 });
-  const [positioned, setPositioned] = useState(false);
+  const [anchor, setAnchor] = useState<SelectionActionsPosition | null>(null);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const frameRef = useRef<number | null>(null);
   const previousModeRef = useRef<Mode>("idle");
   const lastWidthRef = useRef(0);
   const widthAnimationRef = useRef<Animation | null>(null);
@@ -149,43 +150,34 @@ export default function SelectionActions({
     if (preview) setMode("streaming");
   }, [preview]);
 
-  /* Attach beneath the final selected line, while centering the bar
-   * against the complete selection bounds. requestAnimationFrame batches
-   * streaming reflow measurements and avoids visible intermediate positions. */
+  /* Measure synchronously before paint: the first visible frame must already
+   * be at the selection, never interpolated from a default (0, 0) transform. */
   const place = useCallback(() => {
-    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-    frameRef.current = requestAnimationFrame(() => {
-      const host = hostRef.current;
-      const selection = range;
-      if (!host || !selection) return;
-
-      const bounds = selection.getBoundingClientRect();
-      const lines = Array.from(selection.getClientRects());
-      const lastLine = lines.at(-1);
-      if (!lastLine) return;
-
-      const hostBounds = host.getBoundingClientRect();
-      const halfWidth = Math.min((barRef.current?.getBoundingClientRect().width ?? 0) / 2, window.innerWidth / 2 - 8);
-      const next = {
-        x: Math.round(Math.max(halfWidth + 8, Math.min(window.innerWidth - halfWidth - 8, bounds.left + bounds.width / 2)) - hostBounds.left),
-        y: Math.round(lastLine.bottom - hostBounds.top + 8),
-      };
-
-      setAnchor((current) =>
-        current.x === next.x && current.y === next.y ? current : next,
-      );
-      setPositioned(true);
+    const bar = barRef.current;
+    if (!bar) return;
+    const next = selectionActionsPosition({
+      rects: Array.from(range.getClientRects()),
+      selectionLeft: range.getBoundingClientRect().left,
+      pointerOffsetX,
+      // Layout dimensions exclude the official pill's pop-in scale animation.
+      menuWidth: bar.offsetWidth,
+      menuHeight: bar.offsetHeight,
+      viewportWidth: document.documentElement.clientWidth,
+      viewportHeight: document.documentElement.clientHeight,
     });
-  }, [range]);
+    setAnchor(current => current?.left === next?.left && current?.top === next?.top ? current : next);
+  }, [range, pointerOffsetX]);
 
   useLayoutEffect(() => {
     place();
-  }, [mode, expanded, place]);
+  }, [mode, expanded, prompt, typingWidth, place]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const bar = barRef.current;
     const host = hostRef.current;
-    if (!host) return;
+    if (!bar || !host) return;
     const observer = new ResizeObserver(place);
+    observer.observe(bar);
     observer.observe(host);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
@@ -193,7 +185,6 @@ export default function SelectionActions({
       observer.disconnect();
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
   }, [place]);
 
@@ -281,7 +272,7 @@ export default function SelectionActions({
   };
 
   const busy = mode === "thinking" || mode === "streaming";
-  const visible = positioned;
+  const visible = anchor !== null;
   const hasPrompt = prompt.trim().length > 0;
   const busyLabelMap: Record<string, string> = {};
   for (const item of [...actions.primary, ...actions.more]) {
@@ -299,15 +290,9 @@ export default function SelectionActions({
         ) : null}
 
         <div
-          className="absolute top-0 left-0 z-10"
-          style={{
-            transform: `translate3d(${anchor.x}px, ${anchor.y}px, 0) translateX(-50%)`,
-            transition:
-              "transform 320ms cubic-bezier(0.77,0,0.175,1), opacity 180ms ease-out",
-            opacity: visible ? 1 : 0,
-            pointerEvents: visible ? "auto" : "none",
-            willChange: "transform",
-          }}
+          data-selection-actions-menu=""
+          className="fixed z-10"
+          style={selectionActionsPositionStyle(anchor)}
         >
           {error ? <p role="alert" className="absolute top-full mt-1 rounded-md bg-bui-surface px-2 py-1 text-xs text-bui-red shadow-bui-card">{copy.error}</p> : null}
           {/* A 36px pill wraps 28px controls at a 4px inset. The controls

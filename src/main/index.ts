@@ -1,3 +1,5 @@
+import type { ExplainSelectionRequest } from "../shared/selection-explanation";
+import { SelectionExplanationService } from "./selection-explanation";
 import { PromptPredictionService } from "./prompt-prediction";
 import { TaskManager } from "./task-manager";
 import { TaskNotifier } from "./task-notifier";
@@ -235,6 +237,8 @@ async function modelCallRuntime(): Promise<ModelCallRuntime> {
 	if (!taskManager) throw new Error("Agent service is not running");
 	return (await taskManager.active.getModelRuntime()) as unknown as ModelCallRuntime;
 }
+const selectionExplanations = new SelectionExplanationService(modelCallRuntime);
+const explanationOwners = new Set<number>();
 let semanticIndex: SemanticIndexService | null = null;
 /** Window-independent: an index outlives the window that asked for it. */
 function semanticIndexService(): SemanticIndexService {
@@ -1466,6 +1470,21 @@ function registerIpc(): void {
 	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
 		taskManager?.active.getDefaults(cwd),
 	);
+	// A direct model call: no AgentService.send/prompt, session creation or snapshots.
+	ipcMain.handle("selection:explain", (event, request: ExplainSelectionRequest) => {
+		const owner = event.sender.id;
+		if (!explanationOwners.has(owner)) {
+			explanationOwners.add(owner);
+			event.sender.once("destroyed", () => {
+				selectionExplanations.cancelOwner(owner);
+				explanationOwners.delete(owner);
+			});
+		}
+		return selectionExplanations.explain(owner, request);
+	});
+	ipcMain.handle("selection:cancelExplanation", (event, id: string) => {
+		if (typeof id === "string") selectionExplanations.cancel(event.sender.id, id);
+	});
 	ipcMain.handle("agent:send", (_e, req: SendPromptRequest) =>
 		taskManager?.active.send(req),
 	);

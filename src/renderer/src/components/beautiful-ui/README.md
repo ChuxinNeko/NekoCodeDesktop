@@ -27,10 +27,39 @@ streaming CSS was added, scoped to `.beautiful-selection-actions`.
 `components.json` directs CSS writes to an unused staging stylesheet, protecting
 `src/renderer/src/index.css`; do not import that staging stylesheet.
 
-The official bar layout, icons, expansion, width animation and motion timings
-are retained. Gallery passage constants and the automatic reveal/stream timers
-are removed. A captured DOM Range supplies the anchor; translated actions invoke
-the existing session sender. A successful send ends local thinking; formal output
+The official bar layout, icons, expansion, width animation and inner pop-in timing
+are retained. The position layer measures synchronously before paint and stays
+hidden until measured. It uses viewport `left`/`top` with opacity-only entry,
+anchored below the last selected line near mouse release. Resize/scroll remeasure
+the current selection; viewport edges clamp placement (or flip above at the bottom).
+There is no position transition from a default origin. Gallery passage constants and the automatic reveal/stream timers
+are removed. A captured DOM Range supplies the anchor; translated rewrite actions invoke
+the existing session sender; Explain opens the isolated chat described below. A successful send ends local thinking; formal output
 appears in the next chat reply. Optional preview accepts only caller-supplied model
 text; Keep and Discard reset local UI and never edit persisted cells.
 `chat/AssistantSelection.tsx` owns selection scope, dismissal, portal and clipboard.
+
+
+## Explanation chat
+
+Installed with `npx shadcn@latest add https://www.beautifului.dev/r/chat-composer.json`
+on 2026-10-18. The registry declares only foundation; no component dependencies
+were added. As with Selection Actions, the CLI wrote its explicit target under
+`src/components`; its installed ChatComposer was moved to
+`../primitives/ChatComposer.tsx`, and its duplicate foundation was removed.
+
+ChatComposer retains the official card/header, reply Section, user bubble and
+composer structure, SVGs, tab selection and Enter/send behavior. Semantic classes
+and inline variables use existing `bui` tokens. Gallery constants and scripted
+phase timers are removed; `messages` now renders every supplied user/assistant
+turn, pending follows request state, and `labels` supplies translated accessibility
+text. Decorative gallery header actions are disabled. No second chat/composer is
+implemented.
+
+Explain now opens `chat/SelectionExplanation.tsx`, retaining the quoted original
+in a modal dialog. Initial explanation and follow-ups use `selection:explain`
+through preload and `SelectionExplanationService`, which calls the existing model
+runtime directly via `askModel`. It never calls the main session sender or stores
+cells. Popup history exists only in renderer memory and is sent as context for
+subsequent side-chat requests. Closing cancels the in-flight request and discards
+this history. All other Selection Actions keep their existing `onSend`/copy paths.

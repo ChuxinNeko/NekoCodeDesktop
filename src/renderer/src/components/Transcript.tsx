@@ -11,7 +11,7 @@ import {
 	type WorkItem,
 	type WorkRow,
 } from "../../../shared/transcript";
-import { groupWorkStages, workStageCompleted, workStageLabel, type WorkStage } from "../lib/workStages";
+import { groupWorkStages, workStageCompleted, workStageLabel, workStageHasDetails, type WorkStage } from "../lib/workStages";
 import { AssistantSelection, type SelectionSend } from "./chat/AssistantSelection";
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
@@ -39,7 +39,7 @@ import {
 	toolPhase,
 	workUnits,
 } from "./chat/ToolCalls";
-import { ThinkingBlock } from "./chat/Thinking";
+import { ThinkingBlock, ThinkingStream } from "./chat/Thinking";
 import { SourceList } from "./chat/WebSources";
 import { Markdown } from "./chat/Markdown";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
@@ -436,7 +436,7 @@ function PlanningLine() {
 		<div
 			className={cn("text-[length:var(--app-font-size-chat,12px)]", MUTED_LABEL_TEXT_CLASS_NAME)}
 		>
-			<span className="shimmer">{t("workFlow.planning")}</span>
+			<span role="status" className="shimmer">{t("workFlow.waitingContent")}</span>
 		</div>
 	);
 }
@@ -509,11 +509,12 @@ const WorkingBlock = memo(function WorkingBlock({
 	const tools = workToolCount(row);
 	const stages = useMemo(() => groupWorkStages(row.items, language), [row.items, language]);
 	const lastStage = stages[stages.length - 1];
+	const awaitingContent = active && !settling && stages.length === 0;
 	const betweenStages = active && !settling && workStageCompleted(lastStage);
 	// Collapsed, the block says what it is standing in for: the step running
 	// right now while it runs, under the header; once it stops, the size of what
 	// is folded away, beside it — one line, so a finished turn reads as a rule.
-	const summary = active ? (betweenStages ? t("workFlow.planning") : lastStage ? workStageLabel(lastStage, t) : "") : "";
+	const summary = active ? ((betweenStages || awaitingContent) ? t("workFlow.waitingContent") : lastStage ? workStageLabel(lastStage, t) : "") : "";
 	const size = active ? null : t(tools === 1 ? "workFlow.toolCall" : "workFlow.toolCalls", { count: tools });
 
 	return (
@@ -547,7 +548,7 @@ const WorkingBlock = memo(function WorkingBlock({
 						<WorkStageRow key={stage.id} stage={stage} active={active}
 							current={active && index === stages.length - 1 && !betweenStages} />
 					))}
-					{betweenStages ? <li data-work-planning="" className="relative min-h-8 pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
+					{betweenStages || awaitingContent ? <li data-work-planning="" className="relative min-h-8 pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
 						<span aria-hidden="true" className="absolute left-[3px] top-1 bottom-0 w-px bg-primary/50 motion-safe:animate-pulse" />
 						<PlanningLine />
 					</li> : null}
@@ -579,6 +580,7 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	const detailId = useId();
 	const running = active && (current || stage.items.some((item) => item.kind === "tool" && (item.cell.status === "running" || item.cell.status === "pending")));
 	const title = workStageLabel(stage, t);
+	if (!workStageHasDetails(stage)) return running ? <li className="pl-6"><PlanningLine /></li> : null;
 	const changes = stage.items.reduce((total, item) => {
 		if (item.kind !== "tool" || item.cell.status !== "done") return total;
 		const preview = fileEditPreview(item.cell);
@@ -602,20 +604,28 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 				{running ? <span className="sr-only">{t("workFlow.running")}</span> : null}
 			</button>
 			<DisclosureRegion open={open} id={detailId}>
-				<div className="flex min-w-0 flex-col gap-2 pb-1 pt-2" data-work-stage-details="">
-					{workUnits(stage.items.filter((item) => item.kind !== "thinking"), active).map((unit) => {
-						if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
-						const item = unit.item;
-						return item.kind === "thinking" ? null
-							: item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} />
-							: item.kind === "message" ? <RemarkCell key={item.id} cell={item.cell} />
-							: <NoticeCell key={item.id} cell={item.cell} />;
-					})}
-				</div>
+				<WorkStageDetails stage={stage} active={active} />
 			</DisclosureRegion>
 		</li>
 	);
 });
+
+/** The original reasoning stays readable once its stage is expanded. */
+export function WorkStageDetails({ stage, active }: { stage: WorkStage; active: boolean }) {
+	return (
+		<div className="flex min-w-0 flex-col gap-2 pb-1 pt-2" data-work-stage-details="">
+			{stage.items.map(item => item.kind === "thinking" && item.cell.thinking.trim() ? <ThinkingStream key={item.id} text={item.cell.thinking} /> : null)}
+			{workUnits(stage.items.filter((item) => item.kind !== "thinking"), active).map((unit) => {
+				if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
+				const item = unit.item;
+				return item.kind === "thinking" ? null
+					: item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} />
+					: item.kind === "message" ? <RemarkCell key={item.id} cell={item.cell} />
+					: <NoticeCell key={item.id} cell={item.cell} />;
+			})}
+		</div>
+	);
+}
 
 /**
  * True while the run is streaming but the model has produced nothing visible
@@ -634,8 +644,8 @@ function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 		case "tool":
 			return last.status === "done" || last.status === "error";
 		case "assistant":
-			// Reasoning is hidden; keep a visible waiting state until an action arrives.
-			return !last.text;
+			// Nonempty reasoning is available inside its stage; empty reasoning still waits.
+			return !last.text.trim() && !last.thinking.trim();
 	}
 }
 
@@ -658,9 +668,11 @@ const TranscriptView = function Transcript({
 	onStopCommand,
 	teamTurns,
 	onSend,
+	modelKey,
 }: {
 	cells: AgentCell[];
 	onSend?: SelectionSend;
+	modelKey?: string | null;
 	models?: readonly ModelOption[];
 	streaming?: boolean;
 	settling?: boolean;
@@ -801,7 +813,7 @@ const TranscriptView = function Transcript({
 	// and only stands alone when nothing has been done in this turn yet.
 	const waitingInWork = waiting && rows[rows.length - 1]?.kind === "work";
 	return (
-		<AssistantSelection onSend={onSend}>
+		<AssistantSelection onSend={onSend} modelKey={modelKey}>
 		<TaskLookupContext.Provider value={taskLookup}>
 			<UsageModelsContext.Provider value={models ?? EMPTY_MODELS}>
 			<CommandStopContext.Provider value={onStopCommand ? stopCommand : undefined}>

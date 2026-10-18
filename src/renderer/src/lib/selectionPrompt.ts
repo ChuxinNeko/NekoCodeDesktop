@@ -14,3 +14,20 @@ export function selectionPrompt(
   if (!original || !task) throw new Error("Selection and instruction must be nonempty");
   return { text: t("selection.request.template", { original, instruction: task }) };
 }
+
+/** Explain opens the isolated side chat; every other instruction keeps its sender. */
+export async function dispatchSelectionAction(
+  selected: string,
+  instruction: { action: SelectionRequestAction } | { custom: string },
+  t: TranslateFn,
+  handlers: {
+    explain: (original: string) => void;
+    send: (request: SendPromptRequest) => void | Promise<void>;
+  },
+): Promise<void> {
+  if ("action" in instruction && instruction.action === "explain") {
+    handlers.explain(selected);
+    return;
+  }
+  await handlers.send(selectionPrompt(selected, instruction, t));
+}

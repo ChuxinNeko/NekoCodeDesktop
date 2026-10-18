@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { renderToString } from "react-dom/server";
 import type { AgentCell } from "../../../../src/shared/agent";
+import { groupWorkStages } from "../../../../src/renderer/src/lib/workStages";
+import type { WorkItem } from "../../../../src/shared/transcript";
 import { I18nProvider } from "../../../../src/renderer/src/i18n";
-import { Transcript } from "../../../../src/renderer/src/components/Transcript";
+import { Transcript, WorkStageDetails } from "../../../../src/renderer/src/components/Transcript";
 
 const thought = (id: string, thinking: string): Extract<AgentCell, { type: "assistant" }> => ({ id, type: "assistant", text: "", thinking, streaming: false, timestamp: 1 });
 const read = (id: string, path: string): AgentCell => ({ id, type: "tool", toolName: "read", toolCallId: id, args: { path }, output: "file content", status: "done", timestamp: 2 });
@@ -87,4 +89,40 @@ test("a failed command does not color or label the whole stage as failed", () =>
  expect(header).not.toContain('bg-destructive');
  expect(header).not.toContain('失败');
  expect(html).not.toContain('data-work-planning');
+});
+
+
+describe("reasoning disclosure content", () => {
+ test("empty thinking uses a non-expandable status, not a blank secondary heading", () => {
+  for (const text of ["", " \n\t", "### "]) {
+   const html = render([user, {...thought("empty", text), streaming: true}]);
+   expect(html).not.toContain("data-work-stage=");
+   expect(html).not.toContain("data-work-stage-details");
+   expect(html).not.toContain("思考与规划");
+   // The top-level work header may remain; the pending status has no disclosure.
+   expect(html).toContain('role="status"');
+   expect(html).toContain("正在准备下一步操作");
+  }
+ });
+ test("expanded stage details contain the original thinking instead of filtering it away", () => {
+  const text = "### 检查组件调用关系\n先确认消息正文如何进入渲染组件，再保留现有交互。";
+  const cell = thought("reason", text);
+  const items: WorkItem[] = [{kind:"thinking",id:"reason-thinking",cell}, {kind:"tool",id:"read",cell:read("read", "src/components/Transcript.tsx") as Extract<AgentCell,{type:"tool"}>}];
+  const stage = groupWorkStages(items)[0];
+  const html = renderToString(<I18nProvider><WorkStageDetails stage={stage} active /></I18nProvider>);
+  expect(html).toContain("data-work-stage-details");
+  expect(html).toContain("先确认消息正文如何进入渲染组件，再保留现有交互。");
+  expect(html).toContain("检查组件调用关系");
+  expect(html).toContain("<pre");
+  expect(html).toContain("Transcript.tsx");
+ });
+ test("nonempty internal reasoning is available in details while its title stays Chinese", () => {
+  const cell = thought("reason", "Evaluating implementation details\n这里有可展示的真实思考正文。");
+  const html = render([user, {...cell, streaming:true}]);
+  expect(html).toContain("梳理实现方案与约束");
+  expect(html).not.toContain("Evaluating implementation details");
+  const stage = groupWorkStages([{kind:"thinking",id:"reason-thinking",cell}])[0];
+  const details = renderToString(<I18nProvider><WorkStageDetails stage={stage} active /></I18nProvider>);
+  expect(details).toContain("这里有可展示的真实思考正文。");
+ });
 });

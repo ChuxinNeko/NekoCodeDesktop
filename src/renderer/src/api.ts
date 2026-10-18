@@ -1,3 +1,4 @@
+import type { ExplainSelectionRequest, ExplainSelectionResult } from "../../shared/selection-explanation";
 import type { FusionConfig } from "../../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../../shared/code-intel";
 import type { LanStatus } from "../../shared/lan";
@@ -272,6 +273,9 @@ export interface AgentApi {
 	/** The rest of a tool result the window was only sent the head of. */
 	agentToolOutput(toolCallId: string, offset: number): Promise<{ text: string; offset: number; total: number } | null>;
 	agentSend(req: SendPromptRequest): Promise<SendPromptResult>;
+	/** Desktop-only temporary side chat: never appends to the agent session. */
+	explainSelection(req: ExplainSelectionRequest): Promise<ExplainSelectionResult>;
+	cancelSelectionExplanation(id: string): Promise<void>;
 	/** Run a prompt in a new session without changing what the window is showing. */
 	agentStartBackground(req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult>;
 	/** A finished task's notification was clicked: bring that session up. */

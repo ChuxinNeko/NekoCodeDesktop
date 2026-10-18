@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { groupWorkStages, workStageCompleted, workStageLabel, workStageTitle } from "../../src/renderer/src/lib/workStages";
+import { groupWorkStages, workStageCompleted, workStageLabel, workStageTitle, workStageHasDetails } from "../../src/renderer/src/lib/workStages";
 import { zhCN } from "../../src/renderer/src/i18n/locales/zh-CN";
 import { en } from "../../src/renderer/src/i18n/locales/en";
 import type { Language, TranslateFn } from "../../src/renderer/src/i18n";
@@ -36,8 +36,8 @@ describe("work stage timeline", () => {
 		if (failed.kind === "tool") failed.cell.status = "error";
 		const items = [tool("a", "read"), tool("b", "read"), tool("c", "bash"), failed, tool("m", "mcp_custom")];
 		const stages = groupWorkStages(items);
-		expect(stages).toHaveLength(1);
-		expect(workStageLabel(stages[0], translate())).toBe("处理任务");
+		expect(stages).toHaveLength(2);
+		expect(stages.map(stage => workStageLabel(stage, translate()))).toEqual(["检查实现与相关调用", "实现代码改动与行为"]);
 		expect(stages.flatMap((stage) => stage.items)).toEqual(items);
 	});
 	test("same response commentary and notices remain with the task", () => {
@@ -79,7 +79,7 @@ describe("action-oriented work titles", () => {
 			expect(workStageTitle(text)).toBe("");
 		const message: WorkItem = { kind: "message", id: "m", cell: { id: "m", type: "assistant", text: "我先读取 package.json。", thinking: "", streaming: false, timestamp: 0 } };
 		const stages = groupWorkStages([message, read("r", "package.json")]);
-		expect(workStageLabel(stages[0], translate())).toBe("读取 package.json");
+		expect(workStageLabel(stages[0], translate())).toBe("检查项目入口与启动配置");
 		expect(stages[0].items[0]).toBe(message);
 		expect(message.cell.text).toBe("我先读取 package.json。");
 	});
@@ -135,7 +135,7 @@ describe("localized timeline title regression", () => {
 	test("English UI uses localized tool labels and accepts concise English headings", () => {
 		const items = [thought("a", "### Inspect project entry"), read("a1", "package.json"), thought("b", "I'll read the server now."), read("b1", "src/server.mjs")];
 		expect(labels(items, "en")).toEqual(["Inspect project entry"]);
-		expect(labels(items, "zh-CN")).toEqual(["读取文件"]);
+		expect(labels(items, "zh-CN")).toEqual(["检查项目入口与启动配置"]);
 	});
 
 	test("revalidates tool descriptions instead of allowing English or narrative to leak through", () => {
@@ -143,7 +143,7 @@ describe("localized timeline title regression", () => {
 		if (shell.kind !== "tool") throw new Error("Expected tool");
 		for (const description of ["Read the entire server and inspect every module in detail.", "Follow the skill", "我先运行测试，然后看看结果。", "### I will inspect everything", "Planning Next Step"]) {
 			shell.cell.args = { description, command: "secret command should never be a stage title" };
-			expect(labels([thought("a", "Let me run this."), shell])).toEqual(["执行命令"]);
+			expect(labels([thought("a", "Let me run this."), shell])).toEqual(["检查命令执行结果"]);
 		}
 		shell.cell.args = { description: "验证构建兼容性" };
 		expect(labels([thought("a", "Let me run this."), shell])).toEqual(["验证构建兼容性"]);
@@ -171,14 +171,14 @@ describe("localized timeline title regression", () => {
 	});
 
 	test("incomplete streamed headings use a safe fallback, then become the intended title", () => {
-		expect(labels([thought("stream", "### ")])).toEqual(["思考与规划"]);
-		expect(labels([thought("stream", "**读取项目")])).toEqual(["思考与规划"]);
+		expect(labels([thought("stream", "### ")])).toEqual([]);
+		expect(labels([thought("stream", "**读取项目")])).toEqual(["梳理实现方案与约束"]);
 		expect(labels([thought("saved", "### 读取项目入口")])).toEqual(["读取项目入口"]);
 	});
 });
 
 
-describe("coarse work phases", () => {
+describe("consecutive work phases", () => {
 	test("the reported ten-row run stays one phase even when the final command fails", () => {
 		const paths = ["SKILL.md", "README.md", "", "server.mjs", "pool.mjs", "protocols.mjs", "protocols.mjs", "protocols.mjs", "index.html"];
 		const items = paths.flatMap((path, index) => [thought(`a${index}`, "Let me inspect the next file."), read(`r${index}`, path)]);
@@ -187,7 +187,7 @@ describe("coarse work phases", () => {
 		items.push(thought("exec", "Run a command."), failed);
 		const stages = groupWorkStages(items);
 		expect(stages).toHaveLength(1);
-		expect(stages.map((stage) => workStageLabel(stage, translate()))).toEqual(["处理任务"]);
+		expect(stages.map((stage) => workStageLabel(stage, translate()))).toEqual(["检查项目入口与启动配置"]);
 		expect(stages[0].items.filter((item) => item.kind === "tool")).toHaveLength(10);
 		expect(stages[0].items).toContain(failed);
 		expect(stages.flatMap((stage) => stage.items)).toEqual(items);
@@ -195,8 +195,8 @@ describe("coarse work phases", () => {
 
 	test("reading and searching stay in one investigation despite response boundaries", () => {
 		const items = [thought("a", "Read files"), read("r", "README.md"), thought("b", "Find references"), tool("s", "grep"), thought("c", "Read matches"), read("r2", "index.ts")];
-		expect(labels(items)).toEqual(["查看与检索"]);
-		expect(labels(items, "en")).toEqual(["Inspecting and searching"]);
+		expect(labels(items)).toEqual(["检查项目入口与启动配置"]);
+		expect(labels(items, "en")).toEqual(["Check project entry points and startup configuration"]);
 	});
 
 	test("real objectives still start phases and repeated headings do not", () => {
@@ -207,15 +207,15 @@ describe("coarse work phases", () => {
 
 	test("per-file explicit headings and descriptions cannot recreate a dense file list", () => {
 		const items = [thought("a", "### 读取 SKILL.md"), read("r", "SKILL.md"), thought("b", "### 读取 README.md"), read("r2", "README.md")];
-		expect(labels(items)).toEqual(["读取文件"]);
+		expect(labels(items)).toEqual(["检查实现与相关调用"]);
 		const command = tool("cmd", "bash");
 		if (command.kind === "tool") command.cell.args = {description: "检查项目入口"};
-		expect(labels([command, thought("n", "Continue inspecting"), tool("cmd2", "bash")])).toEqual(["执行命令"]);
+		expect(labels([command, thought("n", "Continue inspecting"), tool("cmd2", "bash")])).toEqual(["检查项目入口"]);
 	});
 
-	test("changing tool types without a new objective does not start a phase", () => {
+	test("execution changes split an old investigation even without a heading", () => {
 		const items = [thought("a", "Inspect files"), read("r", "README.md"), tool("e", "edit"), tool("cmd", "bash")];
-		expect(labels(items)).toEqual(["处理任务"]);
+		expect(labels(items)).toEqual(["检查实现与相关调用", "实现代码改动与行为"]);
 		expect(groupWorkStages(items).flatMap((stage) => stage.items)).toEqual(items);
 	});
 
@@ -233,24 +233,22 @@ describe("coarse work phases", () => {
 
 
 describe("mixed-tool continuation regression", () => {
- test("keeps the three intentional objectives and absorbs an arbitrarily long alternating tail", () => {
+ test("keeps consecutive inspection together but does not swallow later edits and checks", () => {
   const items: WorkItem[] = [thought("a", "### 读取探索技能与项目入口"), read("r1", "SKILL.md"), thought("b", "### 读取项目说明与配置"), read("r2", "README.md"), thought("c", "### 梳理服务端入口与路由"), read("r3", "server.mjs")];
   const initial = groupWorkStages(items);
   for (let i = 0; i < 40; i++) {
-   items.push(thought(`tail-${i}`, "Continue inspecting the implementation."), tool(`tool-${i}`, ["bash", "grep", "read", "powershell", "edit"][i % 5]));
+   items.push(thought(`tail-${i}`, "Continue inspecting the implementation."), tool(`tool-${i}`, ["bash", "grep", "read", "powershell"][i % 4]));
    const stages = groupWorkStages(items);
    expect(stages).toHaveLength(3);
    expect(stages[2].id).toBe(initial[2].id);
-   expect(stages[2].title).toBe("梳理服务端入口与路由");
   }
-  expect(groupWorkStages(items).flatMap((stage) => stage.items)).toEqual(items);
-  const failed = tool("failed", "bash");
-  if (failed.kind === "tool") failed.cell.status = "error";
-  items.push(thought("last", "Run verification."), failed);
-  expect(groupWorkStages(items)[2].items).toContain(failed);
-  expect(groupWorkStages(items)).toHaveLength(3);
-  items.push(thought("verify", "### 验证改动结果"), tool("test", "bash"));
-  expect(labels(items)).toEqual(["读取探索技能与项目入口", "读取项目说明与配置", "梳理服务端入口与路由", "验证改动结果"]);
+  items.push(thought("edit", "Evaluating implementation details"), tool("edit", "edit"));
+  expect(groupWorkStages(items)).toHaveLength(4);
+  const verify = tool("verify", "bash");
+  if (verify.kind === "tool") verify.cell.args = { command: "bun run typecheck" };
+  items.push(verify);
+  expect(labels(items)).toEqual(["读取探索技能与项目入口", "读取项目说明与配置", "梳理服务端入口与路由", "实现代码改动与行为", "检查类型与测试结果"]);
+  expect(groupWorkStages(items).flatMap(stage => stage.items)).toEqual(items);
  });
 });
 
@@ -285,7 +283,7 @@ describe("execution phases after a design heading", () => {
  };
  test("splits the HTML example into design, implementation, browser checks, fixes and rechecks", () => {
   const items = [thought("plan", "### 设计方向与页面结构"), action("write", "write", {path:"whoami.html"}), action("body", "edit", {path:"whoami.html"}), action("open", "browser_navigate", {url:"http://127.0.0.1:8765/whoami.html"}), action("mobile", "browser_viewport"), action("click", "browser_action"), action("fix", "edit", {path:"whoami.html"}), action("reopen", "browser_navigate", {url:"http://127.0.0.1:8765/whoami.html"}), action("check", "browser_evaluate")];
-  expect(labels(items)).toEqual(["设计方向与页面结构", "实现whoami.html", "验证页面布局与交互", "修正whoami.html", "复测页面布局与交互"]);
+  expect(labels(items)).toEqual(["设计方向与页面结构", "实现代码改动与行为", "检查界面布局与实际交互", "实现代码改动与行为", "检查界面布局与实际交互"]);
   const stages = groupWorkStages(items);
   expect(stages.flatMap(stage => stage.items)).toEqual(items);
   expect(stages[2].items.map(item => item.id)).toEqual(["open", "mobile", "click"]);
@@ -294,13 +292,13 @@ describe("execution phases after a design heading", () => {
  test("detects real test commands without parsing code or arbitrary echoed text", () => {
   const base = [thought("plan", "### 设计方向与页面结构"), action("write", "write", {path:"page.html", content:"npm test"})];
   expect(labels([...base, action("echo", "bash", {command:'echo "npm test"'})])).toHaveLength(2);
-  expect(labels([...base, action("test", "bash", {command:"npm run test"})])).toEqual(["设计方向与页面结构", "实现page.html", "运行测试与构建检查"]);
+  expect(labels([...base, action("test", "bash", {command:"npm run test"})])).toEqual(["设计方向与页面结构", "实现代码改动与行为", "检查类型与测试结果"]);
  });
  test("does not turn research browsing into page verification", () => {
   expect(labels([thought("plan", "### 设计方向与页面结构"), action("browse", "browser_navigate", {url:"https://example.com"}), action("read", "browser_evaluate")])).toEqual(["设计方向与页面结构"]);
  });
  test("provides English execution titles in English UI", () => {
-  expect(labels([thought("plan", "### Page design"), action("write", "write", {path:"page.html"}), action("test", "bash", {command:"bun test"})], "en")).toEqual(["Page design", "Implement page.html", "Run tests and build checks"]);
+  expect(labels([thought("plan", "### Page design"), action("write", "write", {path:"page.html"}), action("test", "bash", {command:"bun test"})], "en")).toEqual(["Page design", "Implement code changes and behavior", "Check types and test results"]);
  });
 });
 
@@ -320,5 +318,64 @@ describe("explicit stage completion", () => {
   expect(workStageCompleted(stage([command, complete, tool("next", "edit")]))).toBe(false);
   if(command.kind === "tool") command.cell.status = "running";
   expect(workStageCompleted(stage([command, complete]))).toBe(false);
+ });
+});
+
+
+describe("balanced phase granularity and empty reasoning", () => {
+ const action = (id: string, name: string, args: Record<string, unknown>): WorkItem => {
+  const item = tool(id, name);
+  if (item.kind === "tool") item.cell.args = args;
+  return item;
+ };
+ test("empty reasoning has no expandable stage and yields immediately to real work", () => {
+  for (const text of ["", " \n\t", "### "]) {
+   const empty = thought("empty", text);
+   expect(groupWorkStages([empty])).toEqual([]);
+   expect(workStageHasDetails({ items: [empty] })).toBe(false);
+   const stages = groupWorkStages([empty, read("entry", "package.json")]);
+   expect(stages).toHaveLength(1);
+   expect(workStageLabel(stages[0], translate())).toBe("检查项目入口与启动配置");
+   expect(workStageHasDetails(stages[0])).toBe(true);
+  }
+ });
+ test("consecutive reads and searches for related components merge across descriptions", () => {
+  const items = [
+   action("first", "bash", {command:"cat src/components/Sidebar.tsx", description:"检查侧栏与消息组件"}),
+   thought("internal", "**Assessing token budget**"),
+   action("second", "bash", {command:"rg onSend src/components", description:"检查消息与输入组件"}),
+   read("third", "src/components/Composer.tsx"),
+  ];
+  expect(labels(items)).toEqual(["检查侧栏与消息组件"]);
+  expect(groupWorkStages(items)[0].items).toEqual(items);
+ });
+ test("a realistic read-install-edit-check-build-results run has purposeful short phases", () => {
+  const items = [
+   thought("internal", "**Evaluating implementation details**"),
+   action("read1", "bash", {cmd:"cat src/components/Transcript.tsx"}),
+   action("search", "bash", {command:"rg render src/components/Markdown.tsx"}),
+   action("theme", "read", {path:"src/components/beautiful-ui/foundation.css"}),
+   action("install", "bash", {command:"npx shadcn@latest add https://www.beautifului.dev/r/chat-composer.json"}),
+   action("edit1", "edit", {path:"src/components/Transcript.tsx"}),
+   action("edit2", "edit", {path:"src/components/Markdown.tsx"}),
+   action("types", "bash", {command:'PATH="/tmp/bun/bin:$PATH" bun run typecheck'}),
+   action("test", "bash", {command:"bun test test/renderer/workStages.test.ts"}),
+   action("build", "bash", {command:"bun run build"}),
+   action("log", "bash", {command:"cat /tmp/build.log"}),
+  ];
+  const titles = labels(items);
+  expect(titles).toEqual(["检查界面组件与调用关系", "检查主题变量与布局常量", "安装组件与项目依赖", "修改界面组件与交互", "检查类型与测试结果", "编译界面并检查构建结果", "读取构建结果与验证记录"]);
+  expect(groupWorkStages(items).flatMap(stage => stage.items)).toEqual(items);
+  expect(groupWorkStages(items)[4].items.map(item => item.id)).toEqual(["types", "test"]);
+  expect(titles.every(title => /[\p{Script=Han}]/u.test(title) && title.length <= 32)).toBe(true);
+  expect(titles.join(" ")).not.toMatch(/Evaluating|Assessing|Clarifying|cat |rg |typecheck|\.tsx/);
+ });
+ test("internal English statuses never become headings in either language", () => {
+  for (const status of ["Evaluating implementation details", "Assessing token budget", "Clarifying source requirements", "Evaluating bun installation"]) {
+   for (const language of ["zh-CN", "en"] as const) {
+    expect(workStageTitle(`### ${status}`, language)).toBe("");
+    expect(labels([thought("a", `### ${status}`), read("r", "src/components/Transcript.tsx")], language).join(" ")).not.toContain(status);
+   }
+  }
  });
 });

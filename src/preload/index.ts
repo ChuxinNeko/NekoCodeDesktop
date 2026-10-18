@@ -1,3 +1,4 @@
+import type { ExplainSelectionRequest, ExplainSelectionResult } from "../shared/selection-explanation";
 import type { FusionConfig } from "../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
 import type { LanStatus } from "../shared/lan";
@@ -304,6 +305,10 @@ const api = {
 		ipcRenderer.invoke("agent:loadEarlier"),
 	agentToolOutput: (toolCallId: string, offset: number): Promise<{ text: string; offset: number; total: number } | null> =>
 		ipcRenderer.invoke("agent:toolOutput", toolCallId, offset),
+	explainSelection: (req: ExplainSelectionRequest): Promise<ExplainSelectionResult> =>
+		ipcRenderer.invoke("selection:explain", req),
+	cancelSelectionExplanation: (id: string): Promise<void> =>
+		ipcRenderer.invoke("selection:cancelExplanation", id),
 	agentSend: (req: SendPromptRequest): Promise<SendPromptResult> =>
 		ipcRenderer.invoke("agent:send", req),
 	agentStartBackground: (req: StartBackgroundTaskRequest): Promise<StartBackgroundTaskResult> =>
