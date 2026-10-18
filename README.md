@@ -73,30 +73,29 @@ bun run build && ./node_modules/electron/dist/electron out/main/index.js /path/t
 | --- | --- |
 | **会话** | 模型 / 思考级别 / 执行模式选择器，slash 命令（`/help`、`/new`、`/compact`、`/model`、`/thinking`、`/terminal`） |
 | **Review** | unstaged / staged / branch 三种范围的 diff，stage / unstage / revert |
-| **Pull requests** | GitHub PR 列表与详情（描述、检查、评论），可创建 PR、在系统浏览器打开 |
+| **GitHub** | 多仓库客户端：Issue 查看/回复/开关状态，PR 创建/差异/检查/合并，文件浏览与编辑提交，提交记录，以及 Actions 任务、日志、重跑、取消和手动触发 |
 | **Automations** | 定时/周期运行提示词，支持 interval / daily / cron，带运行历史 |
 | **Browser** | 内嵌浏览器（标签页、地址栏、前进后退），`target=_blank` 会开成新标签页 |
 | **Terminal** | node-pty + xterm 的真实 PTY（底部抽屉） |
-| **Settings** | Appearance（主题）、Models（自定义端点）、GitHub（token）、About |
+| **Settings** | Appearance（主题）、Models（自定义端点）、GitHub 授权、About |
 
 Browser 是一个可拖拽调宽的右侧停靠面板；其余是侧栏里的整页视图。
 
-## Pull requests 的凭据
+## GitHub 客户端与凭据
 
-PR 面板直接调用 GitHub REST API，**不依赖 `gh` CLI**（那才是额外安装）。凭据按以下顺序解析：
+GitHub 页面直接调用 GitHub REST API，**不依赖 `gh` CLI**。客户端与「设置 → GitHub 授权」共用凭据：
 
-1. Settings → GitHub 里保存的 token（`safeStorage` 加密后写入 `github-auth.json`，0600）；
-2. 本机已安装并登录的 `gh`，通过 `gh auth token` 自动复用；
-3. 都没有时匿名访问——公开仓库可用，限流 60 次/小时。
+1. 优先使用设置中连接的 OAuth 账号（自动续期）或手动 token，凭据经 `safeStorage` 加密保存；
+2. 没有设置凭据时，可复用本机已登录的 `gh`；
+3. 未连接账号时，工作台提供前往授权设置的入口。凭据始终留在主进程，不传入页面。
 
-仓库从项目的 git remote 解析，且只读 `git config` 里的原始 URL：`git remote -v` 会输出
+可浏览授权账号有权访问的仓库，支持搜索、分页和通过 `owner/repo` 打开仓库。首次打开也会尝试从当前项目的 git remote 定位仓库，且只读 `git config` 里的原始 URL：`git remote -v` 会输出
 `url.<base>.insteadOf` 重写后的地址，配了镜像的机器（常见于国内网络与企业代理）会因此被误判为非
 GitHub 仓库。
 
-限制：只支持 github.com。GitHub Enterprise 的地址形态与 GitLab/Gitea 无法区分，而且需要独立的
-API base 与 token，因此不做半支持，面板会明确提示找不到 GitHub remote。
+当前支持 github.com。GitHub Enterprise 需要独立 API 地址与凭据，尚未接入。
 
-列表只发一次请求；diff 统计与检查状态只在详情里拉取，避免匿名限流被列表耗尽。
+写入操作受 GitHub 的仓库权限、分支保护和 GitHub App 授权范围约束。Issue、PR、文件提交及工作流管理分别需要对应权限；权限不足时页面会显示错误并提供授权设置入口。PR 合并校验当前查看的 head SHA，文件编辑提交校验原始 blob SHA，避免覆盖并发修改。Actions 支持查看任务步骤和日志、访问产物、重跑全部/失败任务、取消运行，以及向支持 `workflow_dispatch` 的工作流提交分支与参数。
 
 ## Automations 的工作方式
 

@@ -49,6 +49,8 @@ let browserInspector: BrowserInspector | undefined;
 import { GitHubLoginService, GitHubOAuthClient } from "./github-oauth";
 import type { GitHubAuthorizationMethod } from "../shared/github-oauth";
 import { GitHubAuthService } from "./github-auth";
+import { GitHubClientService } from "./github-client-service";
+import type { GitHubClientRequest } from "../shared/github-client";
 import { applyAction, getDiff, getStatus, initRepo, listScopeFiles, showHeadFile, commitChanges } from "./git";
 import { listProjectFiles, rankPaths } from "./mentions";
 import {
@@ -451,6 +453,7 @@ let automationService: AutomationService | null = null;
 let githubAuth: GitHubAuthService | null = null;
 let githubLogin: GitHubLoginService | null = null;
 let pullRequests: PullRequestService | null = null;
+let githubClient: GitHubClientService | null = null;
 let tokenStats: TokenStatsService | null = null;
 let modelPricing: ModelPricingService | null = null;
 
@@ -956,6 +959,10 @@ function createWindow(): void {
 	if (!githubLogin) githubLogin = new GitHubLoginService(new GitHubOAuthClient(), (url) => shell.openExternal(url),
 		(grant, active) => githubAuth!.saveOAuth(grant, active), () => githubAuth!.assertStorage());
 	if (!pullRequests) pullRequests = new PullRequestService(githubAuth);
+	if (!githubClient) githubClient = new GitHubClientService(githubAuth, { resolveRepository: async (cwd) => {
+		const repository = await pullRequests!.resolveRepository(cwd);
+		return repository ? `${repository.owner}/${repository.repo}` : null;
+	} });
 	if (!automationService) {
 		automationService = new AutomationService({
 			userDataDir: app.getPath("userData"),
@@ -1820,6 +1827,10 @@ function registerIpc(): void {
 	ipcMain.handle("github:profile", () => {
 		if (!githubAuth) throw new Error("GitHub auth service unavailable");
 		return githubAuth.profile();
+	});
+	ipcMain.handle("github:client", (_e, request: GitHubClientRequest) => {
+		if (!githubClient) throw new Error("GitHub client unavailable");
+		return githubClient.execute(request);
 	});
 	ipcMain.handle("github:save", (_e, token: string) => {
 		if (!githubAuth) throw new Error("GitHub auth service unavailable");

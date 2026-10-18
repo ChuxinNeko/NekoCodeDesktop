@@ -1,0 +1,420 @@
+.gh-workbench {
+  container: github / inline-size;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  color: var(--foreground);
+  font-size: var(--app-font-size-ui, 12px);
+  --gh-divider: var(--app-surface-divider, var(--border));
+}
+.gh-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gh-divider);
+}
+.gh-account {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.gh-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.gh-repositories {
+  display: flex;
+  flex-direction: column;
+  width: 224px;
+  min-width: 180px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--gh-divider);
+  background: color-mix(in srgb, var(--foreground) 1.5%, transparent);
+}
+.gh-repo-row {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin: 2px 0;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.gh-repo-row:hover,
+.gh-list-row:hover {
+  background: var(--sidebar-accent);
+}
+.gh-repo-row.is-selected,
+.gh-list-row.is-selected {
+  background: var(--sidebar-selected, var(--sidebar-accent));
+}
+.gh-content {
+  container: gh-content / inline-size;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.gh-repo-heading {
+  flex-shrink: 0;
+  padding: 16px 18px 0;
+  border-bottom: 1px solid var(--gh-divider);
+}
+.gh-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.gh-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 9px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+.gh-tabs > button[aria-current="page"] {
+  color: var(--foreground);
+  border-bottom-color: var(--foreground);
+  font-weight: 500;
+}
+.gh-tabs > button:hover {
+  color: var(--foreground);
+}
+.gh-panel {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.gh-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.gh-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gh-divider);
+}
+.gh-select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--popover);
+  color: var(--foreground);
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.gh-select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.gh-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.gh-list {
+  width: 290px;
+  flex: 0 0 290px;
+  border-right: 1px solid var(--gh-divider);
+  padding: 6px;
+}
+.gh-list-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 3px;
+}
+.gh-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.gh-card {
+  border: 1px solid var(--gh-divider);
+  border-radius: 10px;
+  padding: 14px;
+  min-width: 0;
+}
+.gh-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 24px;
+}
+.gh-overview-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.gh-overview-links > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.gh-overview-links > button:hover {
+  background: var(--sidebar-accent);
+}
+.gh-empty {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 96px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+.gh-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 5%, transparent);
+  overflow-wrap: anywhere;
+}
+.gh-error > span {
+  flex: 1;
+}
+.gh-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1px 7px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.gh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.gh-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.gh-status[data-state="open"],
+.gh-status[data-state="success"] {
+  color: var(--success, #3a9664);
+}
+.gh-status[data-state="failure"],
+.gh-status[data-state="timed_out"] {
+  color: var(--destructive);
+}
+.gh-status[data-state="in_progress"],
+.gh-status[data-state="queued"],
+.gh-status[data-state="waiting"] {
+  color: var(--warning, #b38a35);
+}
+.gh-status[data-state="merged"] {
+  color: var(--color-status-merged, #986cba);
+}
+.gh-section {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--gh-divider);
+}
+.gh-section > summary {
+  padding: 4px 0;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.gh-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.gh-markdown {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.gh-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.gh-inline-link {
+  color: var(--color-text-link, var(--foreground));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.gh-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gh-file-diff {
+  border: 1px solid var(--gh-divider);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.gh-file-diff > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--foreground) 3%, transparent);
+}
+.gh-code {
+  tab-size: 4;
+  font-family: var(--font-mono-family, monospace);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+.gh-file-diff .gh-code {
+  padding: 8px;
+}
+.gh-diff-add {
+  background: color-mix(in srgb, var(--success, #3a9664) 10%, transparent);
+}
+.gh-diff-delete {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+}
+.gh-directory {
+  padding: 8px 12px;
+}
+.gh-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  padding: 11px 8px;
+  border-bottom: 1px solid var(--gh-divider);
+  cursor: pointer;
+}
+.gh-directory-row:hover {
+  background: var(--sidebar-accent);
+}
+.gh-breadcrumbs {
+  padding: 10px 14px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--gh-divider);
+}
+.gh-breadcrumbs button {
+  cursor: pointer;
+}
+.gh-breadcrumbs button:hover {
+  text-decoration: underline;
+}
+.gh-breadcrumbs button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.gh-back {
+  display: none;
+}
+.gh-repo-toggle {
+  display: none;
+}
+.gh-workbench button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+@container github (max-width: 940px) {
+  .gh-repo-toggle {
+    display: inline-flex;
+    max-width: 40%;
+    overflow: hidden;
+  }
+  .gh-body[data-repos-open="false"] > .gh-repositories {
+    display: none;
+  }
+  .gh-body[data-repos-open="true"] > .gh-repositories {
+    width: 100%;
+    border-right: 0;
+  }
+  .gh-body[data-repos-open="true"] > .gh-content {
+    display: none;
+  }
+}
+@container gh-content (max-width: 700px) {
+  .gh-split[data-detail="true"] > .gh-list {
+    display: none;
+  }
+  .gh-split[data-detail="false"] > .gh-detail {
+    display: none;
+  }
+  .gh-list {
+    width: 100%;
+    flex: 1 1 auto;
+    border-right: 0;
+  }
+  .gh-back {
+    display: inline-flex;
+  }
+  .gh-toolbar {
+    flex-wrap: wrap;
+  }
+  .gh-metrics {
+    gap: 6px;
+  }
+  .gh-metrics .gh-card {
+    padding: 10px;
+  }
+}
+@container gh-content (max-width: 390px) {
+  .gh-overview-links {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .gh-repo-heading {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gh-workbench * {
+    scroll-behavior: auto;
+  }
+}

@@ -1,6 +1,7 @@
 import type { ExplainSelectionRequest, ExplainSelectionResult } from "../shared/selection-explanation";
 import type { GitHubAuthorization, GitHubAuthorizationMethod, GitHubAuthorizationPoll } from "../shared/github-oauth";
 import type { GitHubProfile } from "../shared/github-profile";
+import type { GitHubClientRequest, GitHubClientResult } from "../shared/github-client";
 import type { FusionConfig } from "../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
 import type { LanStatus } from "../shared/lan";
@@ -507,6 +508,7 @@ const api = {
 
 	githubStatus: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke("github:status"),
 	githubProfile: (): Promise<GitHubProfile> => ipcRenderer.invoke("github:profile"),
+	githubClient: <T extends GitHubClientRequest>(request: T): Promise<GitHubClientResult<T["action"]>> => ipcRenderer.invoke("github:client", request),
 	githubSave: (token: string): Promise<GitHubAuthStatus> =>
 		ipcRenderer.invoke("github:save", token),
 	githubClear: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke("github:clear"),

@@ -161,6 +161,7 @@ export const WEBUI_RPC_METHODS = [
 	"oauthLogout",
 	"githubStatus",
 	"githubProfile",
+	"githubClient",
 	"githubSave",
 	"githubClear",
 	"prList",

@@ -1,6 +1,7 @@
 import type { ExplainSelectionRequest, ExplainSelectionResult } from "../../shared/selection-explanation";
 import type { GitHubAuthorization, GitHubAuthorizationMethod, GitHubAuthorizationPoll } from "../../shared/github-oauth";
 import type { GitHubProfile } from "../../shared/github-profile";
+import type { GitHubClientRequest, GitHubClientResult } from "../../shared/github-client";
 import type { FusionConfig } from "../../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../../shared/code-intel";
 import type { LanStatus } from "../../shared/lan";
@@ -488,6 +489,7 @@ export interface AgentApi {
 
 	githubStatus(): Promise<GitHubAuthStatus>;
 	githubProfile(): Promise<GitHubProfile>;
+	githubClient<T extends GitHubClientRequest>(request: T): Promise<GitHubClientResult<T["action"]>>;
 	githubSave(token: string): Promise<GitHubAuthStatus>;
 	githubClear(): Promise<GitHubAuthStatus>;
 	githubAuthorize(method: GitHubAuthorizationMethod): Promise<GitHubAuthorization>;

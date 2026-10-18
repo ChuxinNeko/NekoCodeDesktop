@@ -33,7 +33,7 @@ import {
 	type DockTabId,
 	type DockTool,
 } from "./components/dock/RightDock";
-import { PullRequestsPage } from "./components/pullRequests/PullRequestsPage";
+import { GitHubPage } from "./components/github/GitHubPage";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { SettingsPage, type SettingsSectionId } from "./components/settings/SettingsPage";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
@@ -1157,7 +1157,7 @@ export default function App() {
 					onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
 				/>
 				{sidebarOpen ? (
-					<div className={view === "settings" ? "hidden" : "contents"}>
+					<div className={view === "settings" || view === "pull-requests" ? "hidden" : "contents"}>
 					<Sidebar
 						cwd={cwd}
 						workspaces={workspaces}
@@ -1194,7 +1194,7 @@ export default function App() {
 					className={cn(
 						CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
 						"flex min-h-0 min-w-0 flex-1 flex-col",
-						view === "settings" ? "rounded-l-xl" : !sidebarOpen && "rounded-tl-lg",
+						view === "settings" || view === "pull-requests" ? "rounded-l-xl" : !sidebarOpen && "rounded-tl-lg",
 						dockOpen && "rounded-tr-lg",
 					)}
 				>
@@ -1235,7 +1235,10 @@ export default function App() {
 					) : view === "review" ? (
 						<ReviewPanel cwd={cwd} onClose={() => setView("chat")} />
 					) : view === "pull-requests" ? (
-						<PullRequestsPage cwd={cwd} onClose={() => setView("chat")} />
+						<GitHubPage cwd={cwd} onClose={() => setView("chat")} onOpenSettings={() => {
+							setSettingsSection("github");
+							setView("settings");
+						}} />
 					) : view === "automations" ? (
 						<AutomationsPage cwd={cwd} onClose={() => setView("chat")} />
 					) : (
