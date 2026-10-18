@@ -1,4 +1,5 @@
 import type { ExplainSelectionRequest, ExplainSelectionResult } from "../shared/selection-explanation";
+import type { GitHubAuthorization, GitHubAuthorizationMethod, GitHubAuthorizationPoll } from "../shared/github-oauth";
 import type { FusionConfig } from "../shared/fusion";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
 import type { LanStatus } from "../shared/lan";
@@ -507,6 +508,10 @@ const api = {
 	githubSave: (token: string): Promise<GitHubAuthStatus> =>
 		ipcRenderer.invoke("github:save", token),
 	githubClear: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke("github:clear"),
+	githubAuthorize: (method: GitHubAuthorizationMethod): Promise<GitHubAuthorization> => ipcRenderer.invoke("github:authorize", method),
+	githubPollAuthorization: (id: string): Promise<GitHubAuthorizationPoll> => ipcRenderer.invoke("github:pollAuthorization", id),
+	githubCancelAuthorization: (id?: string): Promise<void> => ipcRenderer.invoke("github:cancelAuthorization", id),
+	githubOpenAuthorization: (): Promise<void> => ipcRenderer.invoke("github:openAuthorization"),
 
 	sshStatus: (): Promise<SshStatus> => ipcRenderer.invoke("ssh:status"),
 	sshSave: (input: SshHostInput): Promise<SshStatus> => ipcRenderer.invoke("ssh:save", input),

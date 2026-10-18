@@ -7,6 +7,8 @@
  * repository holds a real credential.
  */
 
+import type { GitHubAppConfig } from "./github/service";
+
 function required(name: string): string {
 	const value = process.env[name]?.trim();
 	if (!value) throw new Error(`缺少环境变量 ${name}，请参考 server/.env.example`);
@@ -30,6 +32,8 @@ const MIN_SECRET_LENGTH = 32;
 
 export interface Env {
 	port: number;
+	/** Optional: GitHub endpoints return a configuration error until registered. */
+	github?: GitHubAppConfig;
 	/**
 	 * Interface to bind.
 	 *
@@ -64,6 +68,18 @@ export interface Env {
 	};
 }
 
+function githubConfig(): GitHubAppConfig | undefined {
+	if (!["GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_CALLBACK_URL", "GITHUB_APP_SLUG", "GITHUB_AUTH_ENCRYPTION_KEY"].some(name => process.env[name]?.trim())) return undefined;
+	const callbackUrl = required("GITHUB_APP_CALLBACK_URL");
+	const url = new URL(callbackUrl);
+	if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname)))) throw new Error("GITHUB_APP_CALLBACK_URL 必须是 HTTPS URL（本机开发可使用 HTTP）");
+	const appSlug = required("GITHUB_APP_SLUG");
+	if (!/^[a-z0-9-]+$/.test(appSlug)) throw new Error("GITHUB_APP_SLUG 格式不正确");
+	const encryptionKey = required("GITHUB_AUTH_ENCRYPTION_KEY");
+	if (encryptionKey.length < MIN_SECRET_LENGTH) throw new Error("GITHUB_AUTH_ENCRYPTION_KEY 至少需要 32 个字符");
+	return { clientId: required("GITHUB_APP_CLIENT_ID"), clientSecret: required("GITHUB_APP_CLIENT_SECRET"), callbackUrl, appSlug, encryptionKey };
+}
+
 export function loadEnv(): Env {
 	const jwtSecret = required("JWT_SECRET");
 	if (jwtSecret.length < MIN_SECRET_LENGTH) {
@@ -71,6 +87,7 @@ export function loadEnv(): Env {
 	}
 	return {
 		port: integer("PORT", 3000),
+		github: githubConfig(),
 		bindHost: optional("BIND_HOST", "127.0.0.1"),
 		mongoUri: required("MONGODB_URI"),
 		mongoDb: optional("MONGODB_DB", "nekocode"),

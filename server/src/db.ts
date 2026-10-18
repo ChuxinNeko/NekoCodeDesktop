@@ -1,3 +1,4 @@
+import type { GitHubAuthorizationDoc } from "./github/store";
 import { MongoClient, type Collection, type Db } from "mongodb";
 
 /**
@@ -76,6 +77,7 @@ export interface Database {
 	verifications: Collection<VerificationDoc>;
 	sessions: Collection<SessionDoc>;
 	devices: Collection<RelayDeviceDoc>;
+	githubAuthorizations: Collection<GitHubAuthorizationDoc>;
 	close(): Promise<void>;
 }
 
@@ -96,8 +98,10 @@ export async function connect(uri: string, dbName: string): Promise<Database> {
 	const verifications = db.collection<VerificationDoc>("verifications");
 	const sessions = db.collection<SessionDoc>("sessions");
 	const devices = db.collection<RelayDeviceDoc>("devices");
+	const githubAuthorizations = db.collection<GitHubAuthorizationDoc>("github_authorizations");
 
 	await Promise.all([
+		githubAuthorizations.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "ttl" }),
 		users.createIndex({ email: 1 }, { unique: true, name: "email_unique" }),
 		verifications.createIndex({ email: 1 }, { unique: true, name: "email_unique" }),
 		// Mongo removes these on its own, so nothing has to sweep them.
@@ -113,6 +117,7 @@ export async function connect(uri: string, dbName: string): Promise<Database> {
 		verifications,
 		sessions,
 		devices,
+		githubAuthorizations,
 		close: () => client.close(),
 	};
 }

@@ -46,6 +46,8 @@ import { installBrowserGuards, revokeUnavailableDesktopGuests } from "./browser-
 import type { BrowserInspector } from "./browser-inspector";
 
 let browserInspector: BrowserInspector | undefined;
+import { GitHubLoginService, GitHubOAuthClient } from "./github-oauth";
+import type { GitHubAuthorizationMethod } from "../shared/github-oauth";
 import { GitHubAuthService } from "./github-auth";
 import { applyAction, getDiff, getStatus, initRepo, listScopeFiles, showHeadFile, commitChanges } from "./git";
 import { listProjectFiles, rankPaths } from "./mentions";
@@ -447,6 +449,7 @@ let oauthService: OAuthService | null = null;
 let proxyService: ProxyService | null = null;
 let automationService: AutomationService | null = null;
 let githubAuth: GitHubAuthService | null = null;
+let githubLogin: GitHubLoginService | null = null;
 let pullRequests: PullRequestService | null = null;
 let tokenStats: TokenStatsService | null = null;
 let modelPricing: ModelPricingService | null = null;
@@ -950,6 +953,8 @@ function createWindow(): void {
 	terminalService = new TerminalService(win, () => ssh().service);
 
 	if (!githubAuth) githubAuth = new GitHubAuthService();
+	if (!githubLogin) githubLogin = new GitHubLoginService(new GitHubOAuthClient(), (url) => shell.openExternal(url),
+		(grant, active) => githubAuth!.saveOAuth(grant, active), () => githubAuth!.assertStorage());
 	if (!pullRequests) pullRequests = new PullRequestService(githubAuth);
 	if (!automationService) {
 		automationService = new AutomationService({
@@ -1814,9 +1819,24 @@ function registerIpc(): void {
 	ipcMain.handle("github:status", () => githubAuth?.status());
 	ipcMain.handle("github:save", (_e, token: string) => {
 		if (!githubAuth) throw new Error("GitHub auth service unavailable");
+		githubLogin?.cancel();
 		return githubAuth.save(token);
 	});
-	ipcMain.handle("github:clear", () => githubAuth?.clear());
+	ipcMain.handle("github:clear", () => { githubLogin?.cancel(); return githubAuth?.clear(); });
+	// Deliberately desktop-only: these methods are not in the WebUI RPC allowlist.
+	ipcMain.handle("github:authorize", (_e, method: GitHubAuthorizationMethod) => {
+		if (!githubLogin) throw new Error("GitHub auth service unavailable");
+		return githubLogin.start(method);
+	});
+	ipcMain.handle("github:pollAuthorization", (_e, id: string) => {
+		if (!githubLogin || typeof id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(id)) throw new Error("Invalid authorization session");
+		return githubLogin.poll(id);
+	});
+	ipcMain.handle("github:cancelAuthorization", (_e, id?: string) => {
+		if (id !== undefined && (typeof id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(id))) throw new Error("Invalid authorization session");
+		githubLogin?.cancel(id);
+	});
+	ipcMain.handle("github:openAuthorization", () => githubLogin?.open());
 
 	ipcMain.handle("ssh:status", () => ssh().store.status());
 	ipcMain.handle("ssh:sandboxDeployments", () => ssh().service.sandboxDeployments());
@@ -2030,6 +2050,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+	githubLogin?.cancel();
 	void webUiService?.stop();
 	modelPricing?.stop();
 	automationService?.stop();

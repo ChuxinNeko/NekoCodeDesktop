@@ -4,6 +4,8 @@ ElysiaJS + MongoDB。实现 NekoCode 账号（注册、邮箱验证码校验、�
 以及**同账号设备发现 + 两条 WebSocket 端到端密文中继**：登录同一账号的桌面端和手机端通过
 服务端中转加密的任务请求/响应，与局域网配对是两套完全独立的连接模式。
 
+GitHub 浏览器授权、设备码授权和令牌续期也由本服务提供。注册公共应用、环境变量及上线验收见 [GITHUB_APP.md](GITHUB_APP.md)。
+
 这是一个**独立包**，不在根 `package.json` 的 workspaces 里 —— 它的依赖（elysia / mongodb /
 nodemailer）不应该被打进 Electron 桌面端。
 

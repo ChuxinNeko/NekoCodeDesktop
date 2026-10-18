@@ -4,6 +4,7 @@ import { connect } from "./db";
 import { loadEnv } from "./env";
 import { fail } from "./errors";
 import { createMailer } from "./mail/mailer";
+import { githubRoutes } from "./github/routes";
 import { relayRoutes } from "./relay/routes";
 
 const env = loadEnv();
@@ -37,6 +38,7 @@ const app = new Elysia({
 	.get("/health", () => ({ ok: true, at: new Date().toISOString() }))
 	.use(authRoutes({ db, env, mailer }))
 	.use(relayRoutes({ db, env }))
+	.use(githubRoutes({ db, env }))
 	.listen({ port: env.port, hostname: env.bindHost });
 
 console.log(`NekoCode server listening on ${env.bindHost}:${String(env.port)}`);

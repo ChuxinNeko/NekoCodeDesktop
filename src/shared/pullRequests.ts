@@ -69,7 +69,9 @@ export interface PullRequestListResult {
 
 export interface GitHubAuthStatus {
 	configured: boolean;
-	source: "settings" | "gh-cli" | "anonymous" | null;
+	source: "settings" | "oauth" | "gh-cli" | "anonymous" | null;
+	authorizationMethod?: "browser" | "device";
+	installationUrl?: string;
 	login?: string;
 	encryptionAvailable: boolean;
 	warning?: string;
