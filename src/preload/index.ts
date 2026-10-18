@@ -229,6 +229,8 @@ const api = {
 
 	fsList: (cwd: string, relPath: string): Promise<FsEntry[]> =>
 		ipcRenderer.invoke("fs:list", cwd, relPath),
+	fsPreviewReference: (cwd: string, path: string): Promise<FsReadResult & { external: boolean }> =>
+		ipcRenderer.invoke("fs:previewReference", cwd, path),
 	fsReadFile: (cwd: string, relPath: string): Promise<FsReadResult> =>
 		ipcRenderer.invoke("fs:readFile", cwd, relPath),
 	ideReadText: (cwd: string, relPath: string): Promise<IdeReadResult> =>

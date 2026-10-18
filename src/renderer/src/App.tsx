@@ -982,7 +982,15 @@ export default function App() {
 				onSetThinking={inPane(setThinking)}
 				onSetMode={inPane(setMode)}
 				onSetWorkMode={inPane(setWorkMode)}
-				onOpenReview={layoutMode === "ide" ? undefined : inPane(() => openDockTab("review"))}
+				onOpenReview={layoutMode === "ide" ? undefined : inPane(async () => {
+					try {
+						const status = sessionCwd ? await api.gitStatus(sessionCwd) : null;
+						// A missing Git executable is not evidence that this is a non-repository.
+						openDockTab(!status || (status.gitAvailable && !status.isRepo) ? "checkpoints" : "review");
+					} catch (cause) {
+						setError(errorMessage(cause));
+					}
+				})}
 				onToggleTerminal={inPane(() => setTerminalOpen((open) => !open))}
 				onToggleBrowser={inPane(() => toggleDockTool("browser"))}
 				onOpenTask={layoutMode === "ide" ? undefined : inPane((taskId: string) => openDockTab(taskTabId(taskId)))}

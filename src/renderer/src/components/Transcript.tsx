@@ -11,11 +11,12 @@ import {
 	type WorkItem,
 	type WorkRow,
 } from "../../../shared/transcript";
-import { groupWorkStages, workStageLabel, type WorkStage } from "../lib/workStages";
+import { groupWorkStages, workStageCompleted, workStageLabel, type WorkStage } from "../lib/workStages";
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
 import { completedTurnChanges } from "../lib/turnChanges";
 import { useReducedMotion } from "../lib/motion";
+import { DiffStat } from "./ui/diff-stat";
 import { DisclosureRegion } from "./ui/disclosure-region";
 import { useTranslation } from "../i18n";
 import { elapsedSeconds, formatElapsed, useNow } from "../lib/elapsed";
@@ -37,7 +38,7 @@ import {
 	toolPhase,
 	workUnits,
 } from "./chat/ToolCalls";
-import { ThinkingBlock, ThinkingStream } from "./chat/Thinking";
+import { ThinkingBlock } from "./chat/Thinking";
 import { SourceList } from "./chat/WebSources";
 import { Markdown } from "./chat/Markdown";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
@@ -503,18 +504,11 @@ const WorkingBlock = memo(function WorkingBlock({
 	const tools = workToolCount(row);
 	const stages = useMemo(() => groupWorkStages(row.items, language), [row.items, language]);
 	const lastStage = stages[stages.length - 1];
-	const currentThinking = useMemo(() => {
-		if (!active || settling) return null;
-		for (let index = row.items.length - 1; index >= 0; index--) {
-			const item = row.items[index];
-			if (item.kind === "thinking" && item.cell.thinking.trim()) return item;
-		}
-		return null;
-	}, [row.items, active, settling]);
+	const betweenStages = active && !settling && workStageCompleted(lastStage);
 	// Collapsed, the block says what it is standing in for: the step running
 	// right now while it runs, under the header; once it stops, the size of what
 	// is folded away, beside it — one line, so a finished turn reads as a rule.
-	const summary = active ? (waiting ? t("workFlow.planning") : lastStage ? workStageLabel(lastStage, t) : "") : "";
+	const summary = active ? (betweenStages ? t("workFlow.planning") : lastStage ? workStageLabel(lastStage, t) : "") : "";
 	const size = active ? null : t(tools === 1 ? "workFlow.toolCall" : "workFlow.toolCalls", { count: tools });
 
 	return (
@@ -546,17 +540,10 @@ const WorkingBlock = memo(function WorkingBlock({
 				<ol className="m-0 list-none p-0 pl-1" aria-label={t("workFlow.steps")}>
 					{stages.map((stage, index) => (
 						<WorkStageRow key={stage.id} stage={stage} active={active}
-							current={active && index === stages.length - 1 && !waiting} />
+							current={active && index === stages.length - 1 && !betweenStages} />
 					))}
-					{currentThinking ? (
-						<li className="min-w-0 pb-3 pl-6 pt-1" data-work-current-thinking="">
-							<section aria-label={t("workFlow.currentThinking")} className="min-w-0 space-y-1.5">
-								<ThinkingStream key={currentThinking.id} text={currentThinking.cell.thinking} tabIndex={0} className="h-[7.5em] min-h-0" />
-							</section>
-						</li>
-					) : null}
-					{waiting ? <li data-work-planning="" className="relative min-h-8 pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
-						<span aria-hidden="true" className="absolute left-0 top-2.5 size-2 rounded-full bg-primary/50 motion-safe:animate-pulse" />
+					{betweenStages ? <li data-work-planning="" className="relative min-h-8 pb-2 pl-6 pt-1 text-[length:var(--app-font-size-chat,12px)] text-muted-foreground">
+						<span aria-hidden="true" className="absolute left-[3px] top-1 bottom-0 w-px bg-primary/50 motion-safe:animate-pulse" />
 						<PlanningLine />
 					</li> : null}
 				</ol>
@@ -585,29 +572,36 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const detailId = useId();
-	const failed = stage.items.some((item) => item.kind === "tool" && item.cell.status === "error" || item.kind === "notice" && item.cell.level === "error");
 	const running = active && (current || stage.items.some((item) => item.kind === "tool" && (item.cell.status === "running" || item.cell.status === "pending")));
 	const title = workStageLabel(stage, t);
+	const changes = stage.items.reduce((total, item) => {
+		if (item.kind !== "tool" || item.cell.status !== "done") return total;
+		const preview = fileEditPreview(item.cell);
+		for (const line of preview?.lines ?? []) {
+			if (line.kind === "add") total.insertions++;
+			if (line.kind === "remove") total.deletions++;
+		}
+		return total;
+	}, { insertions: 0, deletions: 0 });
 	return (
 		<li className="group/work-stage relative min-w-0 pb-3 pl-6 last:pb-0" data-work-stage={stage.id}>
-			<span aria-hidden="true" className="absolute bottom-0 left-[3px] top-4 w-px bg-border/60 group-last/work-stage:hidden" />
-			<span aria-hidden="true" className={cn("absolute left-0 top-2 size-2 rounded-full", failed ? "bg-destructive/70" : running ? "bg-primary/70 motion-safe:animate-pulse" : "bg-muted-foreground/25")} />
+			<span aria-hidden="true" data-work-stage-rail="" className={cn("absolute bottom-0 left-[3px] top-0 w-px", running ? "bg-primary/70" : "bg-border/60")} />
 			<button type="button" aria-expanded={open} aria-controls={detailId}
 				onClick={() => setOpen((value) => !value)}
 				className="flex max-w-full items-start gap-1.5 rounded py-0.5 text-left text-[length:var(--app-font-size-chat-body,13px)] leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
-				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "shimmer text-foreground/80", failed && "text-destructive")}>
+				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "shimmer text-foreground/80")}>
 					{title}
 				</span>
+				{changes.insertions || changes.deletions ? <DiffStat {...changes} className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]" /> : null}
 				<ChevronRightIcon aria-hidden="true" className="workflow-chevron mt-1 size-3.5 shrink-0 opacity-60" data-open={open} />
-				{failed ? <span className="sr-only">{t("workFlow.failed")}</span> : null}
 				{running ? <span className="sr-only">{t("workFlow.running")}</span> : null}
 			</button>
 			<DisclosureRegion open={open} id={detailId}>
 				<div className="flex min-w-0 flex-col gap-2 pb-1 pt-2" data-work-stage-details="">
-					{workUnits(stage.items, active).map((unit) => {
+					{workUnits(stage.items.filter((item) => item.kind !== "thinking"), active).map((unit) => {
 						if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
 						const item = unit.item;
-						return item.kind === "thinking" ? <ThinkingStream key={item.id} text={item.cell.thinking} />
+						return item.kind === "thinking" ? null
 							: item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} />
 							: item.kind === "message" ? <RemarkCell key={item.id} cell={item.cell} />
 							: <NoticeCell key={item.id} cell={item.cell} />;
@@ -635,9 +629,8 @@ function waitingOnModel(cells: AgentCell[], streaming: boolean): boolean {
 		case "tool":
 			return last.status === "done" || last.status === "error";
 		case "assistant":
-			// Once the model is visibly thinking, that stream is the progress: the
-			// planning line is only for the gap before the next step shows up.
-			return !last.text && last.streaming && !last.thinking;
+			// Reasoning is hidden; keep a visible waiting state until an action arrives.
+			return !last.text;
 	}
 }
 

@@ -16,7 +16,7 @@ describe("localized workflow headings in Transcript", () => {
   expect(html).toContain("读取项目入口");
   expect(html).not.toContain("读取 SKILL.md");
   expect(html).not.toContain("读取 server.mjs");
-  expect(html).toContain("规划下一步");
+  expect(html).not.toContain("规划下一步");
   expect(html).toContain("已工作");
   expect(html.match(/data-work-stage="/g)?.length).toBe(1);
   for (const raw of ["Follow the skill", "Planning Next Step", "Working for"]) expect(html).not.toContain(raw);
@@ -33,60 +33,58 @@ describe("localized workflow headings in Transcript", () => {
 });
 
 
-describe("current thinking between stages and planning", () => {
- test("shows only the latest returned thinking below stage headings and above planning", () => {
-  const html=render();
-  const position=html.indexOf('data-work-current-thinking');
-  expect(position).toBeGreaterThan(html.indexOf('data-work-stage="'));
-  expect(position).toBeLessThan(html.indexOf('规划下一步'));
-  expect(html).toContain('aria-label="当前思考"');
-  expect(html).not.toContain('>当前思考<');
-  expect(html).toContain('Let&#x27;s look at the entry point');
-  expect(html).not.toContain('Follow the skill');
-  expect(html).toContain('max-h-[7.5em]');
-  expect(html).toContain('tabindex="0"');
- });
- test("updates the text as the current assistant streams without adding a stage", () => {
-  const base=cells.slice(0,-2);
-  const a=render([...base,{...thought('live','Checking module boundaries'),streaming:true}]);
-  const b=render([...base,{...thought('live','Checking module boundaries and request flow'),streaming:true}]);
-  expect(a).toContain('Checking module boundaries');
-  expect(b).toContain('Checking module boundaries and request flow');
-  expect(a.match(/data-work-stage="/g)?.length).toBe(b.match(/data-work-stage="/g)?.length);
-  expect(b.match(/data-work-current-thinking/g)?.length).toBe(1);
- });
- test("does not fabricate thinking when no thinking content has been returned", () => {
-  const html=render([user,read('r','README.md')]);
+describe("stage presentation", () => {
+ test("hides reasoning below headings and keeps a vertical rail", () => {
+  const html = render();
   expect(html).not.toContain('data-work-current-thinking');
-  expect(html).toContain('规划下一步');
+  expect(html).not.toContain('Let&#x27;s look at the entry point');
+  expect(html).toContain('data-work-stage-rail');
  });
- test("the live thinking area is absent in completed history", () => {
-  const html=render(cells,false);
-  expect(html).not.toContain('data-work-current-thinking');
+ test("counts successful edits only within their own stage", () => {
+  const edit = (id: string, status: "done" | "error" | "running", diff: string): AgentCell => ({ id, type: "tool", toolName: "edit", toolCallId: id, args: { path: "app.ts" }, details: { diff }, output: "", status, timestamp: 2 });
+  const html = render([user, thought("a", "### 修改入口"), edit("one", "done", "-1 old\n+1 new\n+2 next"), edit("bad", "error", "+1 ignored"), edit("live", "running", "+1 pending"), thought("b", "### 调整配置"), edit("two", "done", "-1 old\n-2 old")]);
+  const stages = html.replace(/<!--.*?-->/g, '').split('data-work-stage="').slice(1);
+  expect(stages).toHaveLength(2);
+  expect(stages[0]).toContain('+2');
+  expect(stages[0]).toContain('−1');
+  expect(stages[1]).toContain('+0');
+  expect(stages[1]).toContain('−2');
+ });
+ test("read-only stages have no diff statistics", () => {
+  expect(render()).not.toContain('data-slot="diff-stat"');
  });
 });
 
 
 describe("stable planning state while reasoning streams", () => {
- test("planning stays below the fixed-height thinking area from the first delta through long content", () => {
+ test("does not show a new planning stage while the model continues reasoning", () => {
   const base=cells.slice(0,-2);
   for (const text of ['', '检查', '检查模块调用关系', '检查模块调用关系\n'.repeat(200)]) {
    const html=render([...base,{...thought('live',text),streaming:true}]);
-   expect(html.match(/data-work-planning=/g)?.length).toBe(1);
-   expect(html).toContain('规划下一步');
-   if(text) {
-    expect(html).toContain('h-[7.5em] min-h-0');
-    expect(html.indexOf('data-work-current-thinking')).toBeLessThan(html.indexOf('data-work-planning'));
-   }
+   expect(html).not.toContain('data-work-planning');
+   expect(html).not.toContain('规划下一步');
+   expect(html).not.toContain('data-work-current-thinking');
+   expect(html).not.toContain('h-[7.5em]');
   }
  });
- test("finishing the thinking block does not briefly remove planning before tools arrive", () => {
+ test("finishing reasoning does not imply the stage has completed", () => {
   const html=render([...cells,{...thought('next','即将检查调用关系'),streaming:false}]);
-  expect(html).toContain('data-work-planning');
+  expect(html).not.toContain('data-work-planning');
  });
  test("planning yields to actual tool execution and disappears after the run", () => {
   const executing: Extract<AgentCell,{type:'tool'}>={id:'running',type:'tool',toolName:'read',toolCallId:'running',args:{path:'README.md'},output:'',status:'running',timestamp:3};
   expect(render([...cells,executing])).not.toContain('data-work-planning');
   expect(render(cells,false)).not.toContain('data-work-planning');
  });
+});
+
+
+test("a failed command does not color or label the whole stage as failed", () => {
+ const failed: AgentCell = {...read("failed", "README.md"), type:"tool", toolName:"bash", toolCallId:"failed", args:{command:"exit 1"}, output:"failed", status:"error"};
+ const html = render([...cells, failed]);
+ const header = html.split('data-work-stage="')[1].split('</button>')[0];
+ expect(header).not.toContain('text-destructive');
+ expect(header).not.toContain('bg-destructive');
+ expect(header).not.toContain('失败');
+ expect(html).not.toContain('data-work-planning');
 });

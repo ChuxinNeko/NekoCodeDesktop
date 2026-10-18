@@ -34,7 +34,7 @@ export function FilesPanel({
 	const { t } = useTranslation();
 	const [stack, setStack] = useState<string[]>([]);
 	const [entries, setEntries] = useState<FsEntry[] | null>(null);
-	const [preview, setPreview] = useState<FsReadResult | null>(null);
+	const [preview, setPreview] = useState<(FsReadResult & { external?: boolean }) | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -61,13 +61,15 @@ export function FilesPanel({
 			rel = rel.slice(root.length + 1);
 		}
 		let cancelled = false;
-		api
-			.fsReadFile(cwd, rel)
+		setPreview(null);
+		setError(null);
+		const request = api.fsPreviewReference ? api.fsPreviewReference(cwd, rel) : api.fsReadFile(cwd, rel);
+		request
 			.then((result) => {
 				if (cancelled) return;
 				setPreview(result);
 				setError(null);
-				const segments = result.relPath.split("/").slice(0, -1).filter(Boolean);
+				const segments = "external" in result && result.external ? [] : result.relPath.split("/").slice(0, -1).filter(Boolean);
 				setStack(segments.map((_, index) => segments.slice(0, index + 1).join("/")));
 			})
 			.catch((cause: unknown) => {
@@ -187,7 +189,7 @@ function formatBytes(size: number): string {
 }
 
 /** Header with a back button over whichever body suits the file's kind. */
-function FilePreview({ file, onBack }: { file: FsReadResult; onBack: () => void }) {
+function FilePreview({ file, onBack }: { file: FsReadResult & { external?: boolean }; onBack: () => void }) {
 	const { t } = useTranslation();
 	const name = file.relPath;
 
@@ -202,9 +204,10 @@ function FilePreview({ file, onBack }: { file: FsReadResult; onBack: () => void 
 					<ArrowLeftIcon className="size-3.5" />
 				</IconButton>
 				<FileTypeIcon name={name} className="size-3.5 shrink-0" />
-				<span className="min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+				<span title={name} className="min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 					{name}
 				</span>
+				{file.external ? <span className="shrink-0 text-xs text-muted-foreground">{t("files.externalPreview")}</span> : null}
 				{file.kind !== "text" ? (
 					<span className="shrink-0 font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
 						{formatBytes(file.size)}

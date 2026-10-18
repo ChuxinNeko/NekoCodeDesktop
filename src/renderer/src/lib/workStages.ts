@@ -158,7 +158,7 @@ export function groupWorkStages(items: readonly WorkItem[], language: Language =
 			stages.push({ id: `stage-${index}-${part}`, title: heading || toolDescription(item, language), titleSource: heading ? "heading" : "tool", category, items: [item] });
 		});
 	});
-	return compactWorkStages(stages);
+	return splitExecutionPhases(compactWorkStages(stages), language);
 }
 
 /** Repeated model responses are details within a phase, not phase boundaries. */
@@ -179,4 +179,66 @@ function compactWorkStages(stages: WorkStage[]): WorkStage[] {
 		compact.push(stage);
 	}
 	return compact;
+}
+
+/** Explicit headings are useful context, but must not pin later execution to an old plan. */
+function splitExecutionPhases(stages: WorkStage[], language: Language): WorkStage[] {
+	const result: WorkStage[] = [];
+	let edited = false;
+	let verified = false;
+	for (const stage of stages) {
+		let current: WorkStage = { ...stage, items: [] };
+		let phase: "plan" | "implement" | "verify" | null =
+			/设计|规划|方案|页面结构|\b(?:design|plan|architecture)\b/i.test(stage.title) ? "plan"
+			: /测试|验证|复测|\b(?:test|verify|validation)\b/i.test(stage.title) ? "verify" : null;
+		for (const item of stage.items) {
+			if (item.kind !== "tool") { current.items.push(item); continue; }
+			const args = typeof item.cell.args === "object" && item.cell.args !== null ? item.cell.args as Record<string, unknown> : {};
+			const name = item.cell.toolName;
+			const edit = workCategory(item) === "edit";
+			const description = typeof args.description === "string" ? args.description : "";
+			const command = typeof args.command === "string" ? args.command : "";
+			// Inspect only tool metadata, never code/output that happens to mention tests.
+			const testCommand = workCategory(item) === "command" && (
+				/^(?:测试|验证|复测|运行.*测试|检查.*(?:构建|类型)|(?:run )?(?:tests?|verify|validate|typecheck)\b)/i.test(description)
+				|| /(?:^|[;&|]\s*)(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?(?:test|typecheck|build|lint)\b|(?:^|[;&|]\s*)(?:pytest|vitest|playwright|tsc)\b/.test(command.trim())
+			);
+			const localPage = name === "browser_navigate" && typeof args.url === "string" && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?=[:/]|$)|file:\/\/)/i.test(args.url);
+			const browserCheck = edited && (localPage || ["browser_viewport", "browser_evaluate", "browser_screenshot", "browser_action"].includes(name));
+			const next = testCommand || browserCheck ? "verify" : edit ? "implement" : null;
+			const transition = next && next !== phase && (next === "verify" || phase === "plan" || phase === "verify");
+			if (transition) {
+				if (current.items.length) result.push(current);
+				const rawPath = args.path ?? args.file_path ?? args.filePath;
+				const file = typeof rawPath === "string" ? rawPath.split(/[\\/]/).pop()?.replace(/[\r\n]/g, " ").slice(0, 60) : "";
+				const title = toolDescription(item, language) || (language === "zh-CN"
+					? next === "verify" ? browserCheck ? verified ? "复测页面布局与交互" : "验证页面布局与交互" : "运行测试与构建检查" : `${verified ? "修正" : "实现"}${file || "代码改动"}`
+					: next === "verify" ? browserCheck ? verified ? "Recheck page layout and interactions" : "Verify page layout and interactions" : "Run tests and build checks" : `${verified ? "Fix" : "Implement"} ${file || "code changes"}`);
+				current = { id: `${stage.id}-phase-${item.id}`, title, titleSource: "tool", category: workCategory(item), items: [] };
+				phase = next;
+			}
+			current.items.push(item);
+			if (edit) edited = true;
+			if (next === "verify") verified = true;
+		}
+		if (current.items.length) result.push(current);
+	}
+	return result;
+}
+
+/** Tool completion is not stage completion: the model may still retry or inspect results.
+ * Until the protocol carries stage status, require an explicit progress completion message.
+ */
+export function workStageCompleted(stage: WorkStage | undefined): boolean {
+	if (!stage) return false;
+	const tools = stage.items.filter(item => item.kind === "tool");
+	if (!tools.length || tools.some(item => item.cell.status === "pending" || item.cell.status === "running")) return false;
+	let lastTool = -1;
+	stage.items.forEach((item, index) => { if (item.kind === "tool") lastTool = index; });
+	const progress = stage.items.slice(lastTool + 1).filter(item => item.kind === "message");
+	const latest = progress[progress.length - 1];
+	if (!latest || latest.kind !== "message" || latest.cell.streaming) return false;
+	return latest.cell.text.split(/\r?\n/).some(line =>
+		/^(?:本阶段|当前阶段|这一阶段|这一步)(?:的工作|工作|任务)?(?:已全部完成|已经完成|已完成|完成了)[。.!！\s]*$/.test(line.trim())
+		|| /^(?:this|the current) (?:stage|phase|step) (?:is (?:now )?complete|has been completed)[.!\s]*$/i.test(line.trim()));
 }

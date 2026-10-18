@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuGroupLabel, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { ComposerPickerMenuPopup } from "../chat/ComposerPickerMenuPopup";
-import { COMPOSER_PICKER_MENU_OPTION_CLASS_NAME } from "../chat/composerPickerStyles";
+import { COMPOSER_FLOATING_CONTROL_CLASS_NAME, COMPOSER_PICKER_MENU_OPTION_CLASS_NAME } from "../chat/composerPickerStyles";
 import { AgentIcon } from "./AgentIcon";
 
 /** The display name of a workspace id. */
@@ -38,13 +38,13 @@ export function WorkspacePicker({
 	const { t } = useTranslation();
 	const enabled = agents.filter((agent) => agent.enabled);
 	return (
-		<div className="flex items-center gap-1 px-1 pb-1.5">
+		<div className="flex min-w-0 items-center">
 			<Menu>
 				<MenuTrigger
 					disabled={disabled}
 					render={
 						<Button
-							className="h-6 gap-1 rounded-md px-1.5 text-[length:var(--app-font-size-ui-sm,11px)]"
+							className={cn(COMPOSER_FLOATING_CONTROL_CLASS_NAME, "h-8 gap-1.5 px-3 text-[length:var(--app-font-size-ui-sm,11px)]")}
 							disabled={disabled}
 							size="chip"
 							title={t("workspace.pickerHint")}

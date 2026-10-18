@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { groupWorkStages, workStageLabel, workStageTitle } from "../../src/renderer/src/lib/workStages";
+import { groupWorkStages, workStageCompleted, workStageLabel, workStageTitle } from "../../src/renderer/src/lib/workStages";
 import { zhCN } from "../../src/renderer/src/i18n/locales/zh-CN";
 import { en } from "../../src/renderer/src/i18n/locales/en";
 import type { Language, TranslateFn } from "../../src/renderer/src/i18n";
@@ -273,5 +273,52 @@ describe("specific objectives without per-file stages", () => {
   const items=[thought('a','### 梳理项目用途与启动配置'),read('r','README.md'),thought('b','### 读取 package.json'),read('r2','package.json'),thought('c','### 追踪请求入口与路由分发'),read('r3','server.mjs'),thought('d','### 读取 server.mjs'),read('r4','server.mjs'),thought('e','### 分析协议转换与 protocols.mjs'),read('r5','protocols.mjs')];
   expect(labels(items)).toEqual(['梳理项目用途与启动配置','追踪请求入口与路由分发','分析协议转换与 protocols.mjs']);
   expect(groupWorkStages(items).flatMap(stage=>stage.items)).toEqual(items);
+ });
+});
+
+
+describe("execution phases after a design heading", () => {
+ const action = (id: string, name: string, args: Record<string, unknown> = {}): WorkItem => {
+  const item = tool(id, name);
+  if (item.kind === "tool") item.cell.args = args;
+  return item;
+ };
+ test("splits the HTML example into design, implementation, browser checks, fixes and rechecks", () => {
+  const items = [thought("plan", "### 设计方向与页面结构"), action("write", "write", {path:"whoami.html"}), action("body", "edit", {path:"whoami.html"}), action("open", "browser_navigate", {url:"http://127.0.0.1:8765/whoami.html"}), action("mobile", "browser_viewport"), action("click", "browser_action"), action("fix", "edit", {path:"whoami.html"}), action("reopen", "browser_navigate", {url:"http://127.0.0.1:8765/whoami.html"}), action("check", "browser_evaluate")];
+  expect(labels(items)).toEqual(["设计方向与页面结构", "实现whoami.html", "验证页面布局与交互", "修正whoami.html", "复测页面布局与交互"]);
+  const stages = groupWorkStages(items);
+  expect(stages.flatMap(stage => stage.items)).toEqual(items);
+  expect(stages[2].items.map(item => item.id)).toEqual(["open", "mobile", "click"]);
+  expect(groupWorkStages([...items, action("desktop", "browser_viewport")]).map(stage => stage.id)).toEqual(stages.map(stage => stage.id));
+ });
+ test("detects real test commands without parsing code or arbitrary echoed text", () => {
+  const base = [thought("plan", "### 设计方向与页面结构"), action("write", "write", {path:"page.html", content:"npm test"})];
+  expect(labels([...base, action("echo", "bash", {command:'echo "npm test"'})])).toHaveLength(2);
+  expect(labels([...base, action("test", "bash", {command:"npm run test"})])).toEqual(["设计方向与页面结构", "实现page.html", "运行测试与构建检查"]);
+ });
+ test("does not turn research browsing into page verification", () => {
+  expect(labels([thought("plan", "### 设计方向与页面结构"), action("browse", "browser_navigate", {url:"https://example.com"}), action("read", "browser_evaluate")])).toEqual(["设计方向与页面结构"]);
+ });
+ test("provides English execution titles in English UI", () => {
+  expect(labels([thought("plan", "### Page design"), action("write", "write", {path:"page.html"}), action("test", "bash", {command:"bun test"})], "en")).toEqual(["Page design", "Implement page.html", "Run tests and build checks"]);
+ });
+});
+
+
+describe("explicit stage completion", () => {
+ const complete: WorkItem = {kind:"message",id:"complete",cell:{id:"complete",type:"assistant",text:"当前阶段已完成。",thinking:"",streaming:false,timestamp:1}};
+ const stage = (items: WorkItem[]) => ({id:"stage",title:"实现页面",category:"edit" as const,items});
+ test("tool success, failure and reasoning gaps do not complete a stage", () => {
+  const command = tool("cmd", "bash");
+  expect(workStageCompleted(stage([command]))).toBe(false);
+  if(command.kind === "tool") command.cell.status = "error";
+  expect(workStageCompleted(stage([command, thought("next", "Continue fixing")]))).toBe(false);
+ });
+ test("requires completion after all tools and clears when the next action starts", () => {
+  const command = tool("cmd", "bash");
+  expect(workStageCompleted(stage([command, complete]))).toBe(true);
+  expect(workStageCompleted(stage([command, complete, tool("next", "edit")]))).toBe(false);
+  if(command.kind === "tool") command.cell.status = "running";
+  expect(workStageCompleted(stage([command, complete]))).toBe(false);
  });
 });

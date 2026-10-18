@@ -439,6 +439,7 @@ export const en = {
 	"files.empty": "Empty directory.",
 	"files.truncated": "Large file — showing the first 256 KB.",
 	"files.up": "Parent directory",
+	"files.externalPreview": "External file · Read only",
 	"files.binary": "Binary file — no preview available.",
 
 	// Checkpoints ---------------------------------------------------------------
@@ -707,6 +708,11 @@ export const en = {
 
 	// Settings ------------------------------------------------------------------
 	"settings.title": "Settings",
+	"settings.group.essentials": "Essentials",
+	"settings.group.agent": "Agent",
+	"settings.group.extensions": "Extensions",
+	"settings.group.connections": "Connections",
+	"settings.group.other": "Other",
 	"settings.section.general": "General",
 	"settings.section.appearance": "Appearance",
 	"settings.section.providers": "Providers & models",

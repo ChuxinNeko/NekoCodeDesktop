@@ -171,6 +171,7 @@ import {
 	type FsEntry,
 	type FsReadResult,
 } from "../shared/files";
+import { previewReferencedFile } from "./file-preview";
 import { resolveUnderRoot } from "./project-paths";
 import {
 	EDIT_COMMANDS,
@@ -1091,6 +1092,9 @@ function registerIpc(): void {
 	);
 	ipcMain.handle("git:action", (_e, req: GitActionRequest) => applyAction(req));
 	ipcMain.handle("git:init", (_e, cwd: string) => initRepo(cwd));
+
+	// Local desktop only: deliberately excluded from the remote API allowlist.
+	ipcMain.handle("fs:previewReference", (_e, cwd: string, path: string) => previewReferencedFile(cwd, path));
 
 	ipcMain.handle("fs:list", async (_e, cwd: string, relPath: string): Promise<FsEntry[]> => {
 		const { target, relPath: base } = resolveUnderRoot(cwd, relPath);

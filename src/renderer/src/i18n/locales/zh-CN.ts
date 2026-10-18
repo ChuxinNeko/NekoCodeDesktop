@@ -439,6 +439,7 @@ export const zhCN: Record<TranslationKey, string> = {
 	"files.empty": "空目录。",
 	"files.truncated": "文件较大，仅显示前 256 KB。",
 	"files.up": "上一级目录",
+	"files.externalPreview": "外部文件 · 只读",
 	"files.binary": "二进制文件，无法预览。",
 
 	// Checkpoints ---------------------------------------------------------------
@@ -701,6 +702,11 @@ export const zhCN: Record<TranslationKey, string> = {
 
 	// Settings ------------------------------------------------------------------
 	"settings.title": "设置",
+	"settings.group.essentials": "常用",
+	"settings.group.agent": "Agent",
+	"settings.group.extensions": "扩展",
+	"settings.group.connections": "接入",
+	"settings.group.other": "其他",
 	"settings.section.general": "通用",
 	"settings.section.appearance": "外观",
 	"settings.section.providers": "供应商和模型",

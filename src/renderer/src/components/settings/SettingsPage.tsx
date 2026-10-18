@@ -25,31 +25,39 @@ import { api } from "../../api";
 import { ArrowLeftIcon } from "../../lib/icons";
 
 /**
- * In the order someone setting the app up meets them, grouped so the nav reads
- * as a few topics rather than one long list: the app itself, what it talks to
- * and what that costs, what the agent can do, what reaches in from outside.
+ * What you open settings to change, then how the agent behaves, then the
+ * optional pieces. Usage and about sit last: they are looked up, not configured
+ * in the same pass as a model or a prompt.
  */
+const GROUPS = [
+	{ id: "essentials", labelKey: "settings.group.essentials" },
+	{ id: "agent", labelKey: "settings.group.agent" },
+	{ id: "extensions", labelKey: "settings.group.extensions" },
+	{ id: "connections", labelKey: "settings.group.connections" },
+	{ id: "other", labelKey: "settings.group.other" },
+] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey }>;
+
 const SECTIONS = [
-	{ id: "general", labelKey: "settings.section.general", group: "app" },
-	{ id: "appearance", labelKey: "settings.section.appearance", group: "app" },
-	{ id: "providers", labelKey: "settings.section.providers", group: "models" },
-	{ id: "team", labelKey: "settings.section.team", group: "models" },
-	{ id: "agents", labelKey: "settings.section.agents", group: "models" },
-	{ id: "tokens", labelKey: "settings.section.tokens", group: "models" },
-	{ id: "prompts", labelKey: "settings.section.prompts", group: "capabilities" },
-	{ id: "context", labelKey: "settings.section.context", group: "capabilities" },
-	{ id: "web", labelKey: "settings.section.web", group: "capabilities" },
-	{ id: "codeIntel", labelKey: "settings.section.codeIntel", group: "capabilities" },
-	{ id: "skills", labelKey: "settings.section.skills", group: "capabilities" },
-	{ id: "mcp", labelKey: "settings.section.mcp", group: "capabilities" },
-	{ id: "plugins", labelKey: "settings.section.plugins", group: "capabilities" },
-	{ id: "hooks", labelKey: "settings.section.hooks", group: "capabilities" },
-	{ id: "github", labelKey: "settings.section.github", group: "integrations" },
-	{ id: "ssh", labelKey: "settings.section.ssh", group: "integrations" },
-	{ id: "connect", labelKey: "settings.section.connect", group: "integrations" },
-	{ id: "webui", labelKey: "settings.section.webui", group: "integrations" },
-	{ id: "about", labelKey: "settings.section.about", group: "about" },
-] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey; group: string }>;
+	{ id: "providers", labelKey: "settings.section.providers", group: "essentials" },
+	{ id: "general", labelKey: "settings.section.general", group: "essentials" },
+	{ id: "appearance", labelKey: "settings.section.appearance", group: "essentials" },
+	{ id: "prompts", labelKey: "settings.section.prompts", group: "agent" },
+	{ id: "context", labelKey: "settings.section.context", group: "agent" },
+	{ id: "skills", labelKey: "settings.section.skills", group: "agent" },
+	{ id: "web", labelKey: "settings.section.web", group: "agent" },
+	{ id: "codeIntel", labelKey: "settings.section.codeIntel", group: "agent" },
+	{ id: "mcp", labelKey: "settings.section.mcp", group: "extensions" },
+	{ id: "plugins", labelKey: "settings.section.plugins", group: "extensions" },
+	{ id: "hooks", labelKey: "settings.section.hooks", group: "extensions" },
+	{ id: "team", labelKey: "settings.section.team", group: "extensions" },
+	{ id: "agents", labelKey: "settings.section.agents", group: "extensions" },
+	{ id: "github", labelKey: "settings.section.github", group: "connections" },
+	{ id: "ssh", labelKey: "settings.section.ssh", group: "connections" },
+	{ id: "connect", labelKey: "settings.section.connect", group: "connections" },
+	{ id: "webui", labelKey: "settings.section.webui", group: "connections" },
+	{ id: "tokens", labelKey: "settings.section.tokens", group: "other" },
+	{ id: "about", labelKey: "settings.section.about", group: "other" },
+] as const satisfies ReadonlyArray<{ id: string; labelKey: TranslationKey; group: (typeof GROUPS)[number]["id"] }>;
 
 export type SettingsSectionId = (typeof SECTIONS)[number]["id"];
 type SectionId = SettingsSectionId;
@@ -83,10 +91,15 @@ export function SettingsPage({
 			? SECTIONS.filter((entry) => entry.id !== "webui" && entry.id !== "agents" && entry.id !== "ssh" && entry.id !== "codeIntel")
 			: SECTIONS;
 
+	const groups = GROUPS.map((group) => ({
+		...group,
+		entries: sections.filter((entry) => entry.group === group.id),
+	})).filter((group) => group.entries.length > 0);
+
 	return (
 		<div className="flex min-h-0 flex-1">
-			<nav className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-[color:var(--app-surface-divider)] p-2">
-				<div className="flex items-center gap-1 px-1 pb-2">
+			<nav className="flex w-52 shrink-0 flex-col border-r border-[color:var(--app-surface-divider)]">
+				<div className="flex shrink-0 items-center gap-1 px-3 pb-2 pt-2">
 					<Button onClick={onClose} size="icon-xs" variant="ghost">
 						<ArrowLeftIcon className="size-3.5" />
 					</Button>
@@ -94,25 +107,30 @@ export function SettingsPage({
 						{t("settings.title")}
 					</span>
 				</div>
-				{sections.map((entry, index) => [
-					// A hairline where the topic changes; filtered sections leave no empty group behind.
-					index > 0 && sections[index - 1].group !== entry.group ? (
-						<div key={`${entry.group}-divider`} className="mx-2 my-1 h-px bg-[color:var(--app-surface-divider)]" />
-					) : null,
-					<button
-						key={entry.id}
-						type="button"
-						onClick={() => setSection(entry.id)}
-						className={cn(
-							"flex h-[var(--app-density-row-height,1.75rem)] items-center rounded-md px-2 text-left text-[length:var(--app-font-size-ui,12px)] transition-colors",
-							section === entry.id
-								? "bg-[var(--sidebar-selected)] text-foreground"
-								: "text-foreground/95 hover:bg-[var(--sidebar-accent)]",
-						)}
-					>
-						{t(entry.labelKey)}
-					</button>,
-				])}
+				<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3">
+					{groups.map((group) => (
+						<div key={group.id} className="flex flex-col gap-0.5">
+							<div className="px-2 pb-0.5 text-[length:var(--app-font-size-ui-xs,10px)] font-medium text-muted-foreground">
+								{t(group.labelKey)}
+							</div>
+							{group.entries.map((entry) => (
+								<button
+									key={entry.id}
+									type="button"
+									onClick={() => setSection(entry.id)}
+									className={cn(
+										"flex h-[var(--app-density-row-height,1.75rem)] items-center rounded-md px-2 text-left text-[length:var(--app-font-size-ui,12px)] transition-colors",
+										section === entry.id
+											? "bg-[var(--sidebar-selected)] text-foreground"
+											: "text-foreground/95 hover:bg-[var(--sidebar-accent)]",
+									)}
+								>
+									{t(entry.labelKey)}
+								</button>
+							))}
+						</div>
+					))}
+				</div>
 			</nav>
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-5">

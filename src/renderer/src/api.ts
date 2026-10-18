@@ -212,6 +212,7 @@ export interface AgentApi {
 	gitInit(cwd: string): Promise<void>;
 
 	fsList(cwd: string, relPath: string): Promise<FsEntry[]>;
+	fsPreviewReference?(cwd: string, path: string): Promise<FsReadResult & { external: boolean }>;
 	fsReadFile(cwd: string, relPath: string): Promise<FsReadResult>;
 
 	/** The whole file for the IDE editor, with the mtime a save is checked against. */
