@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Markdown } from "../chat/Markdown";
 
 /* ─────────────────────────────────────────────────────────
  * CHAT — interactive panel with tabs, replies, and composer.
@@ -56,7 +57,7 @@ function Section({
         <span className="text-bui-ink-2">{sub}</span>
         {time ? <span className="text-bui-ink">{time}</span> : null}
       </div>
-      <p className="text-[13px] leading-normal whitespace-pre-wrap break-words text-bui-ink">{body}</p>
+      <div className="min-w-0 text-[13px] leading-normal break-words text-bui-ink"><Markdown text={body} /></div>
     </div>
   );
 }

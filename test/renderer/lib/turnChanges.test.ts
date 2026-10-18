@@ -12,6 +12,23 @@ export const checkpoint: CheckpointSummary = { id: "checkpoint", sessionId: "ses
 	files: [{ path: "a.ts", additions: 4, deletions: 2 }], additions: 4, deletions: 2, shellRuns: 0 };
 
 describe("turn file changes", () => {
+	test("rewound checkpoint markers never overwrite the replacement turn's live or final stats", () => {
+		const cells = [user("prompt"), tool, reply];
+		const oldMarker = { ...checkpoint, id: "abandoned", files: [], fileCount: 0, additions: 0, deletions: 0 };
+		const checkpoints = [checkpoint, oldMarker];
+		expect(activeTurnChanges(cells, checkpoints)).toBe(checkpoint);
+		expect(completedTurnChanges(groupTranscriptRows(cells), checkpoints, true).size).toBe(0);
+		expect([...completedTurnChanges(groupTranscriptRows(cells), checkpoints, false).values()]).toEqual([checkpoint]);
+	});
+
+	test("an empty replacement turn never borrows an older marker's file changes", () => {
+		const cells = [user("prompt"), reply];
+		const replacement = { ...checkpoint, id: "replacement", files: [], fileCount: 0, additions: 0, deletions: 0 };
+		const checkpoints = [replacement, checkpoint];
+		expect(activeTurnChanges(cells, checkpoints)).toBeUndefined();
+		expect(completedTurnChanges(groupTranscriptRows(cells), checkpoints, false).size).toBe(0);
+	});
+
 	test("keeps the latest completed changes in the transcript once the turn ends", () => {
 		const cells = [user("prompt"), tool, reply];
 		const rows = foldSettledTurns(groupTranscriptRows(cells), false);

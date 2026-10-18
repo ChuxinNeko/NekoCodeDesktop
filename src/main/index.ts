@@ -237,7 +237,10 @@ async function modelCallRuntime(): Promise<ModelCallRuntime> {
 	if (!taskManager) throw new Error("Agent service is not running");
 	return (await taskManager.active.getModelRuntime()) as unknown as ModelCallRuntime;
 }
-const selectionExplanations = new SelectionExplanationService(modelCallRuntime);
+const selectionExplanations = new SelectionExplanationService(modelCallRuntime, async sessionId => {
+	if (!taskManager || !sessionId) throw new Error("No session available for explanation");
+	return (await taskManager.byId(sessionId)).getExplanationContext();
+});
 const explanationOwners = new Set<number>();
 let semanticIndex: SemanticIndexService | null = null;
 /** Window-independent: an index outlives the window that asked for it. */
@@ -1470,7 +1473,7 @@ function registerIpc(): void {
 	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
 		taskManager?.active.getDefaults(cwd),
 	);
-	// A direct model call: no AgentService.send/prompt, session creation or snapshots.
+	// A direct model call using read-only main context, with separate popup turns.
 	ipcMain.handle("selection:explain", (event, request: ExplainSelectionRequest) => {
 		const owner = event.sender.id;
 		if (!explanationOwners.has(owner)) {

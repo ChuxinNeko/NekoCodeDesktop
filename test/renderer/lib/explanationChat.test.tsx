@@ -19,7 +19,7 @@ for (const [language, messages] of Object.entries({ en, "zh-CN": zhCN })) {
       const handlers = {
         send: (request: unknown) => { main.push(request); },
         explain: (original: string) => {
-          popup = new ExplanationChat({ original, modelKey: "p/model", language: language as "en" | "zh-CN" }, {
+          popup = new ExplanationChat({ original, modelKey: "p/model", language: language as "en" | "zh-CN", sessionId: "main-session" }, {
             request: async request => { requests.push(request); return { text: `Answer ${requests.length}` }; },
             cancel: async () => {},
           }, next => { state = next; });
@@ -31,6 +31,7 @@ for (const [language, messages] of Object.entries({ en, "zh-CN": zhCN })) {
       expect(state.turns.at(-1)?.text).toBe("Answer 1");
       await popup!.send("Give an example");
       expect(requests).toHaveLength(2);
+      expect(requests.map(request => request.sessionId)).toEqual(["main-session", "main-session"]);
       expect(requests[1].turns.map(turn => turn.text)).toEqual([t("selection.chat.initialPrompt"), "Answer 1", "Give an example"]);
       expect(state.turns.at(-1)?.text).toBe("Answer 2");
       expect(main).toEqual([]);
@@ -67,6 +68,14 @@ test("closing cancels the popup request and ignores late results", async () => {
   expect(cancelled).toHaveLength(1);
   expect(states).toHaveLength(1);
   expect(states[0].turns).toHaveLength(1);
+});
+
+test("explanation replies render Markdown headings, lists, code and tables", () => {
+  const html = renderToStaticMarkup(<ChatComposer messages={[{
+    role: "assistant", label: "Assistant", sub: "", time: "",
+    body: "## Heading\n\n**Bold**\n\n- Item\n\n```ts\nconst value = 1;\n```\n\n| Key | Value |\n| --- | --- |\n| A | B |",
+  }]} labels={{ initialPrompt: "Explain", placeholder: "Ask", prompt: "Question", send: "Send", action: "Action" }} />);
+  for (const tag of ["<h2>", "<strong>", "<ul>", "<pre>", '<code class="language-ts">', "<table>"]) expect(html).toContain(tag);
 });
 
 test("failed requests can retry without adding another user turn", async () => {

@@ -6,7 +6,10 @@ import type { TranscriptRow } from "../../../shared/transcript";
 export function activeTurnChanges(cells: readonly AgentCell[], checkpoints: readonly CheckpointSummary[]): CheckpointSummary | undefined {
 	for (let i = cells.length - 1; i >= 0; i--) {
 		const prompt = cells[i];
-		if (prompt.type === "user") return checkpoints.find((checkpoint) => checkpoint.cellId === prompt.id && checkpoint.files.length > 0);
+		if (prompt.type === "user") {
+			const checkpoint = checkpoints.find((checkpoint) => checkpoint.cellId === prompt.id);
+			return checkpoint?.files.length ? checkpoint : undefined;
+		}
 	}
 	return undefined;
 }
@@ -17,7 +20,12 @@ export function activeTurnChanges(cells: readonly AgentCell[], checkpoints: read
  * live capsule for it instead, and the card joins the transcript once it ends.
  */
 export function completedTurnChanges(rows: readonly TranscriptRow[], checkpoints: readonly CheckpointSummary[], streaming: boolean): Map<string, CheckpointSummary> {
-	const byPrompt = new Map(checkpoints.filter((checkpoint) => checkpoint.cellId !== null).map((checkpoint) => [checkpoint.cellId, checkpoint]));
+	// Summaries arrive newest first. Older app/session data may still attach
+	// several markers to one prompt after a rewind; never overwrite its newest.
+	const byPrompt = new Map<string, CheckpointSummary>();
+	for (const checkpoint of checkpoints) {
+		if (checkpoint.cellId !== null && !byPrompt.has(checkpoint.cellId)) byPrompt.set(checkpoint.cellId, checkpoint);
+	}
 	const cards = new Map<string, CheckpointSummary>();
 	let checkpoint: CheckpointSummary | undefined;
 	for (let i = 0; i < rows.length; i++) {

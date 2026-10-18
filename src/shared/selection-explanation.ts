@@ -7,6 +7,7 @@ export interface ExplanationTurn {
 export interface ExplainSelectionRequest {
   id: string;
   modelKey: string;
+  sessionId?: string;
   original: string;
   language: "zh-CN" | "en";
   turns: ExplanationTurn[];

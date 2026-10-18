@@ -56,10 +56,13 @@ turn, pending follows request state, and `labels` supplies translated accessibil
 text. Decorative gallery header actions are disabled. No second chat/composer is
 implemented.
 
-Explain now opens `chat/SelectionExplanation.tsx`, retaining the quoted original
-in a modal dialog. Initial explanation and follow-ups use `selection:explain`
+Explain opens `chat/SelectionExplanation.tsx` beside the selected passage with
+only the chat card visible. Assistant replies use the shared Markdown renderer.
+Initial explanation and follow-ups use `selection:explain`
 through preload and `SelectionExplanationService`, which calls the existing model
 runtime directly via `askModel`. It never calls the main session sender or stores
-cells. Popup history exists only in renderer memory and is sent as context for
+cells. Each request reads the selected main session's current model context,
+including instructions, workspace, messages and tool results; image payloads and
+private reasoning blocks are omitted. Popup history exists only in renderer memory and is sent as context for
 subsequent side-chat requests. Closing cancels the in-flight request and discards
 this history. All other Selection Actions keep their existing `onSend`/copy paths.

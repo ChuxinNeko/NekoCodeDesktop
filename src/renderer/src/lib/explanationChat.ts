@@ -14,7 +14,7 @@ export class ExplanationChat {
   private disposed = false;
   private requestId: string | null = null;
 
-  constructor(private readonly context: { original: string; modelKey: string | null; language: Language },
+  constructor(private readonly context: { original: string; modelKey: string | null; language: Language; sessionId?: string },
     private readonly transport: {
       request: (request: ExplainSelectionRequest) => Promise<ExplainSelectionResult>;
       cancel: (id: string) => Promise<void>;

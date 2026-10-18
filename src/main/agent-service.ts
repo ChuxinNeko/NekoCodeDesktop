@@ -1279,6 +1279,22 @@ export class AgentService {
 		return this.session ? this.buildSnapshot() : null;
 	}
 
+	/** Read the model's current branch, including context retained after compaction. */
+	getExplanationContext() {
+		const session = this.session;
+		if (!session) throw new Error("No session available for explanation");
+		return {
+			cwd: session.sessionManager.getCwd(),
+			systemPrompt: session.systemPrompt,
+			messages: session.messages.map(message => ({
+				...message,
+				...("content" in message && Array.isArray(message.content) ? {
+					content: message.content.filter(part => part.type !== "image" && part.type !== "thinking"),
+				} : {}),
+			})),
+		};
+	}
+
 	/**
 	 * The snapshot as a diff against the one a remote client already holds.
 	 *

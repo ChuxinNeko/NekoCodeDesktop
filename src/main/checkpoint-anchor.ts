@@ -1,3 +1,5 @@
+import { CHECKPOINT_ENTRY } from "./file-journal";
+
 /**
  * Where a checkpoint lands in the session that is open right now.
  *
@@ -15,6 +17,7 @@
 export interface AnchorEntry {
 	id: string;
 	type: string;
+	customType?: string;
 	message?: { role?: string } | null;
 }
 
@@ -48,6 +51,9 @@ export function findTurnEntry(
 	}
 	for (let i = start; i < branch.length; i++) {
 		const entry = branch[i];
+		// Rewinding to a prompt leaves its preceding checkpoint on the branch.
+		// A new prompt gets a new checkpoint; the old marker must not claim it.
+		if (entry.type === "custom" && entry.customType === CHECKPOINT_ENTRY) return null;
 		if (entry.type === "custom_message") return entry;
 		if (entry.type !== "message") continue;
 		// Prompt/tool declarations can be persisted between the checkpoint and user

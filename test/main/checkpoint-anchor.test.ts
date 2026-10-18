@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { findTurnEntry, replyEntry } from "../../src/main/checkpoint-anchor";
+import { CHECKPOINT_ENTRY } from "../../src/main/file-journal";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -13,6 +14,26 @@ afterEach(() => {
 const user = (text: string, timestamp: number) => ({ role: "user" as const, content: text, timestamp });
 
 describe("checkpoint prompt anchor", () => {
+	test("a checkpoint left behind by a rewind cannot claim the replacement turn", () => {
+		const sm = SessionManager.inMemory("/project");
+		const original = sm.appendCustomEntry(CHECKPOINT_ENTRY, { label: "original" });
+		sm.appendMessage(user("original", 1));
+		sm.appendMessage(reply("answer", 2) as never);
+		// navigateTree(user) rewinds to that user's parent, retaining its marker.
+		sm.branch(original);
+		const replacement = sm.appendCustomEntry(CHECKPOINT_ENTRY, { label: "replacement" });
+		const prompt = sm.appendMessage(user("replacement", 3));
+		expect(findTurnEntry(sm.getBranch(), original)).toBeNull();
+		expect(findTurnEntry(sm.getBranch(), replacement)?.id).toBe(prompt);
+		// Repeating the restore must keep every abandoned marker unattached.
+		sm.branch(replacement);
+		const newest = sm.appendCustomEntry(CHECKPOINT_ENTRY, { label: "newest" });
+		const newestPrompt = sm.appendMessage(user("newest", 4));
+		expect(findTurnEntry(sm.getBranch(), original)).toBeNull();
+		expect(findTurnEntry(sm.getBranch(), replacement)).toBeNull();
+		expect(findTurnEntry(sm.getBranch(), newest)?.id).toBe(newestPrompt);
+	});
+
 	test("skips system declarations and model bookkeeping before the user prompt", () => {
 		const branch = [{ id: "checkpoint", type: "custom" }, { id: "model", type: "model_change" },
 			{ id: "system", type: "message", message: { role: "system" } },

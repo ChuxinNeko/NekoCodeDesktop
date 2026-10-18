@@ -509,6 +509,7 @@ export function ChatView(props: ChatViewProps) {
 							<Transcript
 							onSend={props.onSend}
 							modelKey={snapshot.modelKey}
+							sessionId={snapshot.session.id}
 							cells={snapshot.cells}
 							models={snapshot.models}
 							streaming={snapshot.streaming}

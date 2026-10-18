@@ -16,6 +16,7 @@ import { AssistantSelection, type SelectionSend } from "./chat/AssistantSelectio
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
 import { completedTurnChanges } from "../lib/turnChanges";
+import { editTextLines, liveDiffCount } from "../lib/liveDiffStats";
 import { useReducedMotion } from "../lib/motion";
 import { DiffStat } from "./ui/diff-stat";
 import { DisclosureRegion } from "./ui/disclosure-region";
@@ -205,12 +206,6 @@ function taskIdOf(cell: Extract<AgentCell, { type: "tool" }>): string | null {
 type FileEditLine = { kind: "add" | "remove" | "context"; text: string };
 type FileEditPreview = { path: string; lines: FileEditLine[] };
 
-function textLines(text: string): string[] {
-	const lines = text.replace(/\r\n/g, "\n").split("\n");
-	if (lines[lines.length - 1] === "") lines.pop();
-	return lines;
-}
-
 function resultDiffLines(diff: string): FileEditLine[] {
 	return diff.split("\n").map((raw) => {
 		const match = /^([+\- ]) *\d+ (.*)$/.exec(raw);
@@ -220,7 +215,7 @@ function resultDiffLines(diff: string): FileEditLine[] {
 	});
 }
 
-function fileEditPreview(cell: Extract<AgentCell, { type: "tool" }>): FileEditPreview | null {
+function fileEditPreview(cell: Extract<AgentCell, { type: "tool" }>, completedLinesOnly = false): FileEditPreview | null {
 	if (cell.toolName !== "edit" && cell.toolName !== "write") return null;
 	const args =
 		typeof cell.args === "object" && cell.args !== null
@@ -231,6 +226,7 @@ function fileEditPreview(cell: Extract<AgentCell, { type: "tool" }>): FileEditPr
 	const rawPath = args.path ?? args.file_path;
 
 	let lines: FileEditLine[] = [];
+	const textLines = (text: string) => editTextLines(text, completedLinesOnly && !!cell.inputStreaming);
 	if (cell.toolName === "write") {
 		if (typeof args.content === "string") {
 			lines = textLines(args.content).map((text) => ({ kind: "add", text }));
@@ -582,12 +578,17 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	const title = workStageLabel(stage, t);
 	if (!workStageHasDetails(stage)) return running ? <li className="pl-6"><PlanningLine /></li> : null;
 	const changes = stage.items.reduce((total, item) => {
-		if (item.kind !== "tool" || item.cell.status !== "done") return total;
-		const preview = fileEditPreview(item.cell);
+		if (item.kind !== "tool" || item.cell.status === "error") return total;
+		const preview = fileEditPreview(item.cell, true);
+		let insertions = 0;
+		let deletions = 0;
 		for (const line of preview?.lines ?? []) {
-			if (line.kind === "add") total.insertions++;
-			if (line.kind === "remove") total.deletions++;
+			if (line.kind === "add") insertions++;
+			if (line.kind === "remove") deletions++;
 		}
+		const live = active && item.cell.status !== "done";
+		total.insertions += liveDiffCount(insertions, live);
+		total.deletions += liveDiffCount(deletions, live);
 		return total;
 	}, { insertions: 0, deletions: 0 });
 	return (
@@ -599,7 +600,7 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "shimmer text-foreground/80")}>
 					{title}
 				</span>
-				{changes.insertions || changes.deletions ? <DiffStat {...changes} className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]" /> : null}
+				{changes.insertions || changes.deletions || (running && stage.items.some(item => item.kind === "tool" && ["edit", "write"].includes(item.cell.toolName))) ? <DiffStat {...changes} animate className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]" /> : null}
 				<ChevronRightIcon aria-hidden="true" className="workflow-chevron mt-1 size-3.5 shrink-0 opacity-60" data-open={open} />
 				{running ? <span className="sr-only">{t("workFlow.running")}</span> : null}
 			</button>
@@ -669,10 +670,12 @@ const TranscriptView = function Transcript({
 	teamTurns,
 	onSend,
 	modelKey,
+	sessionId,
 }: {
 	cells: AgentCell[];
 	onSend?: SelectionSend;
 	modelKey?: string | null;
+	sessionId?: string;
 	models?: readonly ModelOption[];
 	streaming?: boolean;
 	settling?: boolean;
@@ -813,7 +816,7 @@ const TranscriptView = function Transcript({
 	// and only stands alone when nothing has been done in this turn yet.
 	const waitingInWork = waiting && rows[rows.length - 1]?.kind === "work";
 	return (
-		<AssistantSelection onSend={onSend} modelKey={modelKey}>
+		<AssistantSelection onSend={onSend} modelKey={modelKey} sessionId={sessionId}>
 		<TaskLookupContext.Provider value={taskLookup}>
 			<UsageModelsContext.Provider value={models ?? EMPTY_MODELS}>
 			<CommandStopContext.Provider value={onStopCommand ? stopCommand : undefined}>

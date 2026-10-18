@@ -8,15 +8,16 @@ import { SelectionExplanation } from "./SelectionExplanation";
 import SelectionActions from "../primitives/SelectionActions";
 
 export type SelectionSend = (request: SendPromptRequest) => void | Promise<void>;
+type PickedSelection = { range: Range; text: string; body: Element; pointerOffsetX?: number };
 
 /** Only explicitly marked, settled assistant Markdown can own a selection. */
-export function AssistantSelection({ children, onSend, modelKey }: { children: ReactNode; onSend?: SelectionSend; modelKey?: string | null }) {
+export function AssistantSelection({ children, onSend, modelKey, sessionId }: { children: ReactNode; onSend?: SelectionSend; modelKey?: string | null; sessionId?: string }) {
   const { t } = useTranslation();
-  const [explanation, setExplanation] = useState<string | null>(null);
+  const [explanation, setExplanation] = useState<PickedSelection | null>(null);
   const scope = useRef<HTMLDivElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   const selecting = useRef(false);
-  const [picked, setPicked] = useState<{ range: Range; text: string; body: Element; pointerOffsetX?: number } | null>(null);
+  const [picked, setPicked] = useState<PickedSelection | null>(null);
 
   useEffect(() => {
     if (explanation !== null) { setPicked(null); return; }
@@ -70,7 +71,7 @@ export function AssistantSelection({ children, onSend, modelKey }: { children: R
 
   return <div ref={scope}>
     {children}
-    {explanation !== null ? <SelectionExplanation original={explanation} modelKey={modelKey} onClose={() => {
+    {explanation !== null ? <SelectionExplanation original={explanation.text} range={explanation.range} pointerOffsetX={explanation.pointerOffsetX} modelKey={modelKey} sessionId={sessionId} onClose={() => {
       window.getSelection()?.removeAllRanges();
       setExplanation(null);
     }} /> : null}
@@ -86,7 +87,7 @@ export function AssistantSelection({ children, onSend, modelKey }: { children: R
           labels={{ keep: t("selection.keep"), discard: t("selection.discard"), placeholder: t("selection.placeholder"), retry: t("selection.retry"), more: t("selection.more"), fewer: t("selection.fewer"), send: t("selection.send"), editing: t("selection.thinking"), copy: t("selection.copy"), error: t("selection.error") }}
           onCopy={async () => { await copyText(picked.text); setPicked(null); }}
           onAction={async (action, custom) => {
-            await dispatchSelectionAction(picked.text, custom ? { custom: action } : { action: action as SelectionRequestAction }, t, { explain: setExplanation, send: onSend });
+            await dispatchSelectionAction(picked.text, custom ? { custom: action } : { action: action as SelectionRequestAction }, t, { explain: () => setExplanation(picked), send: onSend });
             setPicked(null);
           }}
         />
