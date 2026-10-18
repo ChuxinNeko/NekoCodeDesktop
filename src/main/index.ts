@@ -1817,6 +1817,10 @@ function registerIpc(): void {
 	});
 
 	ipcMain.handle("github:status", () => githubAuth?.status());
+	ipcMain.handle("github:profile", () => {
+		if (!githubAuth) throw new Error("GitHub auth service unavailable");
+		return githubAuth.profile();
+	});
 	ipcMain.handle("github:save", (_e, token: string) => {
 		if (!githubAuth) throw new Error("GitHub auth service unavailable");
 		githubLogin?.cancel();

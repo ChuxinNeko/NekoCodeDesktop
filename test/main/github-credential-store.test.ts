@@ -71,6 +71,82 @@ describe("GitHub credential lifecycle", () => {
 		expect((await f.store.status()).configured).toBe(false);
 	});
 
+	test("profile projects the signed-in account and drops repositories outside github.com", async () => {
+		const f = fixture();
+		const store = new GitHubCredentialStore({
+			userDataDir: f.directory,
+			encryption,
+			readGhToken: async () => null,
+			request: (async (input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url.includes("/user/repos")) {
+					return new Response(JSON.stringify([
+						{ name: "app", full_name: "neko/app", private: true, fork: false, description: "desktop", html_url: "https://github.com/neko/app", language: "TypeScript", stargazers_count: 8, updated_at: "2026-10-01T00:00:00Z" },
+						{ name: "bad", full_name: "neko/bad", html_url: "https://evil.example/neko/bad" },
+					]), { status: 200, headers: { link: '<https://api.github.com/user/repos?page=2>; rel="next"' } });
+				}
+				if (url.startsWith("https://avatars.githubusercontent.com/")) {
+					return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
+				}
+				return Response.json({ login: "neko", name: "Neko", avatar_url: "https://avatars.githubusercontent.com/u/1?v=4", html_url: "https://github.com/neko", bio: "hello", public_repos: 2, followers: 3, following: 4 });
+			}) as unknown as typeof fetch,
+		});
+		await store.save("ghp_manual");
+		const profile = await store.profile();
+		expect(profile.account).toMatchObject({ login: "neko", name: "Neko", publicRepos: 2, followers: 3, following: 4 });
+		expect(profile.account.avatarUrl?.startsWith("data:image/png;base64,")).toBe(true);
+		expect(profile.repositories.map((repo) => repo.fullName)).toEqual(["neko/app"]);
+		expect(profile.repositories[0]).toMatchObject({ private: true, stars: 8, language: "TypeScript" });
+		expect(profile.truncated).toBe(true);
+	});
+
+	test("profile still returns the account when the repository list is refused", async () => {
+		const f = fixture();
+		const store = new GitHubCredentialStore({
+			userDataDir: f.directory,
+			encryption,
+			readGhToken: async () => null,
+			request: (async (input: RequestInfo | URL) => {
+				if (String(input).includes("/user/repos")) return new Response("no", { status: 403 });
+				return Response.json({ login: "neko" });
+			}) as unknown as typeof fetch,
+		});
+		await store.save("ghp_manual");
+		const profile = await store.profile();
+		expect(profile.account.login).toBe("neko");
+		expect(profile.repositories).toEqual([]);
+		expect(profile.repositoriesWarning).toContain("403");
+	});
+
+	test("profile stops waiting when api.github.com never answers, and a stalled repo list still returns the account", async () => {
+		const f = fixture();
+		writeFileSync(join(f.directory, "github-auth.json"), JSON.stringify({ version: 1, encryptedToken: encryption.encryptString("ghp_manual").toString("base64"), login: "neko" }));
+		const stalled = new GitHubCredentialStore({
+			userDataDir: f.directory, encryption, readGhToken: async () => null, requestTimeoutMs: 40,
+			request: (() => new Promise(() => {})) as unknown as typeof fetch,
+		});
+		const started = Date.now();
+		await expect(stalled.profile()).rejects.toThrow("api.github.com");
+		expect(Date.now() - started).toBeLessThan(2_000);
+
+		const partial = new GitHubCredentialStore({
+			userDataDir: f.directory, encryption, readGhToken: async () => null, requestTimeoutMs: 40,
+			request: (async (input: RequestInfo | URL) => {
+				if (String(input).includes("/user/repos")) return new Promise(() => {});
+				return Response.json({ login: "neko", name: "Neko" });
+			}) as unknown as typeof fetch,
+		});
+		const profile = await partial.profile();
+		expect(profile.account.login).toBe("neko");
+		expect(profile.repositories).toEqual([]);
+		expect(profile.repositoriesWarning).toContain("api.github.com");
+	});
+
+	test("profile requires a configured credential", async () => {
+		const f = fixture();
+		await expect(f.store.profile()).rejects.toThrow("未配置");
+	});
+
 	test("basic_text storage is not offered for new credentials on Linux", () => {
 		if (process.platform !== "linux") return;
 		const f = fixture();

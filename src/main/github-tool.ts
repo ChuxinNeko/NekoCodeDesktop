@@ -333,7 +333,8 @@ async function search(gh: GitHubClient, auth: GitHubAuthService, cwd: string, in
 	let id: RepositoryIdentity | null = null;
 	if (kind !== "repos") id = await resolveRepo(auth, cwd, input.repo).catch(() => null);
 	const q = scopedQuery(query, kind, id);
-	const endpoint = kind === "prs" ? "issues" : kind;
+	// GitHub's repository search route is /search/repositories, not /search/repos.
+	const endpoint = kind === "prs" ? "issues" : kind === "repos" ? "repositories" : kind;
 	const data = record(await gh.json(`/search/${endpoint}?${new URLSearchParams({ q, per_page: String(limit) })}`));
 	const items = list(data.items);
 	const header = `${str(data.total_count)} result(s) for \`${q}\`${items.length < Number(data.total_count) ? ` (showing ${items.length})` : ""}:`;
