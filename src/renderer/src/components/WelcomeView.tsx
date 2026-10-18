@@ -59,7 +59,6 @@ export function WelcomeView(props: WelcomeViewProps) {
 	const [hour, setHour] = useState(() => new Date().getHours());
 	const [quickInsertion, setQuickInsertion] = useState<ComposerInsertion | null>(null);
 	const composerSurfaceRef = useRef<HTMLDivElement>(null);
-	const quickStartsRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const timer = setInterval(() => setHour(new Date().getHours()), 60_000);
 		return () => clearInterval(timer);
@@ -68,7 +67,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 
 	return (
 		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-			<AsciiWaveBackground exclusionRef={composerSurfaceRef} characterClearanceRef={quickStartsRef} />
+			<AsciiWaveBackground exclusionRef={composerSurfaceRef} />
 			<div className="absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 bg-background p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
 				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
 					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
@@ -138,7 +137,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 						{props.composerHeader ? <div className="welcome-workspace min-w-0">{props.composerHeader}</div> : null}
 					</div>
 				</div>
-				<div ref={quickStartsRef} className="mt-4 flex flex-col items-center gap-2" role="group" aria-label={t("welcome.quickStarts")}>
+				<div className="mt-4 flex flex-col items-center gap-2" role="group" aria-label={t("welcome.quickStarts")}>
 					{[QUICK_STARTS.slice(0, 4), QUICK_STARTS.slice(4)].map((row, index) => (
 						<div key={index} className="flex flex-wrap justify-center gap-2">
 							{row.map(({ key, icon: Icon }) => (

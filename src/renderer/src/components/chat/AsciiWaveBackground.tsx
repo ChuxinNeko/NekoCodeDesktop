@@ -8,11 +8,11 @@ import { useEffect, useRef, type RefObject } from "react";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useTheme } from "~/hooks/useTheme";
 import { characterBounds, characterToneAt, particleEnvelope } from "./particleCharacter";
-import { CHARACTER_ASPECT, CHARACTER_COLORS } from "./characterStencil";
+import { CHARACTER_ASPECT } from "./characterStencil";
 
 const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-const FONT_SIZE_PX = 10;
-const LINE_HEIGHT_PX = 13;
+const FONT_SIZE_PX = 8;
+const LINE_HEIGHT_PX = 10;
 // Bound the three full-size RGBA surfaces to roughly 48 MiB, even on Retina/4K displays.
 const MAX_BACKING_PIXELS = 4_000_000;
 // The idle field drifts slowly, so it redraws rarely on a plain timer; only click ripples,
@@ -135,7 +135,7 @@ interface Field {
   waveLattice: Float32Array;
   // Glyphs below this index are drawn into the layer; the rest fill in over later frames.
   filled: number;
-  characterTones: Uint8Array;
+  characterTones: Float32Array;
   characterLevels: Float32Array;
 }
 
@@ -287,15 +287,13 @@ function sampleRippleStrength(x: number, y: number, t: number, nowMs: number, ri
 
 export function AsciiWaveBackground({
   exclusionRef,
-  characterClearanceRef,
 }: {
   exclusionRef?: RefObject<HTMLElement | null>;
-  characterClearanceRef?: RefObject<HTMLElement | null>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ripplesRef = useRef<Ripple[]>([]);
-  const { activeTheme, resolvedTheme } = useTheme();
+  const { activeTheme } = useTheme();
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const { ink, accent } = activeTheme.theme;
 
@@ -318,23 +316,11 @@ export function AsciiWaveBackground({
     const seed = Math.random() * 1000;
     const firstPattern = Math.floor(Math.random() * FIELD_PATTERNS.length);
     let particleRect = characterBounds(0, 0, CHARACTER_ASPECT);
-    const characterColors = CHARACTER_COLORS[resolvedTheme];
     let lastParticleMs = 0;
     let hasParticleTrail = false;
 
     const rebuildParticles = () => {
       particleRect = characterBounds(width, height, CHARACTER_ASPECT);
-      const clearance = characterClearanceRef?.current?.getBoundingClientRect();
-      if (clearance) {
-        const bounds = container.getBoundingClientRect();
-        // In a narrow pane the character sits below the quick actions. In a wide
-        // pane it can use the free space beside the centered hero at full size.
-        const right = bounds.left + particleRect.x + particleRect.width;
-        if (right > clearance.left) {
-          const available = bounds.bottom - clearance.bottom - 40;
-          particleRect = characterBounds(width, height, CHARACTER_ASPECT, available);
-        }
-      }
       lastParticleMs = 0;
       hasParticleTrail = false;
     };
@@ -400,7 +386,7 @@ export function AsciiWaveBackground({
         patchLattice: new Float32Array(latticeSize),
         waveLattice: new Float32Array(latticeSize),
         filled: 0,
-        characterTones: Uint8Array.from({ length: cols * rows }, (_, index) => characterToneAt(
+        characterTones: Float32Array.from({ length: cols * rows }, (_, index) => characterToneAt(
           ((index % cols) + 0.5) * cellW / dpr,
           (Math.floor(index / cols) + 0.5) * cellH / dpr,
           particleRect,
@@ -526,8 +512,11 @@ export function AsciiWaveBackground({
           const accentAlpha = useAccent
             ? Math.min(1, inkAlpha + rippleStrength * (0.4 + 0.55 * patch))
             : 0;
-          inkBytes[index * 4 + 3] = useAccent ? 0 : Math.round(inkAlpha * (1 - characterLevel) * 255);
-          accentBytes[index * 4 + 3] = Math.round(accentAlpha * (1 - characterLevel) * 255);
+          // The figure changes the opacity of existing letters, preserving the
+          // field's ink and ripple accent instead of adding a character palette.
+          const characterAlpha = characterLevel * (0.12 + 0.75 * field.characterTones[index]!);
+          inkBytes[index * 4 + 3] = useAccent ? 0 : Math.round((inkAlpha * (1 - characterLevel) + characterAlpha) * 255);
+          accentBytes[index * 4 + 3] = Math.round((accentAlpha * (1 - characterLevel) + (useAccent ? characterAlpha : 0)) * 255);
           if (useAccent) hasAccent = true;
 
           // Only visible cells need fresh glyphs.
@@ -543,26 +532,6 @@ export function AsciiWaveBackground({
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       composite(field, field.inkMask, null);
       if (hasAccent) composite(field, field.accentMask, accent);
-
-      // Reveal the SAME letters, in the SAME cells, by changing their ink to the
-      // stencil's yellow tones. The character is part of the ASCII field itself.
-      if (hasParticleTrail) {
-        ctx.font = `${FONT_SIZE_PX * dpr}px ${fontFamily}`;
-        ctx.textBaseline = "middle";
-        ctx.textAlign = "center";
-        for (let index = 0; index < field.characterTones.length; index += 1) {
-          const level = field.characterLevels[index]!;
-          if (level <= 0.01) continue;
-          ctx.globalAlpha = level;
-          ctx.fillStyle = characterColors[field.characterTones[index]!]!;
-          ctx.fillText(
-            GLYPHS[glyphs[index]!]!,
-            ((index % cols) + 0.5) * cellW,
-            (Math.floor(index / cols) + 0.5) * cellH,
-          );
-        }
-        ctx.globalAlpha = 1;
-      }
 
       // Remove the decoration itself, so translucent/glass composers stay clear in
       // every theme. Apply after both passes so click ripples respect the same gap.
@@ -691,7 +660,6 @@ export function AsciiWaveBackground({
     resizeObserver.observe(container);
     // Reduced motion has no idle redraw loop, so composer growth must also wake it.
     if (exclusionRef?.current) resizeObserver.observe(exclusionRef.current);
-    if (characterClearanceRef?.current) resizeObserver.observe(characterClearanceRef.current);
     document.addEventListener("visibilitychange", wake);
 
     return () => {
@@ -704,7 +672,7 @@ export function AsciiWaveBackground({
       if (frameId !== 0) cancelAnimationFrame(frameId);
       window.clearTimeout(timerId);
     };
-  }, [ink, accent, reduceMotion, resolvedTheme, exclusionRef, characterClearanceRef]);
+  }, [ink, accent, reduceMotion, exclusionRef]);
 
   return (
     <div

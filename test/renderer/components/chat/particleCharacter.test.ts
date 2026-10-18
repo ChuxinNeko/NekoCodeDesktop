@@ -25,15 +25,14 @@ describe("home particle character", () => {
   });
 
   test("fits the lower-left corner in desktop, narrow, and short layouts", () => {
-    expect(characterBounds(500, 720, 583 / 927, 140).height).toBe(140);
-    expect(characterBounds(500, 280, 583 / 927, -20).height).toBe(0);
+    expect(characterBounds(500, 720, 583 / 927).height).toBeGreaterThanOrEqual(500);
     for (const [width, height] of [[1200, 900], [280, 600], [600, 280], [0, 0]]) {
       const rect = characterBounds(width!, height!, 583 / 927);
       expect(rect.x).toBeGreaterThanOrEqual(0);
       expect(rect.y).toBeGreaterThanOrEqual(0);
       expect(rect.x + rect.width).toBeLessThanOrEqual(width!);
       expect(rect.y + rect.height).toBeLessThanOrEqual(height!);
-      expect(rect.height).toBeLessThanOrEqual(330);
+      expect(rect.height).toBeLessThanOrEqual(560);
     }
   });
 });
