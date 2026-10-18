@@ -1,6 +1,6 @@
 /* Beautiful UI foundation: https://www.beautifului.dev/r/foundation.json
  * Official tokens and shadow-plugin values, namespaced to avoid app theme collisions. */
-.beautiful-agent-screen {
+.beautiful-agent-screen, .beautiful-selection-actions {
   /* surfaces — cool, blue-tinted neutrals */
   --bui-page: oklch(0.985 0.001 286.376);
   --bui-canvas: oklch(0.961 0.002 247.84);
@@ -53,7 +53,7 @@
   --bui-shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.12);
 }
 
-.dark .beautiful-agent-screen, .beautiful-agent-screen.dark {
+.dark .beautiful-agent-screen, .beautiful-agent-screen.dark, .dark .beautiful-selection-actions, .beautiful-selection-actions.dark {
   --bui-page: oklch(0.209 0.004 264.477);
   --bui-canvas: oklch(0.231 0.004 264.487);
   --bui-surface: oklch(0.26 0.006 271.191);
@@ -105,7 +105,7 @@
 }
 
 
-.beautiful-agent-screen {
+.beautiful-agent-screen, .beautiful-selection-actions {
   --bui-shadow-xs:0 0 4px 0 #0000000a;
   --bui-shadow-sm:0 18px 47px 0 #00000008,0 7.5px 19px 0 #00000005,0 4px 10.5px 0 #00000005,0 2.3px 5.8px 0 #00000003,0 1.2px 3.1px 0 #00000003,0 .5px 1.3px 0 #00000003;
   --bui-shadow-md:0 17.54px 23.39px 0 #0000000a,0 9.4px 12.5px 0 #00000008,0 5.25px 7px 0 #00000005,0 2.79px 3.72px -2px #00000003,0 1.16px 1.5px 0 #00000003;
@@ -164,3 +164,49 @@
 .beautiful-agent-screen .primitive-icon-button { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 8px; }
 @keyframes bui-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes bui-pop-in { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
+
+@keyframes bui-shimmer-text {
+  from {
+    background-position: 150% center;
+  }
+  to {
+    background-position: -50% center;
+  }
+}
+
+.beautiful-selection-actions .bui-stream-tail {
+  filter: blur(1.6px);
+  -webkit-mask-image: linear-gradient(to right, oklch(0 0 0) 20%, oklch(0 0 0 / 0.2));
+  mask-image: linear-gradient(to right, oklch(0 0 0) 20%, oklch(0 0 0 / 0.2));
+}
+
+.beautiful-selection-actions .bui-stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1.5px;
+  translate: 0 -0.5px;
+  border-radius: 1px;
+  background: var(--bui-ink);
+  vertical-align: text-bottom;
+  animation: bui-caret-blink 1s step-end infinite;
+}
+
+.beautiful-selection-actions .bui-stream-caret.is-streaming {
+  animation: none;
+}
+
+@keyframes bui-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .beautiful-selection-actions .bui-stream-caret { animation: none; }
+  .beautiful-selection-actions .bui-stream-tail {
+    filter: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
+@keyframes bui-spin { to { transform: rotate(360deg); } }

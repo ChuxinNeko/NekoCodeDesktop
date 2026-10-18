@@ -5,6 +5,28 @@ import type { TranslationKey } from "./en";
  * exactly; the Record type makes a missing key a compile error.
  */
 export const zhCN: Record<TranslationKey, string> = {
+	"selection.explain": "解释",
+	"selection.improve": "改进",
+	"selection.shorten": "缩短",
+	"selection.tone": "调整语气",
+	"selection.grammar": "修正语法",
+	"selection.keep": "保留",
+	"selection.discard": "丢弃",
+	"selection.placeholder": "输入修改指令",
+	"selection.retry": "重试",
+	"selection.more": "展开更多操作",
+	"selection.fewer": "收起更多操作",
+	"selection.send": "发送指令",
+	"selection.thinking": "正在发送",
+	"selection.copy": "复制",
+	"selection.error": "操作未完成，请重试。",
+	"selection.request.explain": "请解释下面这段话，说明它的含义。",
+	"selection.request.improve": "请改进下面这段话的表达和清晰度，保留原意。",
+	"selection.request.shorten": "请缩短下面这段话，保留关键信息。",
+	"selection.request.tone": "请将下面这段话改成更自然、友好的语气，保留原意。",
+	"selection.request.grammar": "请修正下面这段话的语法和拼写，保留原意。",
+	"selection.request.template": "指令：{instruction}\n\n以下是从你的回复中选中的原文（引用内容）：\n<selected_passage>\n{original}\n</selected_passage>\n\n请在新一轮回复中给出结果，保留之前的消息。",
+
 	"workFlow.planning": "规划下一步",
 	"workFlow.workingFor": "已工作 {duration}",
 	"workFlow.workedFor": "工作用时 {duration}",

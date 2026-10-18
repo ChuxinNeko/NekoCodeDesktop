@@ -12,6 +12,7 @@ import {
 	type WorkRow,
 } from "../../../shared/transcript";
 import { groupWorkStages, workStageCompleted, workStageLabel, type WorkStage } from "../lib/workStages";
+import { AssistantSelection, type SelectionSend } from "./chat/AssistantSelection";
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
 import { completedTurnChanges } from "../lib/turnChanges";
@@ -143,14 +144,14 @@ const MessageCell = memo(function MessageCell({
 	) : null;
 	if (team) return (
 		<TeamFinalMessage turn={team} footer={actions}>
-			{cell.text ? <Markdown text={cell.text} /> : null}
+			{cell.text ? <AssistantBody cell={cell} /> : null}
 			{cell.text && !cell.streaming ? <SourceList text={cell.text} /> : null}
 			{cell.error ? <p role="alert" className="mt-1 whitespace-pre-wrap break-words text-[length:var(--app-font-size-chat-meta,10px)] text-destructive">{cell.error}</p> : null}
 		</TeamFinalMessage>
 	);
 	return (
 		<div className={cn("flex w-full flex-col gap-2", afterWork && "border-t border-border/50 pt-4")}>
-			{cell.text ? <Markdown text={cell.text} /> : null}
+			{cell.text ? <AssistantBody cell={cell} /> : null}
 			{/* Once the answer is whole: a list that reshuffles as citations stream in reads as flicker. */}
 			{cell.text && !cell.streaming ? <SourceList text={cell.text} /> : null}
 			{cell.error ? (
@@ -440,9 +441,13 @@ function PlanningLine() {
 	);
 }
 
+function AssistantBody({ cell }: { cell: AssistantCellData }) {
+  return <div data-assistant-selection-body={!cell.streaming ? "true" : "false"}><Markdown text={cell.text} /></div>;
+}
+
 /** A remark the model made on the way, inside the run it was part of. */
 function RemarkCell({ cell }: { cell: AssistantCellData }) {
-	return cell.text ? <Markdown text={cell.text} /> : null;
+	return cell.text ? <AssistantBody cell={cell} /> : null;
 }
 
 /**
@@ -652,8 +657,10 @@ const TranscriptView = function Transcript({
 	onForkMessage,
 	onStopCommand,
 	teamTurns,
+	onSend,
 }: {
 	cells: AgentCell[];
+	onSend?: SelectionSend;
 	models?: readonly ModelOption[];
 	streaming?: boolean;
 	settling?: boolean;
@@ -794,6 +801,7 @@ const TranscriptView = function Transcript({
 	// and only stands alone when nothing has been done in this turn yet.
 	const waitingInWork = waiting && rows[rows.length - 1]?.kind === "work";
 	return (
+		<AssistantSelection onSend={onSend}>
 		<TaskLookupContext.Provider value={taskLookup}>
 			<UsageModelsContext.Provider value={models ?? EMPTY_MODELS}>
 			<CommandStopContext.Provider value={onStopCommand ? stopCommand : undefined}>
@@ -855,6 +863,7 @@ const TranscriptView = function Transcript({
 			</CommandStopContext.Provider>
 			</UsageModelsContext.Provider>
 		</TaskLookupContext.Provider>
+		</AssistantSelection>
 	);
 }
 

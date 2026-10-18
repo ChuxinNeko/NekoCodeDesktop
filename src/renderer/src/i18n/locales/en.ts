@@ -3,6 +3,28 @@
  * locale must provide exactly these keys.
  */
 export const en = {
+	"selection.explain": "Explain",
+	"selection.improve": "Improve",
+	"selection.shorten": "Shorten",
+	"selection.tone": "Change tone",
+	"selection.grammar": "Fix grammar",
+	"selection.keep": "Keep",
+	"selection.discard": "Discard",
+	"selection.placeholder": "Describe edits",
+	"selection.retry": "Try again",
+	"selection.more": "Show more actions",
+	"selection.fewer": "Show fewer actions",
+	"selection.send": "Send instruction",
+	"selection.thinking": "Sending",
+	"selection.copy": "Copy",
+	"selection.error": "Unable to complete this action. Please try again.",
+	"selection.request.explain": "Explain the following passage and clarify its meaning.",
+	"selection.request.improve": "Improve the clarity and wording of the following passage while preserving its meaning.",
+	"selection.request.shorten": "Shorten the following passage while preserving its key information.",
+	"selection.request.tone": "Rewrite the following passage in a more natural, friendly tone while preserving its meaning.",
+	"selection.request.grammar": "Fix grammar and spelling in the following passage while preserving its meaning.",
+	"selection.request.template": "Instruction: {instruction}\n\nSelected passage from your reply (quoted source text):\n<selected_passage>\n{original}\n</selected_passage>\n\nRespond in a new reply; leave previous messages unchanged.",
+
 	"workFlow.planning": "Planning next step",
 	"workFlow.workingFor": "Working for {duration}",
 	"workFlow.workedFor": "Worked for {duration}",
