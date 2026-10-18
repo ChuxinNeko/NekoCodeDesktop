@@ -1,25 +1,14 @@
+import { CHARACTER_STENCIL, CHARACTER_STENCIL_WIDTH, CHARACTER_TONES } from "./characterStencil";
+
 export const PARTICLE_TRAIL_MS = 1000;
 
-export interface CharacterParticle {
-  x: number;
-  y: number;
-  color: string;
-  alpha: number;
-}
-
-/** Sample the supplied artwork, omitting its white backdrop and neutral floor shadow. */
-export function sampleCharacterParticles(data: Uint8ClampedArray, width: number, height: number): CharacterParticle[] {
-  const particles: CharacterParticle[] = [];
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const i = (y * width + x) * 4;
-      const [r, g, b, a] = [data[i]!, data[i + 1]!, data[i + 2]!, data[i + 3]!];
-      const min = Math.min(r, g, b);
-      if (a < 32 || (min > 145 && Math.max(r, g, b) - min < 40)) continue;
-      particles.push({ x: (x + 0.5) / width, y: (y + 0.5) / height, color: `rgb(${r} ${g} ${b})`, alpha: a / 255 });
-    }
-  }
-  return particles;
+/** Map the text stencil onto the existing background grid, preserving its cells. */
+export function characterToneAt(x: number, y: number, bounds: { x: number; y: number; width: number; height: number }): number {
+  if (bounds.width <= 0 || bounds.height <= 0 || x < bounds.x || y < bounds.y || x >= bounds.x + bounds.width || y >= bounds.y + bounds.height) return 0;
+  const col = Math.floor((x - bounds.x) / bounds.width * CHARACTER_STENCIL_WIDTH);
+  const row = Math.floor((y - bounds.y) / bounds.height * CHARACTER_STENCIL.length);
+  const tone = CHARACTER_STENCIL[row]?.[col] ?? " ";
+  return Math.max(0, CHARACTER_TONES.indexOf(tone));
 }
 
 /** Fit in the landing's lower-left corner, with room for narrow/short panes. */

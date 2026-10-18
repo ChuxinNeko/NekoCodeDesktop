@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { characterBounds, particleEnvelope, sampleCharacterParticles } from "../../../../src/renderer/src/components/chat/particleCharacter";
+import { characterBounds, characterToneAt, particleEnvelope } from "../../../../src/renderer/src/components/chat/particleCharacter";
 
 describe("home particle character", () => {
-  test("omits white and gray background while preserving yellow, dark details and transparency", () => {
-    const pixels = new Uint8ClampedArray([
-      255, 255, 255, 255, 210, 208, 205, 255, 230, 190, 60, 255,
-      20, 20, 10, 255, 230, 190, 60, 0, 230, 190, 60, 128,
-    ]);
-    const points = sampleCharacterParticles(pixels, 3, 2);
-    expect(points).toHaveLength(3);
-    expect(points[0]!.color).toBe("rgb(230 190 60)");
-    expect(points[1]!.color).toBe("rgb(20 20 10)");
-    expect(points[2]!.alpha).toBeCloseTo(128 / 255);
-    expect(points.every((p) => p.x > 0 && p.x < 1 && p.y > 0 && p.y < 1)).toBe(true);
+  test("maps only the character silhouette into the background's existing cell positions", () => {
+    const bounds = { x: 24, y: 100, width: 200, height: 330 };
+    expect(characterToneAt(24, 100, bounds)).toBe(0);
+    expect(characterToneAt(124, 265, bounds)).toBeGreaterThan(0);
+    for (const [x, y] of [[23, 260], [225, 260], [124, 99], [124, 431]]) {
+      expect(characterToneAt(x!, y!, bounds)).toBe(0);
+    }
+    expect(characterToneAt(0, 0, { x: 0, y: 0, width: 0, height: 0 })).toBe(0);
+    // Resizing changes the mapping, not the character's relative shape.
+    const smaller = { x: 40, y: 200, width: 100, height: 165 };
+    expect(characterToneAt(90, 282.5, smaller)).toBe(characterToneAt(124, 265, bounds));
   });
 
   test("remains hidden until the wave reaches a particle and fades after it passes", () => {

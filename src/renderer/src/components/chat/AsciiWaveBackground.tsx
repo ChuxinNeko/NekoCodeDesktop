@@ -7,8 +7,8 @@ import { useEffect, useRef, type RefObject } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useTheme } from "~/hooks/useTheme";
-import characterUrl from "../../assets/home-particle-character.png";
-import { characterBounds, particleEnvelope, sampleCharacterParticles, type CharacterParticle } from "./particleCharacter";
+import { characterBounds, characterToneAt, particleEnvelope } from "./particleCharacter";
+import { CHARACTER_ASPECT, CHARACTER_COLORS } from "./characterStencil";
 
 const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const FONT_SIZE_PX = 10;
@@ -135,6 +135,8 @@ interface Field {
   waveLattice: Float32Array;
   // Glyphs below this index are drawn into the layer; the rest fill in over later frames.
   filled: number;
+  characterTones: Uint8Array;
+  characterLevels: Float32Array;
 }
 
 interface Mask {
@@ -293,7 +295,7 @@ export function AsciiWaveBackground({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ripplesRef = useRef<Ripple[]>([]);
-  const { activeTheme } = useTheme();
+  const { activeTheme, resolvedTheme } = useTheme();
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const { ink, accent } = activeTheme.theme;
 
@@ -315,24 +317,13 @@ export function AsciiWaveBackground({
     let revealStartMs: number | null = null;
     const seed = Math.random() * 1000;
     const firstPattern = Math.floor(Math.random() * FIELD_PATTERNS.length);
-    const character = new Image();
-    let particles: CharacterParticle[] = [];
-    let particleLevels = new Float32Array(0);
-    let particleRect = characterBounds(0, 0, 1);
+    let particleRect = characterBounds(0, 0, CHARACTER_ASPECT);
+    const characterColors = CHARACTER_COLORS[resolvedTheme];
     let lastParticleMs = 0;
     let hasParticleTrail = false;
 
     const rebuildParticles = () => {
-      if (!character.naturalWidth) return;
-      const sampleHeight = 128;
-      const aspect = character.naturalWidth / character.naturalHeight;
-      const sampleWidth = Math.round(sampleHeight * aspect);
-      const surface = createCanvas(sampleWidth, sampleHeight);
-      if (!surface) return;
-      surface.ctx.drawImage(character, 0, 0, sampleWidth, sampleHeight);
-      particles = sampleCharacterParticles(surface.ctx.getImageData(0, 0, sampleWidth, sampleHeight).data, sampleWidth, sampleHeight);
-      particleLevels = new Float32Array(particles.length);
-      particleRect = characterBounds(width, height, aspect);
+      particleRect = characterBounds(width, height, CHARACTER_ASPECT);
       const clearance = characterClearanceRef?.current?.getBoundingClientRect();
       if (clearance) {
         const bounds = container.getBoundingClientRect();
@@ -341,7 +332,7 @@ export function AsciiWaveBackground({
         const right = bounds.left + particleRect.x + particleRect.width;
         if (right > clearance.left) {
           const available = bounds.bottom - clearance.bottom - 40;
-          particleRect = characterBounds(width, height, aspect, available);
+          particleRect = characterBounds(width, height, CHARACTER_ASPECT, available);
         }
       }
       lastParticleMs = 0;
@@ -409,6 +400,12 @@ export function AsciiWaveBackground({
         patchLattice: new Float32Array(latticeSize),
         waveLattice: new Float32Array(latticeSize),
         filled: 0,
+        characterTones: Uint8Array.from({ length: cols * rows }, (_, index) => characterToneAt(
+          ((index % cols) + 0.5) * cellW / dpr,
+          (Math.floor(index / cols) + 0.5) * cellH / dpr,
+          particleRect,
+        )),
+        characterLevels: new Float32Array(cols * rows),
       };
     };
 
@@ -467,6 +464,9 @@ export function AsciiWaveBackground({
       );
       ripplesRef.current = ripples;
       let hasAccent = false;
+      const deltaMs = lastParticleMs ? Math.max(0, nowMs - lastParticleMs) : 0;
+      lastParticleMs = nowMs;
+      hasParticleTrail = false;
 
       const { latticeCols, patchLattice, waveLattice } = field;
       const latticeRows = patchLattice.length / latticeCols;
@@ -515,18 +515,23 @@ export function AsciiWaveBackground({
           const inkAlpha = INK_ALPHA_MAX * patch * patch * (0.4 + 0.6 * wave) * centerFade * reveal;
 
           const rippleStrength = sampleRippleStrength(x, y, t, nowMs, ripples);
+          const characterLevel = field.characterTones[index]
+            ? particleEnvelope(field.characterLevels[index]!, rippleStrength, deltaMs)
+            : 0;
+          field.characterLevels[index] = characterLevel;
+          if (characterLevel > 0.01) hasParticleTrail = true;
 
           const useAccent = rippleStrength > 0.08;
           // The wave is brightest where it crosses a blotch, so it stays patchy too.
           const accentAlpha = useAccent
             ? Math.min(1, inkAlpha + rippleStrength * (0.4 + 0.55 * patch))
             : 0;
-          inkBytes[index * 4 + 3] = useAccent ? 0 : Math.round(inkAlpha * 255);
-          accentBytes[index * 4 + 3] = Math.round(accentAlpha * 255);
+          inkBytes[index * 4 + 3] = useAccent ? 0 : Math.round(inkAlpha * (1 - characterLevel) * 255);
+          accentBytes[index * 4 + 3] = Math.round(accentAlpha * (1 - characterLevel) * 255);
           if (useAccent) hasAccent = true;
 
           // Only visible cells need fresh glyphs.
-          if (reduceMotion || (inkAlpha < 0.01 && !useAccent)) continue;
+          if (reduceMotion || (inkAlpha < 0.01 && !useAccent && characterLevel < 0.01)) continue;
           const scrambleRate = IDLE_SCRAMBLE_RATE + RIPPLE_SCRAMBLE_RATE * rippleStrength;
           if (Math.random() < scrambleRate) {
             glyphs[index] = randomGlyph();
@@ -539,30 +544,25 @@ export function AsciiWaveBackground({
       composite(field, field.inkMask, null);
       if (hasAccent) composite(field, field.accentMask, accent);
 
-      // The picture shares the ASCII wave's coordinates and timing. No image-sized
-      // rectangle is drawn: only locally revealed colored particles appear.
-      const deltaMs = lastParticleMs ? Math.max(0, nowMs - lastParticleMs) : 0;
-      lastParticleMs = nowMs;
-      hasParticleTrail = false;
-      const dotSize = Math.max(0.7, particleRect.height / 128 * 0.65) * dpr;
-      for (let i = 0; i < particles.length; i += 1) {
-        const particle = particles[i]!;
-        const x = particleRect.x + particle.x * particleRect.width;
-        const y = particleRect.y + particle.y * particleRect.height;
-        const strength = sampleRippleStrength(x, y, t, nowMs, ripples);
-        const level = particleEnvelope(particleLevels[i]!, strength, deltaMs);
-        particleLevels[i] = level;
-        if (level <= 0.01) continue;
-        hasParticleTrail = true;
-        ctx.globalAlpha = level * particle.alpha;
-        ctx.fillStyle = particle.color;
-        // A slight wave-driven scatter keeps the silhouette made of living particles.
-        const scatter = reduceMotion ? 0 : strength * 2;
-        const px = x + Math.sin(i * 2.4 + t * 2) * scatter;
-        const py = y + Math.cos(i * 1.7 + t * 2) * scatter;
-        ctx.fillRect(px * dpr - dotSize / 2, py * dpr - dotSize / 2, dotSize, dotSize);
+      // Reveal the SAME letters, in the SAME cells, by changing their ink to the
+      // stencil's yellow tones. The character is part of the ASCII field itself.
+      if (hasParticleTrail) {
+        ctx.font = `${FONT_SIZE_PX * dpr}px ${fontFamily}`;
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+        for (let index = 0; index < field.characterTones.length; index += 1) {
+          const level = field.characterLevels[index]!;
+          if (level <= 0.01) continue;
+          ctx.globalAlpha = level;
+          ctx.fillStyle = characterColors[field.characterTones[index]!]!;
+          ctx.fillText(
+            GLYPHS[glyphs[index]!]!,
+            ((index % cols) + 0.5) * cellW,
+            (Math.floor(index / cols) + 0.5) * cellH,
+          );
+        }
+        ctx.globalAlpha = 1;
       }
-      ctx.globalAlpha = 1;
 
       // Remove the decoration itself, so translucent/glass composers stay clear in
       // every theme. Apply after both passes so click ripples respect the same gap.
@@ -681,10 +681,8 @@ export function AsciiWaveBackground({
         wake();
       });
     };
-    character.onload = () => { if (started) rebuildWhenIdle(); };
     const startTimer = setTimeout(() => {
       started = true;
-      character.src = characterUrl;
       rebuildWhenIdle();
     }, START_DELAY_MS);
     const resizeObserver = new ResizeObserver(() => {
@@ -700,14 +698,13 @@ export function AsciiWaveBackground({
       host.removeEventListener("pointerdown", onPointerDown);
       host.removeEventListener("pointerup", onPointerUp);
       clearTimeout(startTimer);
-      character.onload = null;
       cancelIdle?.();
       resizeObserver.disconnect();
       document.removeEventListener("visibilitychange", wake);
       if (frameId !== 0) cancelAnimationFrame(frameId);
       window.clearTimeout(timerId);
     };
-  }, [ink, accent, reduceMotion, exclusionRef, characterClearanceRef]);
+  }, [ink, accent, reduceMotion, resolvedTheme, exclusionRef, characterClearanceRef]);
 
   return (
     <div
