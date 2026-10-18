@@ -84,6 +84,14 @@ import type {
 	SkillsSnapshot,
 } from "../shared/skills";
 import type { CommunityTheme, ThemeLibraryChange, ThemeLibrarySnapshot } from "../shared/themes";
+import type {
+	WallpaperChooseResult,
+	WallpaperLibrary,
+	WallpaperOrigin,
+	WallpaperPlay,
+	WallpaperPlayRequest,
+	WallpaperUpload,
+} from "../shared/wallpaper";
 import type { AppPreferences, CommandShellOption } from "../shared/preferences";
 import type { SystemFont } from "../shared/font-names";
 import type {
@@ -461,6 +469,12 @@ const api = {
 	skillsImport: (request: ImportSkillsRequest): Promise<ImportSkillsResult> => ipcRenderer.invoke("skills:import", request),
 	skillsRemove: (request: RemoveSkillRequest): Promise<SkillsSnapshot> => ipcRenderer.invoke("skills:remove", request),
 	themesList: (): Promise<ThemeLibrarySnapshot> => ipcRenderer.invoke("themes:list"),
+	wallpaperOrigin: (): Promise<WallpaperOrigin> => ipcRenderer.invoke("wallpaper:origin"),
+	wallpaperLibrary: (refresh?: boolean): Promise<WallpaperLibrary> => ipcRenderer.invoke("wallpaper:library", refresh === true),
+	wallpaperUploads: (): Promise<WallpaperUpload[]> => ipcRenderer.invoke("wallpaper:uploads"),
+	wallpaperChooseImage: (): Promise<WallpaperChooseResult> => ipcRenderer.invoke("wallpaper:chooseImage"),
+	wallpaperRemoveUpload: (id: string): Promise<void> => ipcRenderer.invoke("wallpaper:removeUpload", id),
+	wallpaperPlay: (request: WallpaperPlayRequest): Promise<WallpaperPlay | null> => ipcRenderer.invoke("wallpaper:play", request),
 	themesChooseDirectory: (): Promise<string | null> => ipcRenderer.invoke("themes:chooseDirectory"),
 	themesInstall: (source: string): Promise<CommunityTheme> => ipcRenderer.invoke("themes:install", source),
 	themesInstallDirectory: (sourceDir: string): Promise<CommunityTheme> => ipcRenderer.invoke("themes:installDirectory", sourceDir),

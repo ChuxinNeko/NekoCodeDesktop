@@ -120,6 +120,14 @@ import type {
 	SkillsSnapshot,
 } from "../../shared/skills";
 import type { CommunityTheme, ThemeLibraryChange, ThemeLibrarySnapshot } from "../../shared/themes";
+import type {
+	WallpaperChooseResult,
+	WallpaperLibrary,
+	WallpaperOrigin,
+	WallpaperPlay,
+	WallpaperPlayRequest,
+	WallpaperUpload,
+} from "../../shared/wallpaper";
 import type { AppPreferences, CommandShellOption } from "../../shared/preferences";
 import type { SystemFont } from "../../shared/font-names";
 import type {
@@ -437,6 +445,16 @@ export interface AgentApi {
 	themesRemove(id: string): Promise<ThemeLibrarySnapshot>;
 	/** Opens the themes folder in the file manager. */
 	themesOpenDir(): Promise<void>;
+
+	/** Local wallpaper protocol base, and whether scene/web wallpapers can render live. */
+	wallpaperOrigin(): Promise<WallpaperOrigin>;
+	/** Wallpaper Engine projects discovered on this machine. */
+	wallpaperLibrary(refresh?: boolean): Promise<WallpaperLibrary>;
+	wallpaperUploads(): Promise<WallpaperUpload[]>;
+	wallpaperChooseImage(): Promise<WallpaperChooseResult>;
+	wallpaperRemoveUpload(id: string): Promise<void>;
+	/** How to paint one Wallpaper Engine project: a picture, a video, or the live renderer. */
+	wallpaperPlay(request: WallpaperPlayRequest): Promise<WallpaperPlay | null>;
 	/** Packages installed from the folder, and anything else that changed there. */
 	onThemesChanged(listener: (change: ThemeLibraryChange) => void): () => void;
 

@@ -4,6 +4,7 @@ import { installThemePackage, removeCommunityTheme, useThemeLibrary } from "../.
 import { api, errorMessage } from "../../api";
 import { MAX_THEME_PACKAGE_BYTES, THEME_PACKAGE_EXTENSION, parseThemePackage, type CommunityTheme } from "../../../../shared/themes";
 import { useAppearancePreferences } from "../../hooks/useAppearancePreferences";
+import { resetWallpaperPreferences } from "../../hooks/useWallpaperPreferences";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { getAvailableCodeThemes, parseThemeShareString, type ThemeMode, type ThemeSharePayload, type ThemeVariant } from "../../theme/theme.logic";
 import { WINDOW_MATERIALS, type WindowMaterial } from "../../../../shared/window";
@@ -24,6 +25,7 @@ import { ComposerPickerMenuPopup } from "../chat/ComposerPickerMenuPopup";
 import { COMPOSER_PICKER_MENU_OPTION_CLASS_NAME, COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME } from "../chat/composerPickerStyles";
 import { CheckIcon, ChevronDownIcon, CopyIcon, MinusIcon, PlusIcon, RotateCcwIcon, XIcon } from "../../lib/icons";
 import { FontFamilyPicker } from "./FontFamilyPicker";
+import { WallpaperSettings } from "./WallpaperSettings";
 import { SETTINGS_TEXTAREA_CLASS_NAME, SettingsDialog } from "./SettingsDialog";
 import { SettingsRow } from "./SettingsRow";
 
@@ -738,6 +740,8 @@ export function AppearanceSettings({ embedded = false }: { embedded?: boolean } 
 				</SettingsRow>
 			</SettingsGroup>
 
+			<WallpaperSettings />
+
 			<SettingsGroup title={t("settings.appearance.group.fonts")}>
 				<SettingsRow hint={t("settings.uiFontHint")} label={t("settings.uiFont")}>
 					<div className="flex items-center gap-1">
@@ -874,6 +878,7 @@ export function AppearanceSettings({ embedded = false }: { embedded?: boolean } 
 						onClick={() => {
 							resetAllThemes();
 							resetPreferences();
+							resetWallpaperPreferences();
 						}}
 						size="sm"
 						variant="chrome-outline"

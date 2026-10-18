@@ -45,6 +45,7 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { TitleBar } from "./components/TitleBar";
 import { ChatSlot, createChatHost } from "./components/ChatSlot";
 import { CommunityAmbient, CommunityBackground } from "./components/CommunityBackground";
+import { WallpaperBackdrop } from "./components/WallpaperBackdrop";
 import { SplitGrid } from "./components/SplitGrid";
 import { useSplitPanes, type PaneSlot } from "./hooks/useSplitPanes";
 import { startResizeDrag } from "./lib/resizeDrag";
@@ -1112,6 +1113,7 @@ export default function App() {
 	return (
 		<LinkOpenerContext.Provider value={openLink}>
 		<div className="app-window-backdrop relative flex h-dvh min-h-0 w-full flex-col overflow-hidden text-foreground">
+			<WallpaperBackdrop />
 			<CommunityAmbient />
 			<TitleBar
 				projectLabel={cwd ? projectLabel(cwd, api.homeDir) : null}
@@ -1267,7 +1269,7 @@ export default function App() {
 				{dockOpen ? (
 					<div
 						aria-hidden="true"
-						className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--color-background-button-secondary-hover)]"
+						className="dock-resize-handle w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--color-background-button-secondary-hover)]"
 						onPointerDown={startDockDrag}
 					/>
 				) : null}

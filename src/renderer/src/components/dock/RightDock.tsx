@@ -171,7 +171,7 @@ export function RightDock({
 	};
 
 	return (
-		<div className="relative flex h-full min-h-0 w-full flex-col bg-[var(--color-background-surface)]">
+		<div className="wallpaper-dock relative flex h-full min-h-0 w-full flex-col bg-[var(--color-background-surface)]">
 			<div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-[color:var(--app-surface-divider)] px-1.5">
 				<div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
 					{tabs.map((tab) => (

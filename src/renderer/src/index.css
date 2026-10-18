@@ -3784,14 +3784,32 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
   .prompt-bar-highlight { transition: none; }
 }
 
-/* The welcome card keeps its composer and project tray together in the hero. */
-.welcome-composer-card,
-.welcome-quick-start {
-  background: color-mix(in srgb, var(--foreground) 4%, var(--background));
+/* The welcome card keeps its composer and project tray together in the hero.
+   The card itself is the frosted input: one Gaussian blur, so the wallpaper
+   shows through the field instead of a flat fill. */
+.welcome-composer-card {
+  background: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-opacity),
+    transparent
+  );
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
+}
+
+.welcome-quick-start,
+.workspace-search {
+  background: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-opacity),
+    transparent
+  );
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
 }
 
 .welcome-quick-start:hover {
-  background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  background: color-mix(in srgb, var(--composer-glass-surface) 72%, transparent);
 }
 
 .welcome-composer {
@@ -3805,9 +3823,24 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 }
 
 .welcome-composer .chat-composer-surface {
-  background: var(--popover);
+  background: transparent;
   border-color: color-mix(in srgb, var(--foreground) 7%, transparent);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.welcome-composer .chat-composer-surface::before {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.welcome-theme-toggle {
+  background: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-opacity),
+    transparent
+  );
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
 }
 
 .welcome-composer textarea { font-size: 14px; }
@@ -3833,4 +3866,50 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 
 @media (max-height: 540px) {
   .welcome-hero { padding-top: 3rem; padding-bottom: 2rem; }
+}
+
+/* A wallpaper sits behind the window. These rules are unlayered so they win
+   over Tailwind utility backgrounds. The chrome row is the left rail's fill;
+   once a wallpaper is on, that row steps aside and the rail keeps the fill
+   itself, so the main card and the right dock can frost directly over the
+   picture. Inner sheets that would paint a second opaque fill step aside. */
+html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) {
+  background: transparent;
+}
+
+html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) > nav,
+html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) > .contents > aside {
+  background: var(--app-sidebar-surface, var(--card));
+}
+
+/* Rounded corners and the transparent dock gutter read as holes once the
+   chrome behind them is the wallpaper. Square the meeting edges and paint
+   the gutter with the same fill as the workspace list. */
+html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) > .contents > aside,
+html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) > main,
+html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) aside:has(.wallpaper-dock) > div {
+  border-radius: 0;
+}
+
+html[data-wallpaper] .dock-resize-handle {
+  background-color: var(--app-sidebar-surface, var(--card));
+}
+
+html[data-wallpaper] .dock-resize-handle:hover {
+  background-color: var(--color-background-button-secondary-hover);
+}
+
+/* The workspace list already paints --app-sidebar-surface. The main card and
+   the right dock use that same fill, with no second tint or blur on top. */
+html[data-wallpaper] .chat-content-card,
+html[data-wallpaper] .wallpaper-dock {
+  background: var(--app-sidebar-surface, var(--card));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-wallpaper] .split-pane,
+html[data-wallpaper] .split-grid-split,
+html[data-wallpaper] .wallpaper-dock section {
+  background: transparent;
 }

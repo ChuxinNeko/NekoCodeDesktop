@@ -8,6 +8,7 @@ import type { AgentDefaults, ExecutionMode, SendPromptRequest, ThinkingLevel } f
 import { api } from "../api";
 import { useTranslation } from "../i18n";
 import { useTheme } from "../hooks/useTheme";
+import { useWallpaperPreferences } from "../hooks/useWallpaperPreferences";
 import { cn } from "../lib/utils";
 import { readUserName } from "../lib/onboarding";
 import { BookIcon, BugIcon, CodeIcon, FlaskConicalIcon, GitPullRequestIcon, ListTodoIcon, MoonIcon, PencilIcon, SunIcon, XIcon } from "../lib/icons";
@@ -55,6 +56,8 @@ export function WelcomeView(props: WelcomeViewProps) {
 	const { t } = useTranslation();
 	const { cwd, busy, error, defaults } = props;
 	const { resolvedTheme, setTheme } = useTheme();
+	const { preferences: wallpaper } = useWallpaperPreferences();
+	const wallpaperOn = wallpaper.source !== "none" && wallpaper.strength > 0 && api.runtime === "electron";
 	const userName = readUserName();
 	const [hour, setHour] = useState(() => new Date().getHours());
 	const [quickInsertion, setQuickInsertion] = useState<ComposerInsertion | null>(null);
@@ -67,8 +70,8 @@ export function WelcomeView(props: WelcomeViewProps) {
 
 	return (
 		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-			<AsciiWaveBackground exclusionRef={composerSurfaceRef} />
-			<div className="absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 bg-background p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
+			{wallpaperOn ? null : <AsciiWaveBackground exclusionRef={composerSurfaceRef} />}
+			<div className="welcome-theme-toggle absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
 				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
 					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
 						onClick={() => setTheme(mode)}

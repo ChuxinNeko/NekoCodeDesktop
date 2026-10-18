@@ -33,6 +33,7 @@ import type { FusionConfig } from "../shared/fusion";
 import type { TaskBoardEntry } from "../shared/task-board";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
+import { registerWallpaperIpc } from "./wallpaper/host";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, session, shell, utilityProcess } from "electron";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
@@ -1017,6 +1018,7 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
+	registerWallpaperIpc();
 	const versionInfo = () => appVersionInfo(app.isPackaged, app.getVersion());
 	const appUpdates = new AppUpdateService({
 		currentVersion: () => versionInfo().version,

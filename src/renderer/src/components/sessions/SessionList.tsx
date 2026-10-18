@@ -121,7 +121,7 @@ export function SessionList(props: SessionListProps) {
 					<input
 						aria-label={t("sessions.searchAria")}
 						className={cn(
-							"w-full rounded-md border border-transparent bg-[var(--color-background-control-opaque,transparent)]",
+							"workspace-search w-full rounded-md border border-transparent bg-[var(--color-background-control-opaque,transparent)]",
 							"py-1 pl-7 pr-6 text-[length:var(--app-font-size-ui-sm,11px)] text-foreground outline-none",
 							"placeholder:text-muted-foreground/50 focus:border-[color:var(--color-border-focus)]",
 						)}
