@@ -35,6 +35,7 @@ from Synara's `apps/web/src/` and adapted:
 | `src/renderer/src/index.css` | `index.css` |
 | `src/renderer/src/theme/theme.logic.ts`, `theme.seed.generated.ts` | `theme/` |
 | `src/renderer/src/components/ui/*` | `components/ui/` |
+| `src/renderer/src/components/chat/AsciiWaveBackground.tsx` | `components/chat/AsciiWaveBackground.tsx` |
 | `src/renderer/src/lib/icons.tsx`, `central-icons.tsx`, `sidebarRowStyles.ts`, `appDensity.ts`, `chatWidth.ts`, `fontFamily.ts` | same names |
 | `src/renderer/src/surfaceStyles.ts`, `components/chat/composerPickerStyles.ts` | same names |
 | `src/renderer/public/central-icons-*/` | static icon assets (the 8 in use) |

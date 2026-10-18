@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { SlashCommandSummary } from "../../../shared/commands";
 import type { MentionCandidate } from "../../../shared/mentions";
@@ -12,6 +12,7 @@ import { cn } from "../lib/utils";
 import { readUserName } from "../lib/onboarding";
 import { BookIcon, BugIcon, CodeIcon, FlaskConicalIcon, GitPullRequestIcon, ListTodoIcon, MoonIcon, PencilIcon, SunIcon, XIcon } from "../lib/icons";
 import { ComposerPickers } from "./chat/ComposerPickers";
+import { AsciiWaveBackground } from "./chat/AsciiWaveBackground";
 import { ComposerShell } from "./chat/ComposerShell";
 import { ProjectPicker } from "./chat/ProjectPicker";
 import { Button } from "./ui/button";
@@ -57,6 +58,8 @@ export function WelcomeView(props: WelcomeViewProps) {
 	const userName = readUserName();
 	const [hour, setHour] = useState(() => new Date().getHours());
 	const [quickInsertion, setQuickInsertion] = useState<ComposerInsertion | null>(null);
+	const composerSurfaceRef = useRef<HTMLDivElement>(null);
+	const quickStartsRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const timer = setInterval(() => setHour(new Date().getHours()), 60_000);
 		return () => clearInterval(timer);
@@ -65,6 +68,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 
 	return (
 		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+			<AsciiWaveBackground exclusionRef={composerSurfaceRef} characterClearanceRef={quickStartsRef} />
 			<div className="absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 bg-background p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
 				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
 					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
@@ -75,7 +79,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 				))}
 			</div>
 			{error ? (
-				<div className="flex items-center gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
+				<div className="relative flex items-center gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
 					<span className="min-w-0 flex-1 truncate">{error}</span>
 					<Button onClick={props.onDismissError} size="icon-chip" variant="ghost">
 						<XIcon className="size-3" />
@@ -83,11 +87,11 @@ export function WelcomeView(props: WelcomeViewProps) {
 				</div>
 			) : null}
 
-			<div className="welcome-hero mx-auto flex w-full max-w-[44rem] flex-1 flex-col justify-center px-5 py-20 sm:px-8">
+			<div className="welcome-hero relative mx-auto flex w-full max-w-[44rem] flex-1 flex-col justify-center px-5 py-20 sm:px-8">
 				<h1 className="mb-7 text-center text-[clamp(22px,2.5vw,28px)] font-medium leading-snug tracking-[-0.035em] text-foreground">
 					{userName ? t(`welcome.greetingNamed.${greeting}`, { name: userName }) : t(`welcome.greeting.${greeting}`)}
 				</h1>
-				<div className="welcome-composer-card rounded-[20px] p-[3px]">
+				<div ref={composerSurfaceRef} className="welcome-composer-card rounded-[20px] p-[3px]">
 					<ComposerShell
 						className="welcome-composer"
 						insertion={props.insertion ?? quickInsertion}
@@ -134,7 +138,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 						{props.composerHeader ? <div className="welcome-workspace min-w-0">{props.composerHeader}</div> : null}
 					</div>
 				</div>
-				<div className="mt-4 flex flex-col items-center gap-2" role="group" aria-label={t("welcome.quickStarts")}>
+				<div ref={quickStartsRef} className="mt-4 flex flex-col items-center gap-2" role="group" aria-label={t("welcome.quickStarts")}>
 					{[QUICK_STARTS.slice(0, 4), QUICK_STARTS.slice(4)].map((row, index) => (
 						<div key={index} className="flex flex-wrap justify-center gap-2">
 							{row.map(({ key, icon: Icon }) => (
