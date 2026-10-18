@@ -2,7 +2,6 @@ import { api } from "../api";
 import { useTranslation } from "../i18n";
 import { PanelLeftIcon, PanelRightCloseIcon } from "../lib/icons";
 import { isMacNavigatorPlatform } from "../lib/utils";
-import { LayoutModeSwitch, type LayoutMode } from "./LayoutModeSwitch";
 import { IconButton } from "./ui/icon-button";
 
 /**
@@ -24,17 +23,12 @@ export function TitleBar({
 	onToggleSidebar,
 	dockOpen,
 	onToggleDock,
-	layoutMode,
-	onLayoutModeChange,
 }: {
 	projectLabel: string | null;
 	sidebarOpen: boolean;
 	onToggleSidebar: () => void;
 	dockOpen: boolean;
 	onToggleDock: () => void;
-	/** The Agent/IDE switch; absent where the IDE is not offered (WebUI). */
-	layoutMode?: LayoutMode;
-	onLayoutModeChange?: (mode: LayoutMode) => void;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -43,7 +37,6 @@ export function TitleBar({
 			data-mac={isMacNavigatorPlatform() ? "" : undefined}
 			style={{ height: api.shell.titleBarHeight }}
 		>
-			{layoutMode && onLayoutModeChange ? <LayoutModeSwitch value={layoutMode} onChange={onLayoutModeChange} /> : null}
 			<IconButton
 				aria-pressed={sidebarOpen}
 				label={t("sidebar.toggleSidebar")}

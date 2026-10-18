@@ -40,6 +40,7 @@ import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AutomaticUpdateDialog } from "./components/updates/UpdateDialog";
 import { useHostDirectoryPicker } from "./components/HostDirectoryPicker";
 import { Sidebar } from "./components/Sidebar";
+import { AppRail } from "./components/AppRail";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { TitleBar } from "./components/TitleBar";
 import { ChatSlot, createChatHost } from "./components/ChatSlot";
@@ -51,7 +52,7 @@ import { startSessionDrag, type DraggedSession } from "./lib/sessionDrag";
 import type { DropPlan } from "./lib/splitLayout";
 import { DragHandleIcon, Maximize2, XIcon } from "./lib/icons";
 import { IconButton } from "./components/ui/icon-button";
-import type { LayoutMode } from "./components/LayoutModeSwitch";
+import { useLayoutMode } from "./hooks/useLayoutMode";
 import type { InlineEditRequest } from "./components/ide/EditorArea";
 import { Spinner } from "./components/ui/spinner";
 import { useAppearancePreferences } from "./hooks/useAppearancePreferences";
@@ -79,7 +80,6 @@ const DOCK_OPEN_STORAGE_KEY = "nekocode:dock-open";
 const SIDEBAR_OPEN_STORAGE_KEY = "nekocode:sidebar-open";
 /** NekoLocal or the id of an external agent; see the workspace picker. */
 const AGENT_WORKSPACE_STORAGE_KEY = "nekocode:agent-workspace";
-const LAYOUT_MODE_STORAGE_KEY = "nekocode:layout-mode";
 const IDE_SIDE_OPEN_STORAGE_KEY = "nekocode:ide-side-open";
 const IDE_CHAT_OPEN_STORAGE_KEY = "nekocode:ide-chat-open";
 const DEFAULT_DOCK_WIDTH = 460;
@@ -116,7 +116,7 @@ function writeStored(key: string, value: string | null): void {
 
 export default function App() {
 	const { t } = useTranslation();
-	const { resolvedTheme, setTheme, theme } = useTheme();
+	const { resolvedTheme, setTheme } = useTheme();
 	const browserAvailable = api.runtime !== "web";
 	const pickDirectory = useHostDirectoryPicker();
 	// Fall back to the home directory rather than to "no project": the welcome
@@ -292,7 +292,10 @@ export default function App() {
 		() => readStored(SIDEBAR_OPEN_STORAGE_KEY) !== "0",
 	);
 	const [dockOpen, setDockOpen] = useState(
-		() => readStored(DOCK_OPEN_STORAGE_KEY) === "1",
+		() => {
+			const stored = readStored(DOCK_OPEN_STORAGE_KEY);
+			return stored === "1" || (stored === null && window.innerWidth >= 1100);
+		},
 	);
 	const [dockTabs, setDockTabs] = useState<DockTabId[]>([]);
 	const [dockActive, setDockActive] = useState<DockTabId | null>(null);
@@ -318,17 +321,13 @@ export default function App() {
 
 	// Agent or IDE. The IDE is a desktop feature: the WebUI and the phone app
 	// never offer it.
-	const ideAvailable = api.runtime === "electron";
-	const [layoutMode, setLayoutModeState] = useState<LayoutMode>(() =>
-		ideAvailable && readStored(LAYOUT_MODE_STORAGE_KEY) === "ide" ? "ide" : "agent",
-	);
+	const { layoutMode } = useLayoutMode();
+	const ideVisible = layoutMode === "ide" && view === "chat";
 	/** Mounted on first use and then kept, hidden, so its tabs and edits survive switching back. */
 	const [ideMounted, setIdeMounted] = useState(layoutMode === "ide");
-	const setLayoutMode = (mode: LayoutMode) => {
-		setLayoutModeState(mode);
-		writeStored(LAYOUT_MODE_STORAGE_KEY, mode);
-		if (mode === "ide") setIdeMounted(true);
-	};
+	useEffect(() => {
+		if (layoutMode === "ide") setIdeMounted(true);
+	}, [layoutMode]);
 	const [ideSideOpen, setIdeSideOpen] = useState(() => readStored(IDE_SIDE_OPEN_STORAGE_KEY) !== "0");
 	const [ideChatOpen, setIdeChatOpen] = useState(() => readStored(IDE_CHAT_OPEN_STORAGE_KEY) !== "0");
 	const setIdeSideOpenStored = (open: boolean) => {
@@ -1097,7 +1096,7 @@ export default function App() {
 			sign: -1,
 			initial: dockWidth,
 			min: MIN_DOCK_WIDTH,
-			max: () => window.innerWidth - MIN_CHAT_WIDTH,
+			max: () => window.innerWidth - 52 - (sidebarOpen && view !== "settings" ? 260 : 0) - 4 - MIN_CHAT_WIDTH,
 			onFrame: (width) => {
 				if (dockAsideRef.current) dockAsideRef.current.style.width = `${width}px`;
 				if (dockInnerRef.current) dockInnerRef.current.style.width = `${width}px`;
@@ -1116,11 +1115,9 @@ export default function App() {
 			<CommunityAmbient />
 			<TitleBar
 				projectLabel={cwd ? projectLabel(cwd, api.homeDir) : null}
-				layoutMode={ideAvailable ? layoutMode : undefined}
-				onLayoutModeChange={ideAvailable ? setLayoutMode : undefined}
-				sidebarOpen={layoutMode === "ide" ? ideSideOpen : sidebarOpen}
+				sidebarOpen={ideVisible ? ideSideOpen : sidebarOpen}
 				onToggleSidebar={() => {
-					if (layoutMode === "ide") {
+					if (ideVisible) {
 						setIdeSideOpenStored(!ideSideOpen);
 						return;
 					}
@@ -1129,21 +1126,38 @@ export default function App() {
 						return !open;
 					});
 				}}
-				dockOpen={layoutMode === "ide" ? ideChatOpen : dockOpen}
-				onToggleDock={() => (layoutMode === "ide" ? setIdeChatOpenStored(!ideChatOpen) : setDockOpenStored(!dockOpen))}
+				dockOpen={ideVisible ? ideChatOpen : dockOpen}
+				onToggleDock={() => (ideVisible ? setIdeChatOpenStored(!ideChatOpen) : setDockOpenStored(!dockOpen))}
 			/>
 			{/* Both layouts stay laid out, one over the other: hiding with visibility
 			    rather than unmounting keeps the browser's webviews and the IDE's
 			    editors alive across a switch. */}
 			<div className="relative flex min-h-0 min-w-0 flex-1">
 			<div
-				inert={layoutMode === "ide"}
+				inert={ideVisible}
 				className={cn(
 					"app-chrome-surface absolute inset-0 flex min-h-0 min-w-0 overflow-hidden",
-					layoutMode === "ide" && "layout-hidden",
+					ideVisible && "layout-hidden",
 				)}
 			>
+				<AppRail
+					view={view}
+					activeTasks={activeTaskCount(taskBoard)}
+					resolvedTheme={resolvedTheme}
+					browserAvailable={browserAvailable}
+					browserOpen={dockOpen && dockActive === "browser"}
+					onSelectView={(next) => {
+						selectView(next);
+						if (next === "chat") {
+							setSidebarOpen(true);
+							writeStored(SIDEBAR_OPEN_STORAGE_KEY, "1");
+						}
+					}}
+					onToggleBrowser={() => toggleDockTool("browser")}
+					onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+				/>
 				{sidebarOpen ? (
+					<div className={view === "settings" ? "hidden" : "contents"}>
 					<Sidebar
 						cwd={cwd}
 						workspaces={workspaces}
@@ -1155,12 +1169,8 @@ export default function App() {
 						sessionsDraggable={api.runtime === "electron"}
 						activeSessionId={selected?.id ?? null}
 						streaming={streamingNow}
-						activeTasks={activeTaskCount(taskBoard)}
 						view={view}
 						busy={busy}
-						theme={theme}
-						resolvedTheme={resolvedTheme}
-						browserOpen={dockOpen && dockActive === "browser"}
 						onPickProject={pickProject}
 						onNewSession={() => {
 							if (!acpActive) return void createSession();
@@ -1177,15 +1187,14 @@ export default function App() {
 							panes.forget(session.id);
 							void sessions.remove(session);
 						}}
-						onSelectView={selectView}
-						onToggleBrowser={() => toggleDockTool("browser")}
-						onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
 					/>
+					</div>
 				) : null}
 				<main
 					className={cn(
 						CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
-						"flex min-h-0 min-w-0 flex-1 flex-col rounded-tl-lg",
+						"flex min-h-0 min-w-0 flex-1 flex-col",
+						view === "settings" ? "rounded-l-xl" : !sidebarOpen && "rounded-tl-lg",
 						dockOpen && "rounded-tr-lg",
 					)}
 				>
@@ -1242,7 +1251,7 @@ export default function App() {
 										: []
 							}
 							acceptDrops={api.runtime === "electron"}
-							renderPane={(slot) => <ChatSlot host={hostFor(slot.key)} active={layoutMode === "agent"} />}
+							renderPane={(slot) => <ChatSlot host={hostFor(slot.key)} active={!ideVisible} />}
 							onFocus={panes.focus}
 							onDrop={dropSession}
 						/>
@@ -1300,10 +1309,10 @@ export default function App() {
 			</div>
 			{ideMounted ? (
 				<div
-					inert={layoutMode !== "ide"}
+					inert={!ideVisible}
 					className={cn(
 						"app-chrome-surface absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden",
-						layoutMode !== "ide" && "layout-hidden",
+						!ideVisible && "layout-hidden",
 					)}
 				>
 					<Suspense
@@ -1315,9 +1324,9 @@ export default function App() {
 					>
 						<IdeLayout
 							cwd={cwd}
-							visible={layoutMode === "ide"}
+							visible={ideVisible}
 							dark={resolvedTheme === "dark"}
-							chat={<ChatSlot host={hostFor(panes.focused)} active={layoutMode === "ide"} />}
+							chat={<ChatSlot host={hostFor(panes.focused)} active={ideVisible} />}
 							chatTitle={
 								acpActive
 									? null
@@ -1342,7 +1351,6 @@ export default function App() {
 							onAddToChat={addToChat}
 							onInlineEdit={inlineEdit}
 							onOpenSettings={() => {
-								setLayoutMode("agent");
 								setSettingsSection(undefined);
 								setView("settings");
 							}}

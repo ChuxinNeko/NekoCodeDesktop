@@ -2,6 +2,7 @@
 // Purpose: First-launch setup — name, working directory, theme, model, preferences.
 // Layer: App shell (rendered by main.tsx before <App /> until completed or skipped).
 
+import { LayoutSettings } from "../settings/LayoutSettings";
 import { AppearanceSettings } from "../settings/AppearanceSettings";
 import { ProviderModelSettings } from "../settings/ProviderModelSettings";
 import { useEffect, useMemo, useState } from "react";
@@ -320,6 +321,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 									<div className="flex flex-col gap-1">
 										<Heading title={t("onboarding.preferences.title")} hint={t("onboarding.preferences.hint")} />
 										<div className="mt-3 flex flex-col divide-y divide-border/60">
+											<LayoutSettings />
 											<ToggleRow
 												title={t("settings.notifyOnTaskFinish")}
 												hint={t("settings.notifyOnTaskFinishHint")}

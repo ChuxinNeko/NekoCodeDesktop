@@ -413,6 +413,8 @@ export const zhCN: Record<TranslationKey, string> = {
 	"sidebar.toggleTheme": "切换主题",
 	"sidebar.toggleSidebar": "折叠/展开侧边栏",
 	"sidebar.settings": "设置",
+	"nav.primary": "主导航",
+	"nav.chat": "会话记录",
 	"nav.review": "审查",
 	"nav.pullRequests": "拉取请求",
 	"nav.automations": "自动化",
@@ -831,6 +833,7 @@ export const zhCN: Record<TranslationKey, string> = {
 
 	// IDE layout -------------------------------------------------------------------
 	"layout.switch": "布局",
+	"layout.hint": "Agent 以会话为中心，IDE 以代码编辑器为中心。布局选择会自动保存。",
 	"layout.agent": "Agent",
 	"layout.ide": "IDE",
 	"ide.noProject": "打开一个项目目录，开始编辑代码。",

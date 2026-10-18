@@ -202,7 +202,9 @@
   /* Flat chrome tint without the blur pass: used for the content ROW behind the
      rounded content/dock cards so the corner cutouts reveal the same material as
      the title bar. Kept filter-free on purpose — a backdrop-filter here would
-     create a containing block and misplace fixed-position overlays inside the row. */
+     create a containing block and misplace fixed-position overlays inside the row.
+     The rail and session panel stay transparent over this shared tint: a second
+     fill would compound the Mica/Acrylic tint and break continuity with the title bar. */
   .app-chrome-surface {
     background: var(--app-sidebar-surface, var(--card));
   }

@@ -1,45 +1,19 @@
 import type { SessionSummary } from "../../../shared/agent";
 import type { AcpAgentInfo } from "../../../shared/acp";
-import type { ThemeMode } from "../hooks/useTheme";
 import { projectLabel } from "../../../shared/paths";
 import { api } from "../api";
 import { cn } from "../lib/utils";
 import {
 	SIDEBAR_HEADER_ROW_CLASS_NAME,
-	SIDEBAR_ROW_ACTIVE_CLASS_NAME,
 	SIDEBAR_ROW_HOVER_CLASS_NAME,
 	SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
 } from "../lib/sidebarRowStyles";
 import type { WorkspaceView } from "../App";
-import { useTranslation, type TranslationKey } from "../i18n";
+import { useTranslation } from "../i18n";
 import { SessionList } from "./sessions/SessionList";
 import { AgentIcon } from "./agents/AgentIcon";
-import { IconButton } from "./ui/icon-button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import {
-	FolderOpenIcon,
-	GitBranchIcon,
-	GitPullRequestIcon,
-	GlobeIcon,
-	KanbanIcon,
-	MoonIcon,
-	NewThreadIcon,
-	SettingsIcon,
-	SunIcon,
-	WorkflowIcon,
-} from "../lib/icons";
-
-/** Full-surface destinations that live below the thread list. */
-const SECONDARY_NAV: ReadonlyArray<{
-	id: Exclude<WorkspaceView, "chat">;
-	labelKey: TranslationKey;
-	icon: typeof GitBranchIcon;
-}> = [
-	{ id: "tasks", labelKey: "nav.tasks", icon: KanbanIcon },
-	{ id: "review", labelKey: "nav.review", icon: GitBranchIcon },
-	{ id: "pull-requests", labelKey: "nav.pullRequests", icon: GitPullRequestIcon },
-	{ id: "automations", labelKey: "nav.automations", icon: WorkflowIcon },
-];
+import { FolderOpenIcon, NewThreadIcon } from "../lib/icons";
 
 interface SidebarProps {
 	cwd: string | null;
@@ -56,22 +30,14 @@ interface SidebarProps {
 	sessionsDraggable?: boolean;
 	activeSessionId: string | null;
 	streaming: boolean;
-	/** Tasks on the board still running or waiting on the user; badges the 多任务 row. */
-	activeTasks?: number;
 	view: WorkspaceView;
 	busy: boolean;
-	theme: ThemeMode;
-	resolvedTheme: "light" | "dark";
-	browserOpen: boolean;
 	onPickProject: () => void;
 	onNewSession: () => void;
 	onNewWorkspaceSession: (cwd: string) => void;
 	onOpenSession: (session: SessionSummary) => void;
 	onRenameSession: (session: SessionSummary, title: string) => void;
 	onDeleteSession: (session: SessionSummary) => void;
-	onSelectView: (view: WorkspaceView) => void;
-	onToggleBrowser: () => void;
-	onToggleTheme: () => void;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -83,25 +49,20 @@ export function Sidebar(props: SidebarProps) {
 		streaming,
 		view,
 		busy,
-		theme,
-		resolvedTheme,
-		browserOpen,
 		onPickProject,
 		onNewSession,
 		onOpenSession,
 		onRenameSession,
 		onDeleteSession,
-		onSelectView,
-		onToggleBrowser,
-		onToggleTheme,
 	} = props;
 	const { t } = useTranslation();
 
 	return (
 		<aside
+			aria-label={t("nav.chat")}
 			className={cn(
-				"flex h-full w-[260px] min-w-[220px] shrink-0 flex-col",
-				"border-r border-[color:var(--sidebar-border)]",
+				"flex h-full w-[260px] min-w-[220px] shrink-0 flex-col pb-2",
+				"overflow-hidden rounded-l-xl rounded-r-none border border-[color:var(--app-surface-divider)] bg-transparent",
 			)}
 		>
 			<div className="flex flex-col gap-1 px-2 pb-1 pt-2.5">
@@ -131,17 +92,6 @@ export function Sidebar(props: SidebarProps) {
 							{cwd ?? t("sidebar.projectPicker")}
 						</TooltipPopup>
 					</Tooltip>
-					<IconButton
-						label={t("sidebar.toggleTheme")}
-						onClick={onToggleTheme}
-						tooltip={t("sidebar.toggleTheme")}
-					>
-						{resolvedTheme === "dark" ? (
-							<SunIcon className="size-3.5" />
-						) : (
-							<MoonIcon className="size-3.5" />
-						)}
-					</IconButton>
 				</div>
 
 				<button
@@ -158,48 +108,6 @@ export function Sidebar(props: SidebarProps) {
 					<NewThreadIcon className="size-3.5 shrink-0 opacity-80" />
 					<span className="min-w-0 flex-1 truncate">{t("sidebar.newSession")}</span>
 				</button>
-
-				{SECONDARY_NAV.map((entry) => (
-					<button
-						key={entry.id}
-						type="button"
-						onClick={() => onSelectView(entry.id)}
-						className={cn(
-							SIDEBAR_HEADER_ROW_CLASS_NAME,
-							view === entry.id
-								? SIDEBAR_ROW_ACTIVE_CLASS_NAME
-								: cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
-						)}
-					>
-						<entry.icon className="size-3.5 shrink-0 opacity-80" />
-						<span className="min-w-0 flex-1 truncate">{t(entry.labelKey)}</span>
-						{entry.id === "tasks" && props.activeTasks ? (
-							<span className="flex items-center gap-1 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground tabular-nums">
-								<span className="size-1.5 animate-pulse rounded-full bg-foreground/70" />
-								{props.activeTasks}
-							</span>
-						) : null}
-					</button>
-				))}
-				{api.runtime !== "web" ? (
-					<button
-						type="button"
-						aria-pressed={browserOpen}
-						onClick={onToggleBrowser}
-						className={cn(
-							SIDEBAR_HEADER_ROW_CLASS_NAME,
-							browserOpen
-								? SIDEBAR_ROW_ACTIVE_CLASS_NAME
-								: cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
-						)}
-					>
-						<GlobeIcon className="size-3.5 shrink-0 opacity-80" />
-						<span className="min-w-0 flex-1 truncate">{t("nav.browser")}</span>
-						<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
-							{browserOpen ? t("nav.browserOn") : t("nav.browserOff")}
-						</span>
-					</button>
-				) : null}
 			</div>
 
 			<SessionList
@@ -229,25 +137,6 @@ export function Sidebar(props: SidebarProps) {
 					);
 				}}
 			/>
-
-			<div className="flex flex-col gap-1 px-2 pb-2 pt-1">
-				<button
-					type="button"
-					onClick={() => onSelectView("settings")}
-					className={cn(
-						SIDEBAR_HEADER_ROW_CLASS_NAME,
-						view === "settings"
-							? SIDEBAR_ROW_ACTIVE_CLASS_NAME
-							: cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
-					)}
-				>
-					<SettingsIcon className="size-3.5 shrink-0 opacity-80" />
-					<span className="min-w-0 flex-1 truncate">{t("sidebar.settings")}</span>
-					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/50">
-						{t(theme === "dark" ? "theme.dark" : theme === "light" ? "theme.light" : "theme.system")}
-					</span>
-				</button>
-			</div>
 		</aside>
 	);
 }

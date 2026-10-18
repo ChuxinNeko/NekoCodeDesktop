@@ -413,6 +413,8 @@ export const en = {
 	"sidebar.toggleTheme": "Toggle theme",
 	"sidebar.toggleSidebar": "Toggle sidebar",
 	"sidebar.settings": "Settings",
+	"nav.primary": "Primary navigation",
+	"nav.chat": "Chats",
 	"nav.review": "Review",
 	"nav.pullRequests": "Pull requests",
 	"nav.automations": "Automations",
@@ -837,6 +839,7 @@ export const en = {
 
 	// IDE layout -------------------------------------------------------------------
 	"layout.switch": "Layout",
+	"layout.hint": "Agent centers on conversations; IDE centers on the code editor. Your layout choice is saved automatically.",
 	"layout.agent": "Agent",
 	"layout.ide": "IDE",
 	"ide.noProject": "Open a project folder to start editing.",

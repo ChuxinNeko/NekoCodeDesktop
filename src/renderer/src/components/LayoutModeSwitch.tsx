@@ -11,7 +11,7 @@ const MODES: ReadonlyArray<{ mode: LayoutMode; icon: typeof BotIcon; labelKey: "
 ];
 
 /**
- * The Agent ⇄ IDE slider in the caption strip. A segmented control with a thumb
+ * The Agent ⇄ IDE control shared by settings and first-launch setup. A segmented control with a thumb
  * that slides between the halves, so the switch reads as one control with two
  * positions rather than two unrelated buttons.
  */
