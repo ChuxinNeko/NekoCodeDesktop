@@ -91,6 +91,35 @@ export class GitHubAuthorizationService {
 		return result;
 	}
 
+	/** Verify actual repository access; OAuth consent alone does not install the app. */
+	private async hasRepositories(credentials: GitHubOAuthCredentials): Promise<boolean> {
+		const get = async (path: string): Promise<Record<string, unknown>> => {
+			try {
+				const response = await this.request(`https://api.github.com${path}`, {
+					redirect: "error", signal: AbortSignal.timeout(20_000),
+					headers: { accept: "application/vnd.github+json", authorization: `Bearer ${credentials.accessToken}`, "X-GitHub-Api-Version": "2022-11-28" },
+				});
+				if (!response.ok) throw new Error();
+				const value: unknown = await response.json();
+				if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+				return value as Record<string, unknown>;
+			} catch { throw new GitHubAuthorizationError("github_unavailable", "暂时无法确认 GitHub 仓库访问权限，请稍后重试。", 502); }
+		};
+		for (let page = 1; page <= 10; page++) {
+			const body = await get(`/user/installations?per_page=100&page=${page}`);
+			if (!Array.isArray(body?.installations)) throw new GitHubAuthorizationError("invalid_response", "GitHub 返回了无效的安装信息。", 502);
+			for (const value of body.installations) {
+				if (!value || typeof value !== "object") continue;
+				const installation = value as { id?: number; suspended_at?: unknown };
+				if (typeof installation.id !== "number" || !Number.isSafeInteger(installation.id) || installation.id <= 0 || installation.suspended_at) continue;
+				const repos = await get(`/user/installations/${installation.id}/repositories?per_page=1`);
+				if (Array.isArray(repos?.repositories) && repos.repositories.length > 0) return true;
+			}
+			if (body.installations.length < 100) return false;
+		}
+		throw new GitHubAuthorizationError("github_unavailable", "仓库安装数量过多，请稍后重试。", 502);
+	}
+
 	async start(method: GitHubAuthorizationMethod, secret: string): Promise<GitHubAuthorization> {
 		const config = this.configured();
 		const id = random();
@@ -139,10 +168,10 @@ export class GitHubAuthorizationService {
 		return session;
 	}
 
-	async callback(state: string, code?: string, denied?: string): Promise<void> {
+	async callback(state: string, code?: string, denied?: string): Promise<string | undefined> {
 		this.configured();
 		const session = await this.store.get(state);
-		if (!session || session.method !== "browser" || !await this.store.claim(state, this.now()))
+		if (!session || session.method !== "browser" || session.status !== "pending" || !await this.store.claim(state, this.now()))
 			throw new GitHubAuthorizationError("invalid_state", "授权链接无效、已使用或已过期，请回到 NekoCode 重试。");
 		try {
 			if (denied || !code) throw this.error("access_denied");
@@ -150,7 +179,7 @@ export class GitHubAuthorizationService {
 			const config = this.configured();
 			const body = await this.github("/login/oauth/access_token", { client_id: config.clientId, client_secret: config.clientSecret,
 				code, redirect_uri: config.callbackUrl, code_verifier: verifier });
-			await this.ready(session, this.credentials(body));
+			return await this.ready(session, this.credentials(body));
 		} catch (error) {
 			await this.store.update(state, { status: "error", error: error instanceof GitHubAuthorizationError ? error.message : "授权失败，请重新开始。", payload: "" });
 			throw error;
@@ -159,10 +188,15 @@ export class GitHubAuthorizationService {
 
 	private async ready(session: GitHubAuthorizationDoc, credentials: GitHubOAuthCredentials) {
 		const grant: GitHubOAuthGrant = { credentials, method: session.method, installationUrl: `https://github.com/apps/${this.configured().appSlug}/installations/new` };
-		await this.store.update(session._id, { status: "ready", payload: this.seal(session._id, grant) });
+		// Keep credentials encrypted and unavailable to the desktop until installation is usable.
+		let installed = false;
+		try { installed = await this.hasRepositories(credentials); }
+		catch (error) { if (!(error instanceof GitHubAuthorizationError) || error.status !== 502) throw error; }
+		await this.store.update(session._id, { status: installed ? "ready" : "installing", nextPollAt: this.now() + 5000, payload: this.seal(session._id, grant) });
+		return installed ? undefined : grant.installationUrl;
 	}
 
-	async poll(id: string, secret: string): Promise<{ state: "pending"; interval: number } | { state: "complete"; grant: GitHubOAuthGrant }> {
+	async poll(id: string, secret: string): Promise<{ state: "pending"; interval: number; url?: string } | { state: "complete"; grant: GitHubOAuthGrant }> {
 		let session = await this.session(id, secret);
 		if (session.status === "pending" && session.method === "device" && await this.store.claim(id, this.now())) {
 			try {
@@ -183,6 +217,20 @@ export class GitHubAuthorizationService {
 				await this.store.update(id, { status: "error", error: error instanceof GitHubAuthorizationError ? error.message : "授权失败，请重新开始。", payload: "" });
 			}
 			session = await this.session(id, secret);
+		}
+		if (session.status === "installing") {
+			const grant = this.unseal<GitHubOAuthGrant>(id, session.payload);
+			if (await this.store.claim(id, this.now())) {
+				try {
+					const installed = await this.hasRepositories(grant.credentials);
+					await this.store.update(id, { status: installed ? "ready" : "installing", nextPollAt: this.now() + 5000 });
+				} catch (error) {
+					await this.store.update(id, { status: "installing", nextPollAt: this.now() + 5000 });
+					if (!(error instanceof GitHubAuthorizationError) || error.status !== 502) throw error;
+				}
+				session = await this.session(id, secret);
+			}
+			if (session.status !== "ready") return { state: "pending", interval: 5, ...(session.method === "device" ? { url: grant.installationUrl } : {}) };
 		}
 		if (session.status === "error") throw new GitHubAuthorizationError("authorization_failed", session.error ?? "授权失败，请重新开始。");
 		if (session.status === "ready") {

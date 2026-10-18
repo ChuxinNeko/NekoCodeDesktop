@@ -5,7 +5,7 @@ export interface GitHubAuthorizationDoc {
 	_id: string;
 	secretHash: string;
 	method: GitHubAuthorizationMethod;
-	status: "pending" | "exchanging" | "ready" | "error";
+	status: "pending" | "exchanging" | "installing" | "ready" | "error";
 	expiresAt: Date;
 	nextPollAt: number;
 	interval: number;
@@ -29,7 +29,7 @@ export class MongoGitHubSessionStore implements GitHubSessionStore {
 	get(id: string) { return this.collection.findOne({ _id: id }); }
 	async claim(id: string, now: number) {
 		const result = await this.collection.updateOne(
-			{ _id: id, status: "pending", expiresAt: { $gt: new Date(now) }, nextPollAt: { $lte: now } },
+			{ _id: id, status: { $in: ["pending", "installing"] }, expiresAt: { $gt: new Date(now) }, nextPollAt: { $lte: now } },
 			{ $set: { status: "exchanging" } },
 		);
 		return result.modifiedCount === 1;

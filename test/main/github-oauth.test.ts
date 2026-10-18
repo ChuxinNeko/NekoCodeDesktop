@@ -4,7 +4,7 @@ import type { GitHubAuthStatus } from "../../src/shared/pullRequests";
 import { isWebUiRpcMethod } from "../../src/shared/webui";
 import type { GitHubOAuthGrant } from "../../src/shared/github-oauth";
 
-function fixture(options?: { save?: (grant: GitHubOAuthGrant, active: () => boolean) => Promise<GitHubAuthStatus>; storage?: () => void }) {
+function fixture(options?: { save?: (grant: GitHubOAuthGrant, active: () => boolean) => Promise<GitHubAuthStatus>; storage?: () => void; pendingUrl?: string }) {
 	let now = Date.now();
 	const calls: { path: string; body: Record<string, string>; headers: Headers }[] = [];
 	const opened: string[] = [];
@@ -17,6 +17,7 @@ function fixture(options?: { save?: (grant: GitHubOAuthGrant, active: () => bool
 		if (path === "start") return Response.json({ id: "a".repeat(43), method: body.method,
 			url: body.method === "device" ? "https://github.com/login/device" : "https://github.com/login/oauth/authorize?state=test",
 			userCode: body.method === "device" ? "ABCD-EFGH" : undefined, expiresAt: now + 900_000, interval: 5 });
+		if (path === "poll" && options?.pendingUrl) return Response.json({ state: "pending", interval: 5, url: options.pendingUrl });
 		if (path === "poll") return Response.json({ state: "complete", grant: { method: "browser", credentials: { accessToken: "ghu_test" } } });
 		return Response.json({ ok: true });
 	}) as unknown as typeof fetch;
@@ -88,4 +89,21 @@ test("an old flow cannot cancel another flow, and sign-in RPC is desktop-only", 
 	f.service.cancel("b".repeat(43));
 	f.advance(5000); expect((await f.service.poll(flow.id)).state).toBe("complete");
 	for (const method of ["githubAuthorize", "githubPollAuthorization", "githubCancelAuthorization", "githubOpenAuthorization"]) expect(isWebUiRpcMethod(method)).toBe(false);
+});
+
+
+test("device authorization opens repository selection automatically only once, and Open retries that page", async () => {
+	const url = "https://github.com/apps/neko-test/installations/new";
+	const f = fixture({ pendingUrl: url }); const flow = await f.service.start("device");
+	f.advance(5000); expect((await f.service.poll(flow.id)).state).toBe("pending");
+	f.advance(5000); await f.service.poll(flow.id);
+	expect(f.opened).toEqual([url]); expect(f.saved).toHaveLength(0);
+	await f.service.open(); expect(f.opened).toEqual([url, url]);
+});
+
+test("installation transitions cannot open an untrusted URL", async () => {
+	const f = fixture({ pendingUrl: "https://evil.example/install" });
+	const flow = await f.service.start("device"); f.advance(5000);
+	await expect(f.service.poll(flow.id)).rejects.toThrow("无效的仓库授权地址");
+	expect(f.opened).toHaveLength(0);
 });

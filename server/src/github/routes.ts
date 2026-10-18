@@ -42,8 +42,12 @@ export function githubRoutes(deps: { db: Pick<Database, "githubAuthorizations">;
 		})
 		.get("/callback", async ({ query }) => {
 			let success = false;
-			try { await service.callback(query.state ?? "", query.code, query.error); success = true; } catch { /* Never echo GitHub query strings or secrets into HTML. */ }
-			return new Response(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>NekoCode · GitHub</title><body><h1>${success ? "GitHub 授权已完成" : "GitHub 授权未完成"}</h1><p>${success ? "请返回 NekoCode。你可以关闭此页面；仓库访问范围可在应用内继续设置。" : "授权已取消、过期或发生错误。请返回 NekoCode 查看提示并重新连接。"}</p></body></html>`, {
+			try {
+				const installationUrl = await service.callback(query.state ?? "", query.code, query.error);
+				if (installationUrl) return new Response(null, { status: 303, headers: { ...noStore, location: installationUrl } });
+				success = true;
+			} catch { /* Never echo GitHub query strings or secrets into HTML. */ }
+			return new Response(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>NekoCode · GitHub</title><body><h1>${success ? "GitHub 授权已完成" : "GitHub 授权未完成"}</h1><p>${success ? "账号授权和仓库连接已完成，请返回 NekoCode。你可以关闭此页面。" : "授权已取消、过期或发生错误。请返回 NekoCode 查看提示并重新连接。"}</p></body></html>`, {
 				status: success ? 200 : 400,
 				headers: { ...noStore, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'", "x-content-type-options": "nosniff" },
 			});

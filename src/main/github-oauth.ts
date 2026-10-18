@@ -30,9 +30,12 @@ export class GitHubOAuthClient {
 		return value;
 	}
 
-	async poll(id: string, secret: string, signal?: AbortSignal): Promise<{ state: "pending"; interval: number } | { state: "complete"; grant: GitHubOAuthGrant }> {
-		const value = await this.call("poll", { id }, secret, signal) as { state: string; interval: number; grant?: GitHubOAuthGrant };
-		if (value?.state === "pending" && Number.isFinite(value.interval) && value.interval >= 1) return { state: "pending", interval: value.interval };
+	async poll(id: string, secret: string, signal?: AbortSignal): Promise<{ state: "pending"; interval: number; url?: string } | { state: "complete"; grant: GitHubOAuthGrant }> {
+		const value = await this.call("poll", { id }, secret, signal) as { state: string; interval: number; url?: string; grant?: GitHubOAuthGrant };
+		if (value?.state === "pending" && Number.isFinite(value.interval) && value.interval >= 1) {
+			if (value.url && !/^https:\/\/github\.com\/apps\/[a-z0-9-]+\/installations\/new$/.test(value.url)) throw new Error("授权服务返回了无效的仓库授权地址。");
+			return { state: "pending", interval: value.interval, ...(value.url ? { url: value.url } : {}) };
+		}
 		if (value?.state === "complete" && value.grant && validGitHubCredentials(value.grant.credentials) && ["browser", "device"].includes(value.grant.method) &&
 			(!value.grant.installationUrl || /^https:\/\/github\.com\/apps\/[a-z0-9-]+\/installations\/new$/.test(value.grant.installationUrl))) return { state: "complete", grant: value.grant };
 		throw new Error("授权服务返回了无效的结果。");
@@ -47,7 +50,7 @@ export class GitHubOAuthClient {
 	}
 }
 
-interface Attempt { controller: AbortController; secret: string; flow?: GitHubAuthorization; nextPollAt: number; poll?: Promise<GitHubAuthorizationPoll> }
+interface Attempt { controller: AbortController; secret: string; flow?: GitHubAuthorization; nextPollAt: number; installationOpened?: boolean; poll?: Promise<GitHubAuthorizationPoll> }
 
 /** One desktop-owned sign-in at a time. Secrets remain in main, never in IPC results. */
 export class GitHubLoginService {
@@ -98,7 +101,13 @@ export class GitHubLoginService {
 			if (this.active !== attempt) throw new Error("授权已取消。");
 			if (value.state === "pending") {
 				attempt.nextPollAt = this.now() + value.interval * 1000;
-				return value;
+				if (value.url) {
+					attempt.flow!.url = value.url;
+					if (!attempt.installationOpened) {
+						try { await this.openExternal(value.url); attempt.installationOpened = true; } catch { /* Retry on the next poll or via Open. */ }
+					}
+				}
+				return { state: "pending", interval: value.interval };
 			}
 			const status = await this.save(value.grant, () => this.active === attempt);
 			if (this.active !== attempt) throw new Error("授权已取消。");

@@ -9,7 +9,7 @@ export class MemoryGitHubStore implements GitHubSessionStore {
 	async get(id: string) { return structuredClone(this.docs.get(id) ?? null); }
 	async claim(id: string, now: number) {
 		const doc = this.docs.get(id);
-		if (!doc || doc.status !== "pending" || doc.nextPollAt > now || doc.expiresAt.getTime() <= now) return false;
+		if (!doc || !["pending", "installing"].includes(doc.status) || doc.nextPollAt > now || doc.expiresAt.getTime() <= now) return false;
 		doc.status = "exchanging";
 		return true;
 	}
@@ -35,12 +35,14 @@ function fixture() {
 	const store = new MemoryGitHubStore();
 	const calls: { url: string; body: URLSearchParams }[] = [];
 	const replies: unknown[] = [];
+	let installed = true;
 	const request = (async (url: string | URL | Request, options?: RequestInit) => {
+		if (String(url).startsWith("https://api.github.com")) return Response.json(String(url).includes("/repositories?") ? { repositories: installed ? [{ id: 1 }] : [] } : { installations: installed ? [{ id: 42 }] : [] });
 		calls.push({ url: String(url), body: new URLSearchParams(String(options?.body)) });
 		return Response.json(replies.shift() ?? tokens);
 	}) as unknown as typeof fetch;
 	const service = new GitHubAuthorizationService(config, store, request, () => now);
-	return { service, store, calls, replies, advance: (ms: number) => { now += ms; }, now: () => now };
+	return { service, store, calls, replies, setInstalled: (value: boolean) => { installed = value; }, advance: (ms: number) => { now += ms; }, now: () => now };
 }
 
 describe("GitHub browser authorization", () => {
@@ -149,4 +151,41 @@ test("refresh uses the server-side secret; revocation returns an actionable erro
 test("unconfigured servers fail gracefully before making GitHub calls", async () => {
 	const service = new GitHubAuthorizationService(undefined, new MemoryGitHubStore());
 	await expect(service.start("browser", secret)).rejects.toThrow("尚未配置");
+});
+
+for (const method of ["browser", "device"] as const) {
+	test(`${method}: credentials stay encrypted and pending until installation grants repository access`, async () => {
+		const f = fixture(); f.setInstalled(false);
+		if (method === "device") f.replies.push(device);
+		const flow = await f.service.start(method, secret);
+		if (method === "browser") expect(await f.service.callback(flow.id, "code")).toBe(flow.installationUrl);
+		else { f.advance(5000); await f.service.poll(flow.id, secret); }
+		expect(f.store.docs.get(flow.id)?.status).toBe("installing");
+		if (method === "browser") {
+			f.advance(5000);
+			await expect(f.service.callback(flow.id, "replayed-code")).rejects.toThrow("授权链接无效");
+			expect(f.store.docs.get(flow.id)?.status).toBe("installing");
+		}
+		expect(JSON.stringify(f.store.docs.get(flow.id))).not.toContain("ghu_test");
+		const pending = await f.service.poll(flow.id, secret);
+		expect(pending.state).toBe("pending");
+		if (method === "device") expect(pending).toHaveProperty("url", flow.installationUrl);
+		const exchanges = f.calls.length;
+		f.advance(5000); await f.service.poll(flow.id, secret);
+		expect(f.calls).toHaveLength(exchanges);
+		f.setInstalled(true); f.advance(5000);
+		expect((await f.service.poll(flow.id, secret)).state).toBe("complete");
+		expect(f.store.docs.size).toBe(0);
+	});
+}
+
+test("cancelled and expired installation sessions cannot release credentials", async () => {
+	const f = fixture(); f.setInstalled(false);
+	const flow = await f.service.start("browser", secret); await f.service.callback(flow.id, "code");
+	await f.service.cancel(flow.id, secret); f.setInstalled(true);
+	await expect(f.service.poll(flow.id, secret)).rejects.toThrow();
+	f.setInstalled(false);
+	const expired = await f.service.start("browser", secret); await f.service.callback(expired.id, "code");
+	f.advance(900_001); f.setInstalled(true);
+	await expect(f.service.poll(expired.id, secret)).rejects.toThrow("过期");
 });
