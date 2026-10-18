@@ -1,5 +1,5 @@
 import type { Collection } from "mongodb";
-import type { GitHubAuthorizationMethod } from "../../../src/shared/github-oauth";
+import type { GitHubAuthorizationMethod } from "./contracts";
 
 export interface GitHubAuthorizationDoc {
 	_id: string;

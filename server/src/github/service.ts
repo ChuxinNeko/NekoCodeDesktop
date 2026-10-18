@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { validGitHubCredentials, type GitHubAuthorization, type GitHubAuthorizationMethod, type GitHubOAuthCredentials, type GitHubOAuthGrant } from "../../../src/shared/github-oauth";
+import { validGitHubCredentials, type GitHubAuthorization, type GitHubAuthorizationMethod, type GitHubOAuthCredentials, type GitHubOAuthGrant } from "./contracts";
 import type { GitHubSessionStore, GitHubAuthorizationDoc } from "./store";
 
 export interface GitHubAppConfig {
