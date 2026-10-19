@@ -77,6 +77,8 @@ import type {
 	GitBranchList,
 	GitCommitDetail,
 	GitCommitRequest,
+	GitGenerateCommitMessageRequest,
+	GitGeneratedCommitMessage,
 	GitCommitResult,
 	GitCompareInfo,
 	GitDiffRequest,
@@ -247,6 +249,7 @@ export interface AgentApi {
 	gitRangeDiff(req: GitRangeDiffRequest): Promise<string>;
 	gitCompareInfo(cwd: string): Promise<GitCompareInfo>;
 	gitCommit(req: GitCommitRequest): Promise<GitCommitResult>;
+	gitGenerateCommitMessage(req: GitGenerateCommitMessageRequest): Promise<GitGeneratedCommitMessage>;
 	gitUndoCommit(cwd: string): Promise<GitUndoCommitResult>;
 	gitRevertCommit(cwd: string, hash: string): Promise<void>;
 	gitAbortMerge(cwd: string): Promise<void>;

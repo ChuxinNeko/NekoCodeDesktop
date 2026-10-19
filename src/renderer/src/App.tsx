@@ -1090,6 +1090,8 @@ export default function App() {
 		else panes.drop(session, plan);
 	};
 
+	const hideWorkspaceSidebar = view === "settings" || view === "pull-requests" || view === "review";
+
 	const startDockDrag = (event: React.PointerEvent<HTMLElement>) => {
 		setDockResizing(true);
 		startResizeDrag(event, {
@@ -1097,7 +1099,7 @@ export default function App() {
 			sign: -1,
 			initial: dockWidth,
 			min: MIN_DOCK_WIDTH,
-			max: () => window.innerWidth - 52 - (sidebarOpen && view !== "settings" ? 260 : 0) - 4 - MIN_CHAT_WIDTH,
+			max: () => window.innerWidth - 52 - (sidebarOpen && !hideWorkspaceSidebar ? 260 : 0) - 4 - MIN_CHAT_WIDTH,
 			onFrame: (width) => {
 				if (dockAsideRef.current) dockAsideRef.current.style.width = `${width}px`;
 				if (dockInnerRef.current) dockInnerRef.current.style.width = `${width}px`;
@@ -1159,7 +1161,7 @@ export default function App() {
 					onToggleTheme={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
 				/>
 				{sidebarOpen ? (
-					<div className={view === "settings" || view === "pull-requests" ? "hidden" : "contents"}>
+					<div className={hideWorkspaceSidebar ? "hidden" : "contents"}>
 					<Sidebar
 						cwd={cwd}
 						workspaces={workspaces}
@@ -1196,7 +1198,7 @@ export default function App() {
 					className={cn(
 						CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
 						"flex min-h-0 min-w-0 flex-1 flex-col",
-						view === "settings" || view === "pull-requests" ? "rounded-l-xl" : !sidebarOpen && "rounded-tl-lg",
+						hideWorkspaceSidebar ? "rounded-l-xl" : !sidebarOpen && "rounded-tl-lg",
 						dockOpen && "rounded-tr-lg",
 					)}
 				>

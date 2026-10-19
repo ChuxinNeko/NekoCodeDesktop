@@ -70,6 +70,7 @@ export const WEBUI_RPC_METHODS = [
 	"gitRangeDiff",
 	"gitCompareInfo",
 	"gitCommit",
+	"gitGenerateCommitMessage",
 	"gitUndoCommit",
 	"gitRevertCommit",
 	"gitAbortMerge",

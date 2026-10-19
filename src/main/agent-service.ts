@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { GitGenerateCommitMessageRequest } from "../shared/git";
+import { generateCommitMessage } from "./git-commit-message";
+import type { ModelCallRuntime } from "./model-call";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { app, dialog, shell, type BrowserWindow } from "electron";
@@ -1699,6 +1702,16 @@ export class AgentService {
 		}
 		this.emit();
 		return { restored, deleted, conversationRewound, editorText, warnings };
+	}
+
+	/** Generate a draft with the workspace's selected model, outside the chat session. */
+	async generateCommitMessage(request: GitGenerateCommitMessageRequest) {
+		assertDirectory(request.cwd);
+		const runtime = await this.getModelRuntime();
+		const { SettingsManager } = await pi();
+		const model = this.resolveNewSessionModel(runtime, SettingsManager.create(request.cwd));
+		if (!model) throw new Error(request.language === "zh-CN" ? "请先在设置中配置可用模型" : "Configure a model in Settings first");
+		return generateCommitMessage(request, runtime as unknown as ModelCallRuntime, modelKeyOf(model));
 	}
 
 	/**

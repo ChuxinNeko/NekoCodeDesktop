@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GitCommit, GitRemoteActionKind } from "../../../shared/git";
 import { api, errorMessage } from "../api";
 import { useTranslation } from "../i18n";
-import { FolderOpenIcon, RefreshCwIcon, XIcon } from "../lib/icons";
+import { CircleCheckIcon, FolderOpenIcon, RefreshCwIcon, XIcon } from "../lib/icons";
 import { cn } from "../lib/utils";
 import { BranchPicker } from "./review/BranchPicker";
 import { ChangesTab } from "./review/ChangesTab";
@@ -25,7 +25,7 @@ const TABS: ReviewTab[] = ["changes", "history", "compare"];
 const isTab = (value: unknown): value is ReviewTab => typeof value === "string" && (TABS as string[]).includes(value);
 
 /** How long a success message stays before it fades. */
-const NOTICE_MS = 4500;
+const NOTICE_MS = 8000;
 
 export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
 	const { t } = useTranslation();
@@ -37,9 +37,16 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 	const [syncing, setSyncing] = useState<GitRemoteActionKind | null>(null);
 	const [createFrom, setCreateFrom] = useState<{ hash: string; label: string } | null>(null);
 	const noticeTimer = useRef<number | null>(null);
+	const syncRequest = useRef<symbol | null>(null);
 
 	// A different project is a different commit message.
-	useEffect(() => setDraftState(EMPTY_DRAFT), [cwd]);
+	useEffect(() => {
+		setDraftState(EMPTY_DRAFT);
+		setSyncing(null);
+		setNotice(null);
+		if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+		return () => { syncRequest.current = null; };
+	}, [cwd]);
 	useEffect(
 		() => () => {
 			if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
@@ -50,10 +57,11 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 	const setDraft = useCallback((patch: Partial<CommitDraft>) => setDraftState((current) => ({ ...current, ...patch })), []);
 	const onError = useCallback((message: string) => setError(message), [setError]);
 	const onNotice = useCallback((message: string) => {
+		setError(null);
 		setNotice(message);
 		if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
 		noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
-	}, []);
+	}, [setError]);
 	const onChanged = useCallback(async () => {
 		setError(null);
 		await refresh();
@@ -61,16 +69,27 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 	const onCreateFromHandled = useCallback(() => setCreateFrom(null), []);
 
 	const sync = async (action: GitRemoteActionKind) => {
-		if (!cwd) return;
+		if (!cwd || syncRequest.current !== null) return;
+		const request = Symbol();
+		syncRequest.current = request;
+		const remote = status?.remote ?? "origin";
 		setSyncing(action);
 		setError(null);
+		setNotice(null);
 		try {
 			await api.gitRemoteAction({ cwd, action });
+			if (syncRequest.current !== request) return;
+			onNotice(t(`review.sync.${action}Done`, { remote }));
 		} catch (cause) {
-			setError(errorMessage(cause));
+			if (syncRequest.current === request) setError(t(`review.sync.${action}Failed`, { message: errorMessage(cause) }));
 		} finally {
-			setSyncing(null);
-			await refresh();
+			if (syncRequest.current === request) {
+				await refresh();
+				if (syncRequest.current === request) {
+					syncRequest.current = null;
+					setSyncing(null);
+				}
+			}
 		}
 	};
 
@@ -188,6 +207,12 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 					<XIcon />
 				</IconButton>
 			</header>
+			{syncing ? (
+				<div role="status" aria-live="polite" className="flex shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3 py-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
+					<Spinner className="size-3.5 shrink-0" />
+					{t(`review.sync.${syncing}Working`, { remote: status?.remote ?? "origin" })}
+				</div>
+			) : null}
 
 			{error ? (
 				<div
@@ -203,9 +228,15 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () 
 			{notice ? (
 				<div
 					role="status"
-					className="shrink-0 border-b border-[color:var(--app-surface-divider)] bg-[color-mix(in_srgb,var(--success)_10%,transparent)] px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-success"
+					aria-live="polite"
+					className="flex shrink-0 items-start gap-2 border-b border-[color:var(--app-surface-divider)] bg-[color-mix(in_srgb,var(--success)_10%,transparent)] px-3 py-2 text-[length:var(--app-font-size-ui-sm,11px)] text-success"
 				>
-					{notice}
+					<CircleCheckIcon className="size-3.5 shrink-0" />
+					<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{notice}</span>
+					<button type="button" aria-label={t("common.close")} onClick={() => {
+						if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+						setNotice(null);
+					}} className="shrink-0 opacity-80 hover:opacity-100"><XIcon className="size-3.5" /></button>
 				</div>
 			) : null}
 

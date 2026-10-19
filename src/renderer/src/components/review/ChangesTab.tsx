@@ -3,7 +3,7 @@
 //          the diff of the selected file alongside, as in GitHub Desktop.
 // Layer: Review workbench
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangedFile } from "../../../../shared/git";
 import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
@@ -28,7 +28,7 @@ import type { CommitDraft, TabProps } from "./types";
 const SUMMARY_SOFT_LIMIT = 72;
 
 const FIELD =
-	"w-full rounded-md border border-[color:var(--color-border)] bg-[var(--color-background-control-opaque)] px-2 text-[length:var(--app-font-size-ui,12px)] outline-none placeholder:text-muted-foreground/60 focus:border-[color:var(--color-border-focus)] disabled:opacity-60";
+	"review-commit-field w-full rounded-md border border-[color:var(--color-border)] px-2 text-[length:var(--app-font-size-ui,12px)] outline-none placeholder:text-muted-foreground/60 focus:border-[color:var(--color-border-focus)] disabled:opacity-60";
 
 type DiscardTarget = { files: string[] | null; label: string; count: number };
 
@@ -45,7 +45,7 @@ export function ChangesTab({
 	draft,
 	setDraft,
 }: TabProps & { draft: CommitDraft; setDraft: (patch: Partial<CommitDraft>) => void }) {
-	const { t } = useTranslation();
+	const { t, language } = useTranslation();
 	const files = status.files;
 	const merging = status.merging === true;
 	const excluded = useMemo(() => new Set(draft.excluded), [draft.excluded]);
@@ -53,7 +53,16 @@ export function ChangesTab({
 	const allIncluded = included.length === files.length;
 
 	const [selected, setSelected] = useState<string | null>(null);
-	const [busy, setBusy] = useState<"commit" | "undo" | "discard" | null>(null);
+	const [busy, setBusy] = useState<"commit" | "undo" | "discard" | "generate" | null>(null);
+	const generation = useRef(0);
+	const generationContext = JSON.stringify([cwd, language, draft, included.map(({ path, oldPath, status, additions, deletions }) =>
+		({ path, oldPath, status, additions, deletions }))]);
+	const latestGenerationContext = useRef(generationContext);
+	latestGenerationContext.current = generationContext;
+	useEffect(() => {
+		setBusy(current => current === "generate" ? null : current);
+		return () => { generation.current++; };
+	}, [cwd]);
 	const [menu, setMenu] = useState<ContextMenuState | null>(null);
 	const [discard, setDiscard] = useState<DiscardTarget | null>(null);
 
@@ -84,6 +93,28 @@ export function ChangesTab({
 
 	const summary = draft.summary.trim();
 	const canCommit = busy === null && summary.length > 0 && (included.length > 0 || draft.amend);
+	const generating = busy === "generate";
+
+	const generateMessage = async () => {
+		if (busy !== null || included.length === 0) return;
+		const id = ++generation.current;
+		const context = generationContext;
+		setBusy("generate");
+		try {
+			const result = await api.gitGenerateCommitMessage({ cwd, files: included.map(file => file.path), language });
+			if (id !== generation.current) return;
+			if (latestGenerationContext.current !== context) {
+				onNotice(t("review.commit.generateStale"));
+				return;
+			}
+			setDraft({ summary: result.summary, description: result.description });
+			if (result.truncated) onNotice(t("review.commit.generateTruncated"));
+		} catch (cause) {
+			if (id === generation.current) onError(errorMessage(cause));
+		} finally {
+			if (id === generation.current) setBusy(null);
+		}
+	};
 
 	const commit = async () => {
 		if (!canCommit) return;
@@ -98,10 +129,10 @@ export function ChangesTab({
 				...(draft.amend ? { amend: true } : {}),
 			});
 			setDraft({ summary: "", description: "", amend: false, excluded: [] });
-			onNotice(t("review.commit.done", { hash: result.shortHash }));
+			onNotice(t("review.commit.done", { hash: result.shortHash, branch }));
 			await onChanged();
 		} catch (cause) {
-			onError(errorMessage(cause));
+			onError(t("review.commit.failed", { message: errorMessage(cause) }));
 		} finally {
 			setBusy(null);
 		}
@@ -195,6 +226,7 @@ export function ChangesTab({
 						size="xs"
 						variant="chrome-outline"
 						className="self-start"
+						disabled={busy !== null}
 						onClick={() => void api.gitAbortMerge(cwd).then(onChanged, (cause: unknown) => onError(errorMessage(cause)))}
 					>
 						{t("review.merge.abort")}
@@ -206,7 +238,7 @@ export function ChangesTab({
 					aria-label={t("review.changes.selectAll")}
 					checked={files.length > 0 && allIncluded}
 					indeterminate={included.length > 0 && !allIncluded}
-					disabled={files.length === 0 || merging}
+					disabled={files.length === 0 || merging || busy !== null}
 					onCheckedChange={(on) => setDraft({ excluded: on === true ? [] : files.map((file) => file.path) })}
 				/>
 				<span className="min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui-sm,11px)] font-medium">
@@ -239,7 +271,7 @@ export function ChangesTab({
 							onSelect={() => setSelected(file.path)}
 							onContextMenu={(event) => openMenu(event, file)}
 							checked={merging || !excluded.has(file.path)}
-							checkDisabled={merging}
+							checkDisabled={merging || busy !== null}
 							onCheckedChange={(on) => toggle(file.path, on)}
 						/>
 					))
@@ -252,13 +284,21 @@ export function ChangesTab({
 			</div>
 
 			<div className="flex shrink-0 flex-col gap-1.5 border-t border-[color:var(--app-surface-divider)] p-2.5">
+				<div className="flex items-center justify-between gap-2">
+					<span className="text-[length:var(--app-font-size-ui-sm,11px)] font-medium">{t("review.commit.message")}</span>
+					<Button size="xs" variant="chrome-outline" disabled={busy !== null || included.length === 0}
+						onClick={() => void generateMessage()} title={t("review.commit.generateHint")} aria-busy={generating}>
+						{generating ? <Spinner className="size-3" /> : null}
+						{t(generating ? "review.commit.generating" : "review.commit.generate")}
+					</Button>
+				</div>
 				<div className="relative">
 					<input
 						value={draft.summary}
 						onChange={(event) => setDraft({ summary: event.target.value })}
 						onKeyDown={onFieldKey}
 						placeholder={t("review.commit.summary")}
-						disabled={busy === "commit"}
+						disabled={busy === "commit" || generating}
 						spellCheck
 						className={cn(FIELD, "h-8 pr-10", draft.summary.length > SUMMARY_SOFT_LIMIT && "border-[var(--warning)]")}
 					/>
@@ -278,13 +318,13 @@ export function ChangesTab({
 					onChange={(event) => setDraft({ description: event.target.value })}
 					onKeyDown={onFieldKey}
 					placeholder={t("review.commit.description")}
-					disabled={busy === "commit"}
+					disabled={busy === "commit" || generating}
 					rows={2}
 					className={cn(FIELD, "resize-none py-1.5")}
 				/>
 				{status.lastCommit && !status.lastCommit.pushed ? (
 					<label className="flex cursor-pointer items-center gap-2 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						<Checkbox checked={draft.amend} onCheckedChange={(on) => void toggleAmend(on === true)} />
+						<Checkbox checked={draft.amend} disabled={busy !== null} onCheckedChange={(on) => void toggleAmend(on === true)} />
 						{t("review.commit.amend")}
 					</label>
 				) : null}
@@ -293,6 +333,7 @@ export function ChangesTab({
 				) : null}
 				<Button
 					disabled={!canCommit}
+					aria-busy={busy === "commit"}
 					onClick={() => void commit()}
 					title={t("review.commit.shortcut", { key: modKey })}
 					className="w-full"

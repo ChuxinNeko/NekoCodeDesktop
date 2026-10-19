@@ -118,6 +118,7 @@ import type {
 	GitActionRequest,
 	GitBranchActionRequest,
 	GitCommitRequest,
+	GitGenerateCommitMessageRequest,
 	GitDiffRequest,
 	GitDiscardRequest,
 	GitLogRequest,
@@ -1148,6 +1149,10 @@ function registerIpc(): void {
 	ipcMain.handle("git:rangeDiff", (_e, req: GitRangeDiffRequest) => getRangeDiff(req));
 	ipcMain.handle("git:compareInfo", (_e, cwd: string) => getCompareInfo(cwd));
 	ipcMain.handle("git:commit", (_e, req: GitCommitRequest) => commitWorkbench(req));
+	ipcMain.handle("git:generateCommitMessage", (_e, req: GitGenerateCommitMessageRequest) => {
+		if (!taskManager) throw new Error("Agent service is not running");
+		return taskManager.active.generateCommitMessage(req);
+	});
 	ipcMain.handle("git:undoCommit", (_e, cwd: string) => undoLastCommit(cwd));
 	ipcMain.handle("git:revertCommit", (_e, cwd: string, hash: string) => revertCommit(cwd, hash));
 	ipcMain.handle("git:abortMerge", (_e, cwd: string) => abortMerge(cwd));

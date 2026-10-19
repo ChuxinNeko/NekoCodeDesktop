@@ -3890,9 +3890,11 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 
 /* The welcome card keeps its composer and project tray together in the hero.
    The card itself is the frosted input: one Gaussian blur, so the wallpaper
-   shows through the field instead of a flat fill. */
-.welcome-composer-card {
-  --composer-glass-opacity: 38%;
+   shows through the field instead of a flat fill. Review commit fields share
+   this material so their tint and blur stay in sync with the welcome input. */
+.welcome-composer-card,
+.review-commit-field {
+  --composer-glass-opacity: 22%;
   --composer-glass-filter: blur(16px);
   background: color-mix(
     in srgb,
@@ -3915,13 +3917,13 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 }
 
 .welcome-quick-start {
-  --composer-glass-opacity: 45%;
+  --composer-glass-opacity: 25%;
   --composer-glass-filter: blur(16px);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
 .welcome-quick-start:hover {
-  background: color-mix(in srgb, var(--composer-glass-surface) 60%, transparent);
+  background: color-mix(in srgb, var(--composer-glass-surface) 40%, transparent);
 }
 
 .welcome-composer {
@@ -3946,6 +3948,8 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
 }
 
 .welcome-theme-toggle {
+  --composer-glass-opacity: 25%;
+  --composer-glass-filter: blur(16px);
   background: color-mix(
     in srgb,
     var(--composer-glass-surface) var(--composer-glass-opacity),

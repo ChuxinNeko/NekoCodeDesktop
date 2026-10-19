@@ -188,6 +188,18 @@ export interface GitCommitResult {
   shortHash: string;
 }
 
+export interface GitGenerateCommitMessageRequest {
+  cwd: string;
+  files: string[];
+  language: "zh-CN" | "en";
+}
+
+export interface GitGeneratedCommitMessage {
+  summary: string;
+  description: string;
+  truncated: boolean;
+}
+
 export interface GitDiscardRequest {
   cwd: string;
   /** Omit to discard every change, including untracked files. */

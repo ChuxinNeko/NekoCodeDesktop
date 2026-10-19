@@ -142,6 +142,8 @@ import type {
 	GitBranchList,
 	GitCommitDetail,
 	GitCommitRequest,
+	GitGenerateCommitMessageRequest,
+	GitGeneratedCommitMessage,
 	GitCommitResult,
 	GitCompareInfo,
 	GitDiffRequest,
@@ -263,6 +265,8 @@ const api = {
 	gitRangeDiff: (req: GitRangeDiffRequest): Promise<string> => ipcRenderer.invoke("git:rangeDiff", req),
 	gitCompareInfo: (cwd: string): Promise<GitCompareInfo> => ipcRenderer.invoke("git:compareInfo", cwd),
 	gitCommit: (req: GitCommitRequest): Promise<GitCommitResult> => ipcRenderer.invoke("git:commit", req),
+	gitGenerateCommitMessage: (req: GitGenerateCommitMessageRequest): Promise<GitGeneratedCommitMessage> =>
+		ipcRenderer.invoke("git:generateCommitMessage", req),
 	gitUndoCommit: (cwd: string): Promise<GitUndoCommitResult> => ipcRenderer.invoke("git:undoCommit", cwd),
 	gitRevertCommit: (cwd: string, hash: string): Promise<void> => ipcRenderer.invoke("git:revertCommit", cwd, hash),
 	gitAbortMerge: (cwd: string): Promise<void> => ipcRenderer.invoke("git:abortMerge", cwd),

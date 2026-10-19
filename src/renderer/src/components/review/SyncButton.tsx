@@ -61,7 +61,7 @@ export function SyncButton({
 				? t("review.sync.pushTip", { count: ahead, upstream })
 				: t("review.sync.fetchTip", { remote });
 	const working = busy !== null;
-	const icon = busy === plan.action ? (
+	const icon = working ? (
 		<Spinner className="size-3.5" />
 	) : plan.publish ? (
 		<PushIcon />
@@ -79,11 +79,12 @@ export function SyncButton({
 				size="xs"
 				variant={plan.action === "fetch" ? "chrome-outline" : "subtle"}
 				disabled={working}
+				aria-busy={working}
 				title={tip}
 				onClick={() => onRun(plan.action)}
 			>
 				{icon}
-				<span>{label}</span>
+				<span>{busy ? t(`review.sync.${busy}Working`, { remote }) : label}</span>
 				{!plan.publish && (ahead > 0 || behind > 0) ? (
 					<span className="tabular-nums text-muted-foreground">
 						{behind > 0 ? `↓${String(behind)}` : ""}
