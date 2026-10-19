@@ -2,7 +2,7 @@
 // Only foundation token names are scoped to the existing bui namespace.
 "use client";
 
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useState, type CSSProperties, type ReactNode } from "react";
 
 /* ─────────────────────────────────────────────────────────
  * CODE BLOCK
@@ -131,6 +131,8 @@ export type CodeBlockProps = {
   labels?: Partial<CodeBlockLabels>;
   /** Called with the copied text after a successful copy. */
   onCopy?: (text: string) => void;
+  /** Constrain the code scroller while keeping the file header visible. */
+  maxHeight?: CSSProperties["maxHeight"];
 };
 
 export default function CodeBlock({
@@ -141,6 +143,7 @@ export default function CodeBlock({
   filename = FILE,
   labels,
   onCopy,
+  maxHeight,
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const isDiff = variant === "Diff";
@@ -159,9 +162,9 @@ export default function CodeBlock({
   const removed = diff.filter((r) => r.type === "del").length;
 
   return (
-    <div className="w-full max-w-105 overflow-hidden rounded-bui-card bg-bui-surface shadow-bui-card">
+    <div className="flex min-h-0 w-full max-w-105 flex-col overflow-hidden rounded-bui-card bg-bui-surface shadow-bui-card" style={{ maxHeight }}>
       {/* header — file · (diff stat | copy) */}
-      <div className="flex h-11 items-center gap-2 border-b border-bui-line px-4 text-[12.5px]">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-bui-line px-4 text-[12.5px]">
         <span className="inline-flex min-w-0 items-center gap-[7px]">
           <FileIcon />
           <span className="truncate font-mono leading-none text-bui-ink">{filename}</span>
@@ -192,7 +195,7 @@ export default function CodeBlock({
       </div>
 
       {/* body — equal 12px inset on top / left / right; lines wrap */}
-      <div className="py-3 font-mono text-[12.5px] leading-[1.65] text-bui-ink-2">
+      <div className="min-h-0 overflow-auto overscroll-contain py-3 font-mono text-[12.5px] leading-[1.65] text-bui-ink-2">
         {isDiff ? (
           <div className="relative">
             <span className="pointer-events-none absolute inset-y-0 left-5 w-px bg-bui-line" />

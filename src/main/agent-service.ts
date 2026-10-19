@@ -98,6 +98,7 @@ import { registerOAuthClientIdentity } from "./oauth-service";
 import type { AntigravityOAuthService } from "./antigravity-oauth-service";
 import { registerAntigravityProvider } from "./antigravity-provider";
 import { pi, piAi } from "./pi";
+import { SessionHistoryReader } from "./session-history";
 import { buildTitleRequest, sanitizeGeneratedTitle, TITLE_TIMEOUT_MS } from "./session-title";
 import {
 	DEFAULT_AGENT_PHASE,
@@ -302,6 +303,7 @@ export class AgentService {
 	private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 	private runtime: ModelRuntime | null = null;
 	private sessionDir: string;
+	private sessionHistory?: SessionHistoryReader;
 	private createdAt = Date.now();
 	private pendingError: string | undefined;
 	private generation = 0;
@@ -1115,20 +1117,10 @@ export class AgentService {
 
 	async listSessions(cwd?: string): Promise<SessionSummary[]> {
 		if (cwd) assertDirectory(cwd);
-		const { SessionManager } = await pi();
-		const sessions = cwd ? await SessionManager.list(cwd, this.sessionDir) : await SessionManager.listAll(this.sessionDir);
+		const sessions = await (this.sessionHistory ??= new SessionHistoryReader()).list(this.sessionDir, cwd);
 		return sessions.map((s) => ({
-			id: s.id,
-			sessionFile: s.path,
-			cwd: s.cwd || cwd || "",
-			title: sessionTitle(s.name, s.firstMessage),
-			titlePending: this.isTitlePending(s.path),
-			// Only named sessions get a second line: for the rest the title
-			// already is the opening prompt, and repeating it reads as noise.
-			preview: s.name?.trim() ? normalizeLine(s.firstMessage, 160) : "",
-			createdAt: s.created.getTime(),
-			updatedAt: s.modified.getTime(),
-			messageCount: s.messageCount,
+			...s,
+			titlePending: this.isTitlePending(s.sessionFile),
 		}));
 	}
 
@@ -1904,6 +1896,8 @@ export class AgentService {
 	}
 
 	close(): void {
+		this.sessionHistory?.close();
+		this.sessionHistory = undefined;
 		this.preview?.dispose();
 		this.preview = null;
 		this.generation++;
@@ -2607,7 +2601,7 @@ export class AgentService {
 	 * Nudge the sidebar to re-read the session list. Sent on the transitions that
 	 * change what a row shows — a session opening, being named, finishing a run,
 	 * being renamed or deleted — rather than on every streaming event, because
-	 * listing re-reads every transcript on disk.
+	 * a refresh still walks the session directory.
 	 */
 	private emitSessionsChanged(): void {
 		if (this.win.isDestroyed()) return;

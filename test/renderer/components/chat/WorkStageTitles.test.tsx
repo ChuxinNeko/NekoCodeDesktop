@@ -47,10 +47,11 @@ describe("stage presentation", () => {
   const html = render([user, thought("a", "### 修改入口"), edit("one", "done", "-1 old\n+1 new\n+2 next"), edit("bad", "error", "+1 ignored"), edit("live", "running", "+1 pending"), thought("b", "### 调整配置"), edit("two", "done", "-1 old\n-2 old")]);
   const stages = html.replace(/<!--.*?-->/g, '').split('data-work-stage="').slice(1);
   expect(stages).toHaveLength(2);
-  expect(stages[0]).toContain('+2');
-  expect(stages[0]).toContain('−1');
-  expect(stages[1]).toContain('+0');
-  expect(stages[1]).toContain('−2');
+  // Two completed additions plus one running addition; failed edits are excluded.
+  expect(stages[0]).toContain('aria-label="3"');
+  expect(stages[0]).toContain('aria-label="1"');
+  expect(stages[1]).toContain('aria-label="0"');
+  expect(stages[1]).toContain('aria-label="2"');
  });
  test("read-only stages have no diff statistics", () => {
   expect(render()).not.toContain('data-slot="diff-stat"');

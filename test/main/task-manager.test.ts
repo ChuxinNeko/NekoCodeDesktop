@@ -74,6 +74,50 @@ function fixture() {
 	};
 }
 
+describe("session history reads", () => {
+	test("concurrent startup requests share one disk scan", async () => {
+		const f = fixture();
+		let reads = 0;
+		let finish!: (rows: SessionSummary[]) => void;
+		f.manager.owner.listSessions = () => { reads++; return new Promise(resolve => { finish = resolve; }); };
+		const first = f.manager.list();
+		const second = f.manager.list();
+		expect(reads).toBe(1);
+		finish([]);
+		expect(await Promise.all([first, second])).toEqual([[], []]);
+		await f.manager.list();
+		expect(reads).toBe(1);
+		f.manager.close();
+	});
+	test("deletion during a scan invalidates its result before answering callers", async () => {
+		const f = fixture();
+		const session = f.fake(await f.manager.create("/project")).snapshot!.session;
+		let reads = 0;
+		let finish!: (rows: SessionSummary[]) => void;
+		f.manager.owner.listSessions = () => {
+			reads++;
+			return reads === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve([]);
+		};
+		const pending = f.manager.list();
+		await f.manager.remove(session.sessionFile);
+		finish([session]);
+		expect(await pending).toEqual([]);
+		expect(reads).toBe(2);
+		f.manager.close();
+	});
+	test("a failed scan can be retried", async () => {
+		const f = fixture();
+		let reads = 0;
+		f.manager.owner.listSessions = async () => {
+			if (++reads === 1) throw new Error("disk unavailable");
+			return [];
+		};
+		await expect(f.manager.list()).rejects.toThrow("disk unavailable");
+		expect(await f.manager.list()).toEqual([]);
+		f.manager.close();
+	});
+});
+
 describe("parallel task execution", () => {
 	test("MCP changes reach every live session without selecting or aborting them", async () => {
 		const f = fixture();

@@ -12,6 +12,14 @@ import { buildModePrompt, configureCustomPrompt, FAST_CONTEXT_PROMPT, toolsForMo
 
 const base = { permission: "auto", interactive: true } as const;
 
+test("interactive explanations can end in Mermaid without expanding investigation scope", () => {
+	const prompt = buildModePrompt({ ...base, mode: "agent" });
+	expect(prompt).toContain("## 正文流程图");
+	expect(prompt).toContain("语言标记必须为 mermaid");
+	expect(prompt).toContain("不为画图额外调用工具");
+	expect(buildModePrompt({ ...base, mode: "subagent", child: true })).not.toContain("## 正文流程图");
+});
+
 describe("code_search availability", () => {
 	test("every interactive mode and agent phase offers it", () => {
 		for (const mode of WORK_MODES) {

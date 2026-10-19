@@ -1,10 +1,14 @@
 // FILE: OnboardingFlow.tsx
-// Purpose: First-launch setup — name, working directory, theme, model, preferences.
+// Purpose: First-launch setup, including optional code intelligence and GitHub.
 // Layer: App shell (rendered by main.tsx before <App /> until completed or skipped).
 
 import { LayoutSettings } from "../settings/LayoutSettings";
 import { AppearanceSettings } from "../settings/AppearanceSettings";
 import { ProviderModelSettings } from "../settings/ProviderModelSettings";
+import { CodeIntelSettings } from "../settings/CodeIntelSettings";
+import { GitHubSettings } from "../settings/GitHubSettings";
+import type { CodeIntelStatus } from "../../../../shared/code-intel";
+import type { GitHubAuthStatus } from "../../../../shared/pullRequests";
 import { useEffect, useMemo, useState } from "react";
 import type { AppPreferences, CommandShellOption } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
@@ -19,7 +23,8 @@ import { Switch } from "../ui/switch";
 
 const PROJECT_STORAGE_KEY = "nekocode:project-cwd";
 
-const STEPS = ["profile", "workspace", "theme", "models", "preferences"] as const;
+const STEPS = ["profile", "workspace", "theme", "models", "codeIntel", "github", "preferences"] as const;
+const WEB_STEPS = STEPS.filter(step => step !== "codeIntel");
 type StepId = (typeof STEPS)[number];
 
 const STEP_LABEL: Record<StepId, TranslationKey> = {
@@ -27,6 +32,8 @@ const STEP_LABEL: Record<StepId, TranslationKey> = {
 	workspace: "onboarding.step.workspace",
 	theme: "onboarding.step.theme",
 	models: "onboarding.step.models",
+	codeIntel: "onboarding.step.codeIntel",
+	github: "onboarding.step.github",
 	preferences: "onboarding.step.preferences",
 };
 
@@ -93,6 +100,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 	const { theme, setTheme } = useTheme();
 	const pickDirectory = useHostDirectoryPicker();
 	const isWindows = isWindowsPlatform(getNavigatorPlatform());
+	const steps: readonly StepId[] = api.runtime === "web" ? WEB_STEPS : STEPS;
 
 	const [index, setIndex] = useState(0);
 	const [name, setName] = useState(readUserName);
@@ -102,10 +110,13 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 	const [shells, setShells] = useState<CommandShellOption[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [codeIntel, setCodeIntel] = useState<CodeIntelStatus | null>(null);
+	const [github, setGithub] = useState<GitHubAuthStatus | null>(null);
+	const [skipped, setSkipped] = useState<ReadonlySet<StepId>>(() => new Set());
 
 	// The embedded provider settings save on their own; mirror the count in the checklist.
 	useEffect(() => {
-		if (STEPS[index] !== "models") return;
+		if (steps[index] !== "models") return;
 		let alive = true;
 		const refresh = () => {
 			void api.modelList().then((list) => { if (alive && Array.isArray(list)) setModelCount(list.length); }).catch(() => {});
@@ -113,15 +124,16 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 		refresh();
 		const timer = window.setInterval(refresh, 1500);
 		return () => { alive = false; window.clearInterval(timer); };
-	}, [index]);
+	}, [index, steps]);
 
 	useEffect(() => {
 		api.preferencesGet().then(setPreferences).catch(() => undefined);
 		api.preferencesCommandShells().then(setShells).catch(() => undefined);
 	}, []);
 
-	const step = STEPS[index]!;
-	const last = index === STEPS.length - 1;
+	const step = steps[index]!;
+	const last = index === steps.length - 1;
+	const canSkipStep = step === "models" || step === "workspace" || step === "codeIntel" || step === "github";
 	const trimmedName = name.trim();
 	const defaultDir = api.homeDir || null;
 
@@ -155,6 +167,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 
 	const next = async () => {
 		setError(null);
+		setSkipped(current => { const next = new Set(current); next.delete(step); return next; });
 		if (last) finish();
 		else setIndex((value) => value + 1);
 	};
@@ -166,6 +179,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 
 	const skipStep = () => {
 		setError(null);
+		setSkipped(current => new Set([...current, step]));
 		if (last) finish();
 		else setIndex((value) => value + 1);
 	};
@@ -175,8 +189,10 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 		workspace: cwd ? shortPath(cwd) : defaultDir ? t("onboarding.workspace.home") : t("onboarding.skipped"),
 		theme: t(`onboarding.theme.${theme}` as TranslationKey),
 		models: modelCount > 0 ? t("onboarding.models.count", { count: modelCount }) : t("onboarding.skipped"),
+		codeIntel: skipped.has("codeIntel") ? t("onboarding.skipped") : t(codeIntel?.indexEnabled || codeIntel?.completion.enabled || codeIntel?.prediction.enabled ? "onboarding.codeIntel.enabled" : "onboarding.codeIntel.notEnabled"),
+		github: skipped.has("github") ? t("onboarding.skipped") : github?.configured ? (github.login || t("onboarding.github.connected")) : t("onboarding.github.notConnected"),
 		preferences: t("onboarding.preferences.summary"),
-	}), [trimmedName, cwd, defaultDir, theme, modelCount, t]);
+	}), [trimmedName, cwd, defaultDir, theme, modelCount, codeIntel, github, skipped, t]);
 
 	const themeOptions: { id: ThemeMode; icon: React.ReactNode }[] = [
 		{ id: "light", icon: <SunIcon className="size-4" /> },
@@ -193,7 +209,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 				<div className="mx-auto grid w-full max-w-[1000px] grid-cols-1 gap-8 px-8 pb-10 pt-4 lg:grid-cols-[minmax(0,640px)_minmax(0,260px)] lg:gap-12">
 					<div className="min-w-0">
 						<p className="text-[length:var(--app-font-size-ui,12px)] text-muted-foreground">
-							{t("onboarding.stepOf", { current: index + 1, total: STEPS.length })}
+							{t("onboarding.stepOf", { current: index + 1, total: steps.length })}
 						</p>
 						<h1 className="mt-2 text-[26px] font-semibold leading-tight tracking-[-0.02em]">
 							{trimmedName ? t("onboarding.titleNamed", { name: trimmedName }) : t("onboarding.title")}
@@ -202,24 +218,24 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 							{t("onboarding.subtitle")}
 						</p>
 
-						<ol className="mt-5 flex items-center" aria-label={t("onboarding.checklist")}>
-							{STEPS.map((id, i) => {
+						<ol className="mt-5 flex items-center overflow-x-auto pb-2" aria-label={t("onboarding.checklist")}>
+							{steps.map((id, i) => {
 								const state = i < index ? "done" : i === index ? "current" : "todo";
 								return (
-									<li key={id} className={cn("flex items-center", i < STEPS.length - 1 && "flex-1")}>
+									<li key={id} className={cn("flex shrink-0 items-center", i < steps.length - 1 && "flex-1")}>
 										<button
 											type="button"
 											disabled={i > index}
 											onClick={() => { setError(null); setIndex(i); }}
 											className={cn(
-												"flex items-center gap-1.5 text-[length:var(--app-font-size-ui,12px)] disabled:cursor-default",
+												"flex items-center gap-1.5 whitespace-nowrap text-[length:var(--app-font-size-ui,12px)] disabled:cursor-default",
 												state === "current" ? "font-medium text-foreground" : "text-muted-foreground",
 											)}
 										>
 											<StepDot state={state} index={i} />
 											{t(STEP_LABEL[id])}
 										</button>
-										{i < STEPS.length - 1 ? <span className="mx-3 h-px flex-1 bg-border" /> : null}
+										{i < steps.length - 1 ? <span className="mx-2 h-px min-w-2 flex-1 bg-border" /> : null}
 									</li>
 								);
 							})}
@@ -317,6 +333,20 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 									</div>
 								) : null}
 
+								{step === "codeIntel" ? (
+									<div className="flex flex-col gap-4">
+										<Heading title={t("onboarding.codeIntel.title")} hint={t("onboarding.codeIntel.hint")} />
+										<CodeIntelSettings cwd={cwd} onStatusChange={setCodeIntel} onOpenProviders={() => { setError(null); setIndex(steps.indexOf("models")); }} />
+									</div>
+								) : null}
+
+								{step === "github" ? (
+									<div className="flex flex-col gap-4">
+										<Heading title={t("onboarding.github.title")} hint={t("onboarding.github.hint")} />
+										<GitHubSettings onStatusChange={setGithub} />
+									</div>
+								) : null}
+
 								{step === "preferences" ? (
 									<div className="flex flex-col gap-1">
 										<Heading title={t("onboarding.preferences.title")} hint={t("onboarding.preferences.hint")} />
@@ -377,10 +407,10 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 							<div className="sticky bottom-0 z-10 -mx-1.5 -mb-1.5 flex items-center justify-between rounded-b-[26px] bg-background px-[18px] py-2.5 [background-image:linear-gradient(color-mix(in_srgb,var(--secondary)_60%,transparent),color-mix(in_srgb,var(--secondary)_60%,transparent))]">
 								<button
 									type="button"
-									onClick={step === "models" || step === "workspace" ? skipStep : skipAll}
+									onClick={canSkipStep ? skipStep : skipAll}
 									className="text-[length:var(--app-font-size-ui,12px)] text-muted-foreground transition-colors hover:text-foreground"
 								>
-									{step === "models" || step === "workspace" ? t("onboarding.skipStep") : t("onboarding.skipAll")}
+									{canSkipStep ? t("onboarding.skipStep") : t("onboarding.skipAll")}
 								</button>
 								<div className="flex items-center gap-2">
 									{index > 0 ? (
@@ -411,13 +441,13 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 						<div className="rounded-2xl border border-border/70 bg-secondary/30 p-4">
 							<div className="flex items-center justify-between text-[length:var(--app-font-size-ui,12px)] font-medium">
 								<span>{t("onboarding.checklist")}</span>
-								<span><span className="text-foreground">{index}</span><span className="text-muted-foreground">/{STEPS.length}</span></span>
+								<span><span className="text-foreground">{index}</span><span className="text-muted-foreground">/{steps.length}</span></span>
 							</div>
 							<div className="mt-2.5 h-[3px] overflow-hidden rounded-full bg-border">
-								<div className="h-full rounded-full bg-foreground transition-[width] duration-300" style={{ width: `${(index / STEPS.length) * 100}%` }} />
+								<div className="h-full rounded-full bg-foreground transition-[width] duration-300" style={{ width: `${(index / steps.length) * 100}%` }} />
 							</div>
 							<ul className="mt-3 flex flex-col gap-0.5">
-								{STEPS.map((id, i) => {
+								{steps.map((id, i) => {
 									const state = i < index ? "done" : i === index ? "current" : "todo";
 									return (
 										<li

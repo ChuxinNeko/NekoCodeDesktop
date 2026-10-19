@@ -4,7 +4,7 @@
 //          in the transcript, with undo and review.
 // Layer: Chat component
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import type { CheckpointSummary } from "../../../../shared/checkpoints";
 import { useTranslation } from "../../i18n";
 import {
@@ -17,9 +17,8 @@ import {
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Button } from "../ui/button";
-import { COMPOSER_FLOATING_CONTROL_CLASS_NAME } from "./composerPickerStyles";
-import { LiveChangesDiff } from "./LiveChangesDiff";
-import { DiffStat } from "../ui/diff-stat";
+import { EditedFilesCapsule } from "./EditedFilesCapsule";
+import { EditedFileRow } from "./EditedFileRow";
 
 /** Rows listed before the rest fold behind a "show more" line. */
 const COLLAPSED_FILE_COUNT = 3;
@@ -32,18 +31,18 @@ const COLLAPSED_FILE_COUNT = 3;
  * stands on, and how much each moved. The data is the turn's own checkpoint.
  *
  * While the run is in flight the composer shows a capsule (file count and
- * line totals). Hovering it opens the diff in a preview above the capsule;
- * the capsule itself stays the same size. The full card is rendered in the
+ * line totals). Hovering opens a compact file list; selecting a file opens
+ * its diff in the right dock. The full card is rendered in the
  * transcript after the turn ends, so it scrolls with the conversation.
  */
 export function EditedFilesCard({
 	checkpoint,
-	cwd,
 	live = false,
 	disabled,
 	onRestore,
 	onReview,
 	onOpenFile,
+	onOpenDiff,
 }: {
 	/** The checkpoint the turn started from; its `files` are the turn's edits. */
 	checkpoint: CheckpointSummary;
@@ -56,122 +55,13 @@ export function EditedFilesCard({
 	onReview?: () => void;
 	/** Show a file in the dock's Files pane when its row is clicked. */
 	onOpenFile?: (path: string) => void;
+	/** Open a selected change in the right dock's diff pane. */
+	onOpenDiff?: (path: string) => void;
 }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
-	const [previewOpen, setPreviewOpen] = useState(false);
 	const files = checkpoint.files;
-	const detailId = useId();
-	const previewRef = useRef<HTMLDivElement>(null);
-	const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => () => {
-		if (openTimer.current) clearTimeout(openTimer.current);
-		if (closeTimer.current) clearTimeout(closeTimer.current);
-	}, []);
-
-	const cancelPreviewTimers = () => {
-		if (openTimer.current) clearTimeout(openTimer.current);
-		if (closeTimer.current) clearTimeout(closeTimer.current);
-		openTimer.current = null;
-		closeTimer.current = null;
-	};
-	const showPreview = () => {
-		if (closeTimer.current) clearTimeout(closeTimer.current);
-		closeTimer.current = null;
-		if (previewOpen || openTimer.current) return;
-		openTimer.current = setTimeout(() => {
-			openTimer.current = null;
-			setPreviewOpen(true);
-		}, 140);
-	};
-	const showPreviewNow = () => {
-		cancelPreviewTimers();
-		setPreviewOpen(true);
-	};
-	const hidePreview = () => {
-		if (openTimer.current) clearTimeout(openTimer.current);
-		openTimer.current = null;
-		if (closeTimer.current) clearTimeout(closeTimer.current);
-		closeTimer.current = setTimeout(() => {
-			closeTimer.current = null;
-			const current = previewRef.current;
-			const focused = document.activeElement;
-			if (current && focused instanceof Node && current.contains(focused)) return;
-			setPreviewOpen(false);
-		}, 120);
-	};
-
-	if (live) {
-		return (
-			<div className="absolute bottom-2 left-1/2 z-30 max-w-full -translate-x-1/2">
-				<div
-					ref={previewRef}
-					className="relative w-fit max-w-full"
-					onMouseEnter={showPreview}
-					onMouseLeave={hidePreview}
-					onFocus={showPreviewNow}
-					onBlur={(event) => {
-						const next = event.relatedTarget;
-						if (next instanceof Node && event.currentTarget.contains(next)) return;
-						hidePreview();
-					}}
-					onKeyDown={(event) => {
-						if (event.key !== "Escape") return;
-						cancelPreviewTimers();
-						setPreviewOpen(false);
-						event.stopPropagation();
-					}}
-				>
-					{previewOpen ? (
-						<div
-							id={detailId}
-							role="region"
-							aria-label={t("fileEdit.changes")}
-							data-live-preview=""
-							className="absolute bottom-full left-1/2 z-30 w-[min(42rem,100cqi)] -translate-x-1/2 pb-2"
-						>
-							<div className="overflow-hidden rounded-2xl border border-border/60 bg-background/80 shadow-xl backdrop-blur-xl">
-								<LiveChangesDiff checkpoint={checkpoint} cwd={cwd} />
-								{onReview ? (
-									<button
-										type="button"
-										onClick={onReview}
-										className="w-full border-t border-border/60 px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
-									>
-										{t("review.title")} ↗
-									</button>
-								) : null}
-							</div>
-						</div>
-					) : null}
-					<button
-						type="button"
-						aria-expanded={previewOpen}
-						aria-controls={previewOpen ? detailId : undefined}
-						aria-label={t("fileEdit.changes")}
-						data-slot="edited-files"
-						data-live="true"
-						className={cn(
-							COMPOSER_FLOATING_CONTROL_CLASS_NAME,
-							"flex h-8 w-fit max-w-full items-center gap-3 px-3 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-						)}
-					>
-						<span className="min-w-0 truncate text-[length:var(--app-font-size-ui,12px)] font-medium" aria-live="polite">
-							{t("fileEdit.liveSummary", { count: files.length })}
-						</span>
-						<DiffStat
-							className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]"
-							insertions={checkpoint.additions}
-							deletions={checkpoint.deletions}
-						/>
-						<ChevronUpIcon className="size-3 shrink-0" />
-					</button>
-				</div>
-			</div>
-		);
-	}
+	if (live) return <EditedFilesCapsule checkpoint={checkpoint} onOpenDiff={onOpenDiff ?? onOpenFile} onReview={onReview} />;
 
 	const shown = expanded ? files : files.slice(0, COLLAPSED_FILE_COUNT);
 	const hidden = files.length - shown.length;
@@ -218,38 +108,8 @@ export function EditedFilesCard({
 				</div>
 			</div>
 			<div className="border-t border-border/60 py-1">
-				{shown.map((file) => {
-					const rowClass = cn(
-						"flex w-full items-center gap-3 px-3 py-1.5 text-left",
-						"text-[length:var(--app-font-size-ui,12px)]",
-					);
-					const rowBody = (
-						<>
-							<span className="min-w-0 flex-1 truncate" title={file.path}>
-								{file.path}
-							</span>
-							<DiffStat
-								className="shrink-0 text-[length:var(--app-font-size-ui-sm,11px)]"
-								insertions={file.additions}
-								deletions={file.deletions}
-							/>
-						</>
-					);
-					return onOpenFile ? (
-						<button
-							key={file.path}
-							type="button"
-							onClick={() => onOpenFile(file.path)}
-							className={cn(rowClass, "transition-colors hover:bg-[var(--sidebar-accent)]")}
-						>
-							{rowBody}
-						</button>
-					) : (
-						<div key={file.path} className={rowClass}>
-							{rowBody}
-						</div>
-					);
-				})}
+				{shown.map(file => <EditedFileRow key={file.path} checkpointId={checkpoint.id} file={file}
+					onOpenDiff={onOpenDiff ?? onOpenFile} />)}
 				{hidden > 0 || expanded ? (
 					<button
 						type="button"

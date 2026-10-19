@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import type { SessionSummary } from "../../../shared/agent";
 import { api, errorMessage } from "../api";
 
@@ -36,7 +36,7 @@ export function useSessions(): SessionsState {
 			try {
 				const next = await api.sessionList();
 				if (request === requestRef.current) {
-					setSessions(next);
+					startTransition(() => setSessions(next));
 					setError(null);
 				}
 			} catch (cause) {
@@ -58,8 +58,7 @@ export function useSessions(): SessionsState {
 	}, [load]);
 
 	// Several tasks settling at once, or a run starting and naming itself, each
-	// push a change; listing re-reads every transcript on disk, so a burst is
-	// answered with one read once it has passed.
+	// push a change. One refresh is enough once the burst has passed.
 	useEffect(() => {
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		const unsubscribe = api.onSessionsChanged(() => {

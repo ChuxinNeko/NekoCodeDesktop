@@ -18,7 +18,7 @@ const INSTALL_URL = /^https:\/\/github\.com\/apps\/[a-z0-9-]+\/installations\/ne
  * dialog, because it is chosen once. Afterwards the page is the account and the
  * repositories that account can see.
  */
-export function GitHubSettings() {
+export function GitHubSettings({ onStatusChange }: { onStatusChange?: (status: GitHubAuthStatus) => void } = {}) {
 	const { t, language } = useTranslation();
 	const desktop = api.runtime === "electron";
 	const [status, setStatus] = useState<GitHubAuthStatus | null>(null);
@@ -29,6 +29,7 @@ export function GitHubSettings() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const profileRequest = useRef(0);
+	useEffect(() => { if (status) onStatusChange?.(status); }, [status, onStatusChange]);
 
 	const loadProfile = () => {
 		const request = ++profileRequest.current;

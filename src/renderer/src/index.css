@@ -1233,9 +1233,7 @@ label:has(> select#reasoning-effort) select {
   text-underline-offset: 0.18em;
 }
 
-/* Agent map: a slow pulse behind a node that is working, and the tree lines
-   that hang subagents off the main agent — a trunk down the left edge and a
-   short branch into each card. */
+/* Agent map: a pannable vertical board with staggered, movable cards. */
 @keyframes agent-map-pulse {
   0% { transform: scale(1); opacity: 0.55; }
   70%, 100% { transform: scale(2.4); opacity: 0; }
@@ -1249,33 +1247,43 @@ label:has(> select#reasoning-effort) select {
   .agent-map-pulse { animation: none; opacity: 0.35; }
 }
 
-.agent-map-tree {
-  position: relative;
-  margin-left: 0.75rem;
-  padding-left: 0.875rem;
+.agent-map-canvas {
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: grab;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--foreground) 12%, transparent) 0.8px, transparent 0.8px);
+  background-size: 20px 20px;
 }
-
-.agent-map-tree::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: -0.5rem;
-  bottom: 1.25rem;
-  border-left: 1px solid var(--app-surface-divider);
+.agent-map-canvas[data-dragging] { cursor: grabbing; user-select: none; }
+.agent-map-node { cursor: grab; }
+.agent-map-canvas[data-dragging] .agent-map-node { cursor: grabbing; }
+.agent-map-card {
+  background: color-mix(in srgb, var(--popover) 88%, transparent);
+  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--foreground) 5%, transparent), 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
-
-.agent-map-branch {
-  position: relative;
+.agent-map-card[data-tone="active"] { border-color: color-mix(in srgb, var(--color-token-text-link-foreground) 45%, transparent); }
+.agent-map-card[data-tone="failed"] { border-color: color-mix(in srgb, var(--destructive) 40%, transparent); }
+.agent-map-card[data-tone="attention"] { border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.agent-map-avatar {
+  color: var(--color-token-text-link-foreground);
+  background: color-mix(in srgb, var(--color-token-text-link-foreground) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-token-text-link-foreground) 14%, transparent);
 }
-
-.agent-map-branch::before {
-  content: "";
-  position: absolute;
-  left: -0.875rem;
-  top: 1.2rem;
-  width: 0.875rem;
-  border-top: 1px solid var(--app-surface-divider);
+.agent-map-status { color: var(--muted-foreground); background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.agent-map-status[data-tone="active"] {
+  color: var(--color-token-text-link-foreground);
+  background: color-mix(in srgb, var(--color-token-text-link-foreground) 10%, transparent);
 }
+.agent-map-status[data-tone="done"] { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
+.agent-map-status[data-tone="failed"] { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+.agent-map-status[data-tone="attention"] { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); }
+.agent-map-edge { color: color-mix(in srgb, var(--color-token-text-link-foreground) 50%, transparent); }
+.agent-map-edge[data-tone="failed"] { color: color-mix(in srgb, var(--destructive) 55%, transparent); }
+.agent-map-edge circle { fill: var(--popover); stroke: currentColor; stroke-width: 2; }
+.agent-map-controls { background: color-mix(in srgb, var(--popover) 94%, transparent); backdrop-filter: blur(12px); }
 
 /* Web citations: a superscript number that opens its source, and a bare URL
    shown as the page it names. Both sit inside running prose, so they stay
@@ -3903,6 +3911,13 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
   );
   -webkit-backdrop-filter: var(--composer-glass-filter);
   backdrop-filter: var(--composer-glass-filter);
+}
+
+.edited-files-popover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--popover) 90%, transparent);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
 }
 
 .welcome-quick-start,

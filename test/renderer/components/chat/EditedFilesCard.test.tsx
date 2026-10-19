@@ -26,12 +26,13 @@ test("live file capsule shows the file count and line totals without the file li
 	const html = render(true);
 	expect(html).toContain('data-live="true"');
 	expect(html).toContain("rounded-full");
-	expect(html).toMatch(/已修改 1 个文件|Modified 1 files/);
-	expect(html).toContain("+4");
-	expect(html).toContain("−2");
+	expect(html).toMatch(/1 个文件已更改|1 files changed/);
+	expect(html).toContain('aria-label="4"');
+	expect(html).toContain('aria-label="2"');
 	expect(html).not.toContain("src/app.ts");
 	expect(html).not.toMatch(/撤销|Undo/);
 	expect(html).not.toMatch(/查看变更|View changes/);
+	expect(html).not.toContain("chevron-up");
 });
 
 test("completed file card lists files, undo, and review, and folds the rest", () => {

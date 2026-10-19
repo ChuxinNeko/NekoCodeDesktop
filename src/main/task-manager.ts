@@ -46,6 +46,8 @@ export class TaskManager {
 	private closed = false;
 	private transition: Promise<unknown> = Promise.resolve();
 	private listCache: { at: number; rows: SessionSummary[] } | undefined;
+	private listRead: Promise<void> | undefined;
+	private listRevision = 0;
 	/**
 	 * Where each transcript window the desktop holds begins, by session: the
 	 * first cell it was sent. Pinned rather than recomputed from the tail, so a run adding cells at
@@ -86,8 +88,8 @@ export class TaskManager {
 				const next = payload as AgentSnapshot | null;
 				if (next) this.snapshots.set(agent, next);
 				else this.snapshots.delete(agent);
-				// Not on every message: re-listing re-reads every transcript on disk,
-				// and a long run adds messages by the hundred. The row only needs to
+				// Not on every message: a refresh walks the session directory, and a
+				// long run adds messages by the hundred. The row only needs to
 				// hear when its session starts having any (its file appears), when it
 				// is named, and when a run starts or stops.
 				const hadMessages = (previous?.session.messageCount ?? 0) > 0;
@@ -118,6 +120,7 @@ export class TaskManager {
 	}
 
 	private changed(): void {
+		this.listRevision++;
 		this.listCache = undefined;
 		this.emit("agent:sessionsChanged");
 	}
@@ -336,9 +339,15 @@ export class TaskManager {
 
 	async list(cwd?: string): Promise<SessionSummary[]> {
 		if (!this.listCache || Date.now() - this.listCache.at > 5000) {
-			const at = Date.now();
-			const rows = await this.owner.listSessions();
-			this.listCache = { at, rows };
+			if (!this.listRead) {
+				const revision = this.listRevision;
+				this.listRead = this.owner.listSessions().then(rows => {
+					// A rename/delete during scanning must not resurrect stale rows.
+					if (revision === this.listRevision) this.listCache = { at: Date.now(), rows };
+				}).finally(() => { this.listRead = undefined; });
+			}
+			await this.listRead;
+			if (!this.listCache) return this.list(cwd);
 		}
 		const rows = new Map(this.listCache.rows.map((s) => [s.id, s]));
 		for (const snapshot of this.snapshots.values()) rows.set(snapshot.session.id, snapshot.session);

@@ -4,13 +4,14 @@ import type { Database } from "../db";
 import { clientIp, RateLimiter } from "../rate-limit";
 import { GitHubAuthorizationError, GitHubAuthorizationService } from "./service";
 import { MongoGitHubSessionStore } from "./store";
+import { githubUpstreamFetch } from "./upstream";
 
 const idSchema = t.String({ pattern: "^[A-Za-z0-9_-]{43}$" });
 const sessionBody = t.Object({ id: idSchema });
 const noStore = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
 
-export function githubRoutes(deps: { db: Pick<Database, "githubAuthorizations">; env: Pick<Env, "github"> }, injected?: GitHubAuthorizationService) {
-	const service = injected ?? new GitHubAuthorizationService(deps.env.github, new MongoGitHubSessionStore(deps.db.githubAuthorizations));
+export function githubRoutes(deps: { db: Pick<Database, "githubAuthorizations">; env: Pick<Env, "github" | "githubProxy"> }, injected?: GitHubAuthorizationService) {
+	const service = injected ?? new GitHubAuthorizationService(deps.env.github, new MongoGitHubSessionStore(deps.db.githubAuthorizations), githubUpstreamFetch(deps.env.githubProxy));
 	const starts = new RateLimiter(10, 5 * 60_000);
 	const polls = new RateLimiter(120, 60_000);
 	const refreshes = new RateLimiter(30, 10 * 60_000);

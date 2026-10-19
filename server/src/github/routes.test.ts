@@ -17,7 +17,7 @@ function fixture(configured = true, installed = true) {
 	};
 	const config = { clientId: "id", clientSecret: "server-secret", callbackUrl: "https://codeapi.example/github/auth/callback", appSlug: "neko-test", encryptionKey: "encryption-key-at-least-32-characters-long" };
 	const service = new GitHubAuthorizationService(configured ? config : undefined, store, (async (url: string) => String(url).startsWith("https://api.github.com") ? Response.json(String(url).includes("/repositories?") ? { repositories: [{ id: 1 }] } : { installations: installed ? [{ id: 42 }] : [] }) : Response.json({ access_token: "ghu_secret", refresh_token: "ghr_secret", expires_in: 28_800 })) as unknown as typeof fetch);
-	const app = githubRoutes({ db: {} as Pick<Database, "githubAuthorizations">, env: {} as Pick<Env, "github"> }, service);
+	const app = githubRoutes({ db: {} as Pick<Database, "githubAuthorizations">, env: {} as Pick<Env, "github" | "githubProxy"> }, service);
 	const secret = "s".repeat(43);
 	const post = (path: string, body: unknown, bearer?: string) => app.handle(new Request(`http://localhost/github/auth/${path}`, {
 		method: "POST", headers: { "content-type": "application/json", ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) }, body: JSON.stringify(body),

@@ -180,7 +180,7 @@ function ModelCard({
 }
 
 /** The code index and Tab completion at a glance; both run on models from Providers and models. */
-export function CodeIntelSettings({ cwd, onOpenProviders }: { cwd: string | null; onOpenProviders: () => void }) {
+export function CodeIntelSettings({ cwd, onOpenProviders, onStatusChange }: { cwd: string | null; onOpenProviders: () => void; onStatusChange?: (status: CodeIntelStatus) => void }) {
 	const { t } = useTranslation();
 	const [status, setStatus] = useState<CodeIntelStatus | null>(null);
 	const [models, setModels] = useState<CodeIntelModels | null>(null);
@@ -188,6 +188,7 @@ export function CodeIntelSettings({ cwd, onOpenProviders }: { cwd: string | null
 	const [editing, setEditing] = useState<"search" | "completion" | "prediction" | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	useEffect(() => { if (status) onStatusChange?.(status); }, [status, onStatusChange]);
 
 	useEffect(() => {
 		api.codeIntelStatus().then(setStatus).catch((cause: unknown) => setError(errorMessage(cause)));

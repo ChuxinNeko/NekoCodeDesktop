@@ -32,6 +32,8 @@ import { CommandStopContext } from "../chat/CommandStopButton";
 import { ReviewPanel } from "../ReviewPanel";
 import { TerminalPanel } from "../TerminalPanel";
 import { DesktopPanel } from "./DesktopPanel";
+import { activeTurnChanges, type TurnDiffRequest } from "../../lib/turnChanges";
+import { TurnDiffPanel } from "./TurnDiffPanel";
 
 export type DockTool = "agentmap" | "review" | "terminal" | "browser" | "desktop" | "files" | "checkpoints";
 
@@ -43,7 +45,7 @@ export type DockTool = "agentmap" | "review" | "terminal" | "browser" | "desktop
  * into one tab would make watching two workers a matter of switching a hidden
  * selector inside a tab.
  */
-export type DockTabId = DockTool | `task:${string}`;
+export type DockTabId = DockTool | "diff" | `task:${string}`;
 
 export function taskTabId(taskId: string): DockTabId {
 	return `task:${taskId}`;
@@ -100,6 +102,7 @@ interface RightDockProps {
 	cwd: string | null;
 	/** A file the transcript asked the Files pane to open; nonce re-raises it. */
 	fileRequest?: { path: string; nonce: number } | null;
+	diffRequest?: TurnDiffRequest | null;
 	tabs: readonly DockTabId[];
 	/** The tab on screen, or null for the tool menu ("new tab"). */
 	active: DockTabId | null;
@@ -138,6 +141,7 @@ export function RightDock({
 	visible = true,
 	cwd,
 	fileRequest,
+	diffRequest,
 	tabs,
 	active,
 	tasks,
@@ -153,14 +157,19 @@ export function RightDock({
 }: RightDockProps) {
 	const { t } = useTranslation();
 	const taskById = new Map(tasks.map((task) => [task.id, task]));
+	const liveChanges = diffRequest && agentSnapshot ? activeTurnChanges(agentSnapshot.cells, agentSnapshot.checkpoints, agentSnapshot.streaming, agentSnapshot.session.cwd) : undefined;
+	const diffCheckpoint = liveChanges?.id === diffRequest?.checkpoint.id ? liveChanges
+		: agentSnapshot?.checkpoints.find(checkpoint => checkpoint.id === diffRequest?.checkpoint.id);
 
 	const tabLabel = (tab: DockTabId): string => {
+		if (tab === "diff") return t("fileEdit.changes");
 		const taskId = taskIdOfTab(tab);
 		if (taskId === null) return t(DOCK_TITLES[tab as DockTool]);
 		return taskById.get(taskId)?.description ?? t("dock.subagent");
 	};
 
 	const tabIcon = (tab: DockTabId) => {
+		if (tab === "diff") return <GitBranchIcon className="size-3.5 shrink-0 opacity-80" />;
 		const taskId = taskIdOfTab(tab);
 		if (taskId === null) {
 			const Icon = DOCK_ICONS[tab as DockTool];
@@ -271,6 +280,8 @@ export function RightDock({
 								</CommandStopContext.Provider>
 							) : tab === "agentmap" ? (
 								<AgentMapPanel snapshot={agentSnapshot} onOpenTask={onOpenTask} />
+							) : tab === "diff" ? (
+								<TurnDiffPanel request={diffRequest ? { ...diffRequest, checkpoint: diffCheckpoint ?? diffRequest.checkpoint } : null} />
 							) : tab === "review" ? (
 								<ReviewPanel cwd={cwd} onClose={() => onCloseTab(tab)} />
 							) : tab === "terminal" ? (

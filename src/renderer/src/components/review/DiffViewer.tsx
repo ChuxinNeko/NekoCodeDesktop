@@ -92,6 +92,7 @@ export function DiffViewer({
 	onPrefs,
 	actions,
 	empty,
+	hideWhitespaceToggle = false,
 }: {
 	patch: string;
 	loading: boolean;
@@ -103,6 +104,8 @@ export function DiffViewer({
 	actions?: ReactNode;
 	/** Shown when no file is selected. */
 	empty?: ReactNode;
+	/** Checkpoint diffs cannot be re-requested with Git whitespace flags. */
+	hideWhitespaceToggle?: boolean;
 }) {
 	const { t } = useTranslation();
 	const rootRef = useRef<HTMLDivElement>(null);
@@ -139,7 +142,7 @@ export function DiffViewer({
 					deletions={parsed.deletions}
 				/>
 			) : null}
-			<Button
+			{!hideWhitespaceToggle ? <Button
 				aria-pressed={prefs.ignoreWhitespace}
 				onClick={() => onPrefs({ ...prefs, ignoreWhitespace: !prefs.ignoreWhitespace })}
 				size="xs"
@@ -148,7 +151,7 @@ export function DiffViewer({
 			>
 				<span className="font-mono">¶</span>
 				{width >= 620 ? <span>{t("review.diff.ignoreWs")}</span> : null}
-			</Button>
+			</Button> : null}
 			<div className="flex shrink-0 items-center gap-0.5 rounded-md bg-[var(--color-background-elevated-secondary)] p-0.5">
 				{(["unified", "split"] as const).map((mode) => (
 					<button

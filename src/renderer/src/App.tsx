@@ -35,6 +35,7 @@ import {
 } from "./components/dock/RightDock";
 import { GitHubPage } from "./components/github/GitHubPage";
 import { ReviewPanel } from "./components/ReviewPanel";
+import type { TurnDiffRequest } from "./lib/turnChanges";
 import { SettingsPage, type SettingsSectionId } from "./components/settings/SettingsPage";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AutomaticUpdateDialog } from "./components/updates/UpdateDialog";
@@ -307,6 +308,7 @@ export default function App() {
 	 * row twice must re-raise the preview even when nothing else changed.
 	 */
 	const [dockFile, setDockFile] = useState<{ path: string; nonce: number } | null>(null);
+	const [dockDiff, setDockDiff] = useState<TurnDiffRequest | null>(null);
 	const [dockWidth, setDockWidth] = useState(() => {
 		const stored = Number(readStored(DOCK_WIDTH_STORAGE_KEY));
 		return Number.isFinite(stored) && stored >= MIN_DOCK_WIDTH
@@ -378,6 +380,7 @@ export default function App() {
 	// A file request names a path inside one project; a project switch retires it.
 	useEffect(() => {
 		setDockFile(null);
+		setDockDiff(null);
 	}, [cwd]);
 
 	/**
@@ -392,6 +395,7 @@ export default function App() {
 		if (at === -1) return;
 		const next = dockTabs.filter((entry) => entry !== tab);
 		setDockTabs(next);
+		if (tab === "diff") setDockDiff(null);
 		if (dockActive === tab) setDockActive(next[at - 1] ?? next[at] ?? null);
 	};
 
@@ -995,6 +999,10 @@ export default function App() {
 				onToggleBrowser={inPane(() => toggleDockTool("browser"))}
 				onOpenTask={layoutMode === "ide" ? undefined : inPane((taskId: string) => openDockTab(taskTabId(taskId)))}
 				onOpenFile={inPane(openDockFile)}
+				onOpenDiff={layoutMode === "ide" ? undefined : inPane((checkpoint: CheckpointSummary, path: string) => {
+					setDockDiff({ checkpoint, path, nonce: Date.now() });
+					openDockTab("diff");
+				})}
 				onDismissError={() => setError(null)}
 				onStartSession={startSession}
 				onWorktreeReleased={() => sessions.refresh()}
@@ -1298,6 +1306,7 @@ export default function App() {
 							visible={dockOpen}
 							cwd={cwd}
 							fileRequest={dockFile}
+							diffRequest={dockDiff}
 							tabs={dockTabs}
 							active={dockActive}
 							tasks={liveTasks}

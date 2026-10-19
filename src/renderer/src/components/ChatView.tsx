@@ -35,7 +35,7 @@ import {
 	CHAT_COLUMN_FRAME_CLASS_NAME,
 	CHAT_COLUMN_GUTTER_CLASS_NAME,
 } from "./chat/composerPickerStyles";
-import { ArrowDownIcon, GitBranchIcon, GlobeIcon, HistoryIcon, TerminalIcon, XIcon } from "../lib/icons";
+import { ArrowDownIcon, XIcon } from "../lib/icons";
 import type { CheckpointSummary } from "../../../shared/checkpoints";
 
 /**
@@ -135,6 +135,8 @@ interface ChatViewProps {
 	onOpenTask?: (taskId: string) => void;
 	/** Show a file a tool row references in the dock's Files pane. */
 	onOpenFile?: (path: string) => void;
+	/** Show the current turn's selected file diff in the right dock. */
+	onOpenDiff?: (checkpoint: CheckpointSummary, path: string) => void;
 	onDismissError: () => void;
 	/** Opens a session in `cwd` and sends this as its first prompt. */
 	onStartSession: (request: SendPromptRequest) => void;
@@ -164,7 +166,7 @@ interface ChatViewProps {
 
 export function ChatView(props: ChatViewProps) {
 	const { t } = useTranslation();
-	const { cwd, snapshot, busy, error, terminalOpen } = props;
+	const { cwd, snapshot, busy, error } = props;
 	const settling = useRunSettlement(snapshot?.streaming === true, snapshot?.session.id);
 	const teamTurns = snapshot?.workflow.teamThreads;
 
@@ -405,8 +407,7 @@ export function ChatView(props: ChatViewProps) {
 		? { id: extensionEditor.id, text: extensionEditor.text, replace: extensionEditor.mode === "replace" }
 		: null;
 	const compact = props.compactHeader === true;
-	const actionLabel = (label: string) => (compact ? { title: label, "aria-label": label } : {});
-	const liveChanges = activeTurnChanges(snapshot.cells, snapshot.checkpoints);
+	const liveChanges = activeTurnChanges(snapshot.cells, snapshot.checkpoints, snapshot.streaming || settling, snapshot.session.cwd);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -428,35 +429,7 @@ export function ChatView(props: ChatViewProps) {
 						</span>
 					)}
 				</div>
-				{!props.mobile && !props.hideDockActions && <><Button onClick={props.onOpenCheckpoints} size={compact ? "icon-xs" : "xs"} variant="chrome-outline" {...actionLabel(t("checkpoint.panelTitle"))}>
-					<HistoryIcon className="size-3.5" />
-					{compact ? null : t("checkpoint.panelTitle")}
-				</Button>
-				<Button onClick={props.onOpenReview} size={compact ? "icon-xs" : "xs"} variant="chrome-outline" {...actionLabel(t("nav.review"))}>
-					<GitBranchIcon className="size-3.5" />
-					{compact ? null : t("nav.review")}
-				</Button>
-				{props.browserAvailable !== false ? (
-					<Button
-						onClick={props.onToggleBrowser}
-						size={compact ? "icon-xs" : "xs"}
-						variant={props.browserOpen ? "subtle" : "chrome-outline"}
-						{...actionLabel(t("nav.browser"))}
-					>
-						<GlobeIcon className="size-3.5" />
-						{compact ? null : t("nav.browser")}
-					</Button>
-				) : null}
-				<Button
-					onClick={props.onToggleTerminal}
-					size={compact ? "icon-xs" : "xs"}
-					variant={terminalOpen ? "subtle" : "chrome-outline"}
-					{...actionLabel(t("chat.terminal"))}
-				>
-					<TerminalIcon className="size-3.5" />
-					{compact ? null : t("chat.terminal")}
-				</Button>
-				</>}
+
 				{props.headerActions}
 			</header>
 
@@ -518,6 +491,7 @@ export function ChatView(props: ChatViewProps) {
 							explorers={snapshot.workflow.explorers}
 							onOpenTask={props.onOpenTask}
 							onOpenFile={props.onOpenFile}
+							onOpenDiff={props.onOpenDiff}
 							checkpoints={snapshot.checkpoints}
 							onRestoreCheckpoint={props.onRestoreCheckpoint}
 							onOpenReview={props.onOpenReview}
@@ -559,7 +533,8 @@ export function ChatView(props: ChatViewProps) {
 				header={<>
 					{props.composerHeader}
 					{liveChanges && (snapshot.streaming || settling) ? (
-						<EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} cwd={props.cwd} live onReview={props.onOpenReview} />
+						<EditedFilesCard key={liveChanges.id} checkpoint={liveChanges} cwd={props.cwd} live onReview={props.onOpenReview}
+							onOpenDiff={props.onOpenDiff ? path => props.onOpenDiff!(liveChanges, path) : undefined} />
 					) : null}
 				</>}
 				loadCommands={props.loadCommands}

@@ -16,7 +16,7 @@ import { AssistantSelection, type SelectionSend } from "./chat/AssistantSelectio
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
 import { completedTurnChanges } from "../lib/turnChanges";
-import { editTextLines, liveDiffCount } from "../lib/liveDiffStats";
+import { fileEditPreview, fileEditStats, type FileEditPreview } from "../lib/fileEditPreview";
 import { useReducedMotion } from "../lib/motion";
 import { DiffStat } from "./ui/diff-stat";
 import { DisclosureRegion } from "./ui/disclosure-region";
@@ -202,63 +202,6 @@ function taskIdOf(cell: Extract<AgentCell, { type: "tool" }>): string | null {
 		return null;
 	}
 }
-
-type FileEditLine = { kind: "add" | "remove" | "context"; text: string };
-type FileEditPreview = { path: string; lines: FileEditLine[] };
-
-function resultDiffLines(diff: string): FileEditLine[] {
-	return diff.split("\n").map((raw) => {
-		const match = /^([+\- ]) *\d+ (.*)$/.exec(raw);
-		if (!match) return { kind: "context", text: raw };
-		const kind = match[1] === "+" ? "add" : match[1] === "-" ? "remove" : "context";
-		return { kind, text: match[2] };
-	});
-}
-
-function fileEditPreview(cell: Extract<AgentCell, { type: "tool" }>, completedLinesOnly = false): FileEditPreview | null {
-	if (cell.toolName !== "edit" && cell.toolName !== "write") return null;
-	const args =
-		typeof cell.args === "object" && cell.args !== null
-			? (cell.args as Record<string, unknown>)
-			: {};
-	// Models can emit edits/content before path. The tool name is enough to
-	// mount the card; do not hide received code while waiting for its filename.
-	const rawPath = args.path ?? args.file_path;
-
-	let lines: FileEditLine[] = [];
-	const textLines = (text: string) => editTextLines(text, completedLinesOnly && !!cell.inputStreaming);
-	if (cell.toolName === "write") {
-		if (typeof args.content === "string") {
-			lines = textLines(args.content).map((text) => ({ kind: "add", text }));
-		}
-	} else {
-		const details =
-			typeof cell.details === "object" && cell.details !== null
-				? (cell.details as Record<string, unknown>)
-				: null;
-		if (typeof details?.diff === "string" && details.diff) {
-			lines = resultDiffLines(details.diff);
-		} else {
-			const edits: { oldText?: unknown; newText?: unknown }[] = [
-				...(Array.isArray(args.edits) ? args.edits : []),
-				...(typeof args.oldText === "string" || typeof args.newText === "string"
-					? [{ oldText: args.oldText, newText: args.newText }]
-					: []),
-			];
-			for (const edit of edits) {
-				if (typeof edit !== "object" || edit === null) continue;
-				if (typeof edit.oldText === "string") {
-					for (const text of textLines(edit.oldText)) lines.push({ kind: "remove", text });
-				}
-				if (typeof edit.newText === "string") {
-					for (const text of textLines(edit.newText)) lines.push({ kind: "add", text });
-				}
-			}
-		}
-	}
-	return { path: typeof rawPath === "string" ? rawPath : "", lines };
-}
-
 function FileEditCell({
 	cell,
 	preview,
@@ -438,7 +381,7 @@ function PlanningLine() {
 }
 
 function AssistantBody({ cell }: { cell: AssistantCellData }) {
-  return <div data-assistant-selection-body={!cell.streaming ? "true" : "false"}><Markdown text={cell.text} /></div>;
+  return <div data-assistant-selection-body={!cell.streaming ? "true" : "false"}><Markdown text={cell.text} streaming={cell.streaming} /></div>;
 }
 
 /** A remark the model made on the way, inside the run it was part of. */
@@ -579,16 +522,9 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	if (!workStageHasDetails(stage)) return running ? <li className="pl-6"><PlanningLine /></li> : null;
 	const changes = stage.items.reduce((total, item) => {
 		if (item.kind !== "tool" || item.cell.status === "error") return total;
-		const preview = fileEditPreview(item.cell, true);
-		let insertions = 0;
-		let deletions = 0;
-		for (const line of preview?.lines ?? []) {
-			if (line.kind === "add") insertions++;
-			if (line.kind === "remove") deletions++;
-		}
-		const live = active && item.cell.status !== "done";
-		total.insertions += liveDiffCount(insertions, live);
-		total.deletions += liveDiffCount(deletions, live);
+		const changes = fileEditStats(item.cell, active);
+		total.insertions += changes.insertions;
+		total.deletions += changes.deletions;
 		return total;
 	}, { insertions: 0, deletions: 0 });
 	return (
@@ -661,6 +597,7 @@ const TranscriptView = function Transcript({
 	explorers,
 	onOpenTask,
 	onOpenFile,
+	onOpenDiff,
 	checkpoints,
 	onRestoreCheckpoint,
 	onOpenReview,
@@ -686,6 +623,7 @@ const TranscriptView = function Transcript({
 	onOpenTask?: (taskId: string) => void;
 	/** Show a file a tool row references in the dock's Files pane. */
 	onOpenFile?: (path: string) => void;
+	onOpenDiff?: (checkpoint: CheckpointSummary, path: string) => void;
 	/** Restore points, so a prompt can offer the rewind of its own turn. */
 	checkpoints?: readonly CheckpointSummary[];
 	onRestoreCheckpoint?: (checkpoint: CheckpointSummary) => void;
@@ -866,6 +804,7 @@ const TranscriptView = function Transcript({
 									onRestore={onRestoreCheckpoint}
 									onReview={onOpenReview}
 									onOpenFile={onOpenFile}
+									onOpenDiff={onOpenDiff ? path => onOpenDiff(card, path) : undefined}
 								/>
 							) : null}
 						</div>

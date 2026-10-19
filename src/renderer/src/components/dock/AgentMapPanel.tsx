@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { AgentSnapshot } from "../../../../shared/agent";
-import type { ExplorerRun, TaskStep, WorkflowTask, WorkflowTodo } from "../../../../shared/workflow";
+import type { ExplorerRun, WorkflowTask, WorkflowTodo } from "../../../../shared/workflow";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import {
 	mainActivity,
@@ -9,17 +9,18 @@ import {
 	summarizeTurn,
 	type MainActivity,
 	type SubagentActivity,
-	type ToolCallSummary,
 } from "../../lib/agentActivity";
 import { elapsedSeconds, formatElapsed, useNow } from "../../lib/elapsed";
-import { AgentMapIcon, BotIcon, CheckIcon, SearchIcon, TriangleAlertIcon } from "../../lib/icons";
+import { AgentMapIcon, ArrowLeftIcon, BotIcon, CheckIcon, SearchIcon, TriangleAlertIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Spinner } from "../ui/spinner";
+import { Button } from "../ui/button";
+import { AgentMapCanvas, type AgentMapNode } from "./AgentMapCanvas";
+import { TaskDetailPanel } from "./TaskDetailPanel";
 
-/** Finished subagents drawn under the main agent; older ones are counted, not drawn. */
+/** Finished subagents shown beside the main agent; older ones are counted. */
 const MAX_FINISHED_SHOWN = 6;
-const RECENT_STEPS = 3;
 
 type Tone = "active" | "attention" | "idle" | "done" | "failed";
 
@@ -83,63 +84,22 @@ function ActivityLine({ tone, children, since, live }: { tone: Tone; children: R
 	);
 }
 
-function ToolLabel({ name, subject }: { name: string; subject: string | null }) {
-	return (
-		<>
-			<span className="font-mono font-medium">{name}</span>
-			{subject ? <span className={cn("font-mono", MUTED_LABEL_TEXT_CLASS_NAME)}> {subject}</span> : null}
-		</>
-	);
-}
-
-/** A few of the node's latest calls, newest last, so a glance shows the path it took. */
-function RecentCalls({ calls }: { calls: { id: string; name: string; subject: string | null; status: "pending" | "running" | "done" | "error" }[] }) {
-	if (calls.length === 0) return null;
-	return (
-		<ol className="flex flex-col gap-0.5 border-t border-[color:var(--app-surface-divider)] pt-1.5">
-			{calls.map((call) => (
-				<li key={call.id} className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-font-size-ui-sm,11px)]">
-					{call.status === "running" || call.status === "pending" ? (
-						<Spinner className="size-3 shrink-0 text-muted-foreground" />
-					) : call.status === "error" ? (
-						<TriangleAlertIcon className="size-3 shrink-0 text-destructive" />
-					) : (
-						<span className="size-3 shrink-0 text-center leading-3 text-muted-foreground/60">·</span>
-					)}
-					<span className={cn("min-w-0 flex-1 truncate", call.status === "done" && "opacity-70")}>
-						<ToolLabel name={call.name} subject={call.subject} />
-					</span>
-				</li>
-			))}
-		</ol>
-	);
-}
-
 function Meta({ children }: { children: ReactNode }) {
 	return (
-		<div className={cn("flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
+		<div className={cn("flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-[color:var(--app-surface-divider)] pt-2 text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
 			{children}
 		</div>
 	);
 }
 
-function NodeCard({ tone, children, onClick }: { tone: Tone; children: ReactNode; onClick?: () => void }) {
-	const className = cn(
-		"flex w-full min-w-0 flex-col gap-1.5 rounded-xl border p-2.5 text-left transition-colors",
-		tone === "active"
-			? "border-[color:color-mix(in_srgb,var(--color-token-text-link-foreground)_45%,transparent)] bg-[color:color-mix(in_srgb,var(--color-token-text-link-foreground)_5%,transparent)]"
-			: tone === "attention"
-				? "border-[color:color-mix(in_srgb,var(--warning,#d97706)_50%,transparent)]"
-				: "border-[color:var(--app-surface-divider)]",
-		onClick && "hover:bg-[var(--color-background-elevated-secondary)]",
-	);
-	return onClick ? (
-		<button type="button" onClick={onClick} className={className}>
-			{children}
-		</button>
-	) : (
-		<div className={className}>{children}</div>
-	);
+function NodeCard({ tone, children }: { tone: Tone; children: ReactNode }) {
+	return <div className="agent-map-card flex min-w-0 flex-col gap-2 overflow-hidden rounded-2xl border p-3.5 text-left" data-tone={tone}>{children}</div>;
+}
+
+function StatusBadge({ tone }: { tone: Tone }) {
+	const { t } = useTranslation();
+	const label: Record<Tone, TranslationKey> = { active: "workflow.running", done: "workflow.completed", failed: "workflow.failed", idle: "agentMap.idle", attention: "agentMap.needsInput" };
+	return <span className="agent-map-status inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[10px] leading-none" data-tone={tone}><StatusMark tone={tone} />{t(label[tone])}</span>;
 }
 
 function mainTone(activity: MainActivity): Tone {
@@ -150,7 +110,7 @@ function MainActivityText({ activity }: { activity: MainActivity }) {
 	const { t } = useTranslation();
 	switch (activity.kind) {
 		case "tool":
-			return <ToolLabel name={activity.toolName} subject={activity.subject} />;
+			return <>{t("agentMap.activity.executing")}</>;
 		case "idle":
 			return <>{t("agentMap.activity.idle")}</>;
 		case "question":
@@ -200,19 +160,18 @@ function MainNode({ snapshot }: { snapshot: AgentSnapshot }) {
 	return (
 		<NodeCard tone={tone}>
 			<div className="flex min-w-0 items-center gap-2">
-				<StatusMark tone={tone} />
-				<BotIcon className="size-3.5 shrink-0 opacity-80" />
-				<span className="shrink-0 text-[length:var(--app-font-size-ui,12px)] font-semibold">{t("agentMap.main")}</span>
-				<span className={cn("min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-					{model}
-				</span>
-				<span className="shrink-0 rounded-md bg-[var(--color-background-elevated-secondary)] px-1.5 py-px text-[length:var(--app-font-size-ui-xs,10px)]">
-					{mode}
-				</span>
+				<span className="agent-map-avatar flex size-9 shrink-0 items-center justify-center rounded-xl"><BotIcon className="size-5" /></span>
+				<div className="min-w-0 flex-1">
+					<div className="truncate text-[13px] font-semibold">{t("agentMap.main")}</div>
+					<div className="truncate text-[10px] text-muted-foreground" title={model ?? undefined}>{model || t("agentMap.modelUnknown")}</div>
+				</div>
+				<StatusBadge tone={tone} />
 			</div>
+			<div className="text-[10px] text-muted-foreground">{mode}</div>
 			<ActivityLine tone={tone} since={since} live={snapshot.streaming}>
 				<MainActivityText activity={activity} />
 			</ActivityLine>
+			<TodoProgress todos={snapshot.workflow.todos} />
 			{turn.startedAt !== null ? (
 				<Meta>
 					<span>
@@ -222,8 +181,6 @@ function MainNode({ snapshot }: { snapshot: AgentSnapshot }) {
 					{turn.errors ? <span className="text-destructive">{t("agentMap.errors", { count: turn.errors })}</span> : null}
 				</Meta>
 			) : null}
-			<TodoProgress todos={snapshot.workflow.todos} />
-			<RecentCalls calls={turn.recent.map((call: ToolCallSummary) => ({ id: call.id, name: call.toolName, subject: call.subject, status: call.status }))} />
 		</NodeCard>
 	);
 }
@@ -237,7 +194,7 @@ function SubagentActivityText({ activity, status }: { activity: SubagentActivity
 	const { t } = useTranslation();
 	switch (activity.kind) {
 		case "tool":
-			return <ToolLabel name={activity.toolName} subject={activity.subject} />;
+			return <>{t("agentMap.activity.executing")}</>;
 		case "thinking":
 			return <>{t("agentMap.activity.thinking")}</>;
 		case "said":
@@ -249,13 +206,6 @@ function SubagentActivityText({ activity, status }: { activity: SubagentActivity
 	}
 }
 
-function recentSteps(steps: readonly TaskStep[]) {
-	return steps
-		.filter((step): step is Extract<TaskStep, { kind: "tool" }> => step.kind === "tool")
-		.slice(-RECENT_STEPS)
-		.map((step) => ({ id: step.id, name: step.toolName, subject: step.args || null, status: step.status }));
-}
-
 function SubagentNode({
 	title,
 	label,
@@ -263,6 +213,7 @@ function SubagentNode({
 	run,
 	extra,
 	onOpen,
+	model,
 }: {
 	title: string;
 	label: string;
@@ -270,6 +221,7 @@ function SubagentNode({
 	run: WorkflowTask | ExplorerRun;
 	extra?: ReactNode;
 	onOpen?: () => void;
+	model?: string;
 }) {
 	const { t } = useTranslation();
 	const activity = subagentActivity(run);
@@ -277,15 +229,16 @@ function SubagentNode({
 	const counts = stepCounts(run.steps);
 	const since = activity.kind === "tool" || activity.kind === "thinking" ? activity.since : undefined;
 	return (
-		<NodeCard tone={tone} onClick={onOpen}>
+		<NodeCard tone={tone}>
 			<div className="flex min-w-0 items-center gap-2">
-				<StatusMark tone={tone} />
-				{icon}
-				<span className="min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui,12px)] font-medium" title={title}>
-					{title}
-				</span>
-				<span className={cn("shrink-0 text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>{label}</span>
+				<span className="agent-map-avatar flex size-9 shrink-0 items-center justify-center rounded-xl">{icon}</span>
+				<div className="min-w-0 flex-1">
+					<div className="truncate text-[13px] font-semibold">{label}</div>
+					<div className="truncate text-[10px] text-muted-foreground" title={model}>{model?.split("/").slice(1).join("/") || model || t("agentMap.delegated")}</div>
+				</div>
+				<StatusBadge tone={tone} />
 			</div>
+			<p className="line-clamp-2 break-words text-[12px] leading-4 text-foreground" title={title}>{title}</p>
 			<ActivityLine tone={tone === "failed" ? "failed" : tone} since={since} live={run.status === "running"}>
 				<SubagentActivityText activity={activity} status={run.status} />
 			</ActivityLine>
@@ -294,9 +247,8 @@ function SubagentNode({
 				<span>{t("agentMap.toolCalls", { count: counts.tools })}</span>
 				{counts.errors ? <span className="text-destructive">{t("agentMap.errors", { count: counts.errors })}</span> : null}
 				{extra}
-				{onOpen ? <span className="ml-auto text-[var(--color-token-text-link-foreground)]">{t("agentMap.openTask")} →</span> : null}
+				{onOpen ? <span className="ml-auto text-[var(--color-token-text-link-foreground)]">{t("agentMap.openDetails")} →</span> : null}
 			</Meta>
-			{run.status === "running" ? <RecentCalls calls={recentSteps(run.steps)} /> : null}
 		</NodeCard>
 	);
 }
@@ -318,8 +270,8 @@ function orderChildren(tasks: readonly WorkflowTask[], explorers: readonly Explo
 }
 
 /**
- * What the agents in this session are doing, as a tree: the main agent at the
- * root, every worker and explorer it started hanging off it.
+ * What the agents in this session are doing: the main agent above a staggered
+ * vertical stack of workers and explorers, joined by branches on the left.
  *
  * Everything here is live state the transcript already has; the map is a
  * second way of reading it, organised by who is doing what rather than by
@@ -327,66 +279,71 @@ function orderChildren(tasks: readonly WorkflowTask[], explorers: readonly Explo
  */
 export function AgentMapPanel({ snapshot, onOpenTask }: { snapshot: AgentSnapshot | null; onOpenTask?: (taskId: string) => void }) {
 	const { t } = useTranslation();
-	if (!snapshot) {
-		return (
-			<div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-				<AgentMapIcon className="size-6 text-muted-foreground/60" />
-				<p className={cn("text-[length:var(--app-font-size-ui,12px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>{t("agentMap.empty")}</p>
-			</div>
-		);
-	}
-	const { shown, hidden } = orderChildren(snapshot.workflow.tasks, snapshot.workflow.explorers ?? []);
+	const [selection, setSelection] = useState<{ sessionId: string; kind: Child["kind"]; id: string } | null>(null);
+	const selected = selection?.sessionId === snapshot?.session.id ? selection : null;
+	const selectedTask = selected?.kind === "task" ? snapshot?.workflow.tasks.find(task => task.id === selected.id) : null;
+	const selectedExplorer = selected?.kind === "explorer" ? snapshot?.workflow.explorers?.find(run => run.id === selected.id) : null;
+	const detail: WorkflowTask | null = selectedTask ?? (selectedExplorer ? {
+		id: selectedExplorer.id, description: selectedExplorer.query, kind: "explore", writablePaths: [],
+		status: selectedExplorer.status, startedAt: selectedExplorer.startedAt, endedAt: selectedExplorer.endedAt, steps: selectedExplorer.steps,
+	} : null);
+	const { shown, hidden } = snapshot ? orderChildren(snapshot.workflow.tasks, snapshot.workflow.explorers ?? []) : { shown: [], hidden: 0 };
+	const runs = snapshot ? [...snapshot.workflow.tasks, ...(snapshot.workflow.explorers ?? [])] : [];
+	const running = runs.filter(run => run.status === "running").length + (snapshot?.streaming ? 1 : 0);
+	const failed = runs.filter(run => run.status === "failed").length;
+	const nodes: AgentMapNode[] = shown.map(child => {
+		const run = child.kind === "task" ? child.task : child.run;
+		const open = () => {
+			if (child.kind === "task" && onOpenTask) onOpenTask(child.task.id);
+			else if (snapshot) setSelection({ sessionId: snapshot.session.id, kind: child.kind, id: run.id });
+		};
+		return {
+			id: `${child.kind}:${run.id}`,
+			label: child.kind === "task" ? child.task.description : child.run.query,
+			tone: toneOfStatus(run.status),
+			onOpen: open,
+			content: child.kind === "task" ? (
+				<SubagentNode title={child.task.description} label={t(KIND_KEYS[child.task.kind])}
+					icon={<BotIcon className="size-5" />} run={child.task}
+					extra={child.task.writablePaths.length ? <span className="max-w-full truncate font-mono" title={child.task.writablePaths.join(", ")}>✎ {child.task.writablePaths.slice(0, 2).join(", ")}{child.task.writablePaths.length > 2 ? ` +${child.task.writablePaths.length - 2}` : ""}</span> : null}
+					onOpen={open} />
+			) : <SubagentNode title={child.run.query} label={t("agentMap.explorer")} icon={<SearchIcon className="size-5" />} run={child.run} model={child.run.model} onOpen={open} />,
+		};
+	});
 	return (
-		<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-			<MainNode snapshot={snapshot} />
-			{shown.length === 0 ? (
-				<p className={cn("px-1 text-[length:var(--app-font-size-ui-sm,11px)] leading-relaxed", MUTED_LABEL_TEXT_CLASS_NAME)}>
-					{t("agentMap.noSubagents")}
-				</p>
-			) : (
-				<div className="flex flex-col gap-2">
-					<span className={cn("px-1 text-[length:var(--app-font-size-ui-xs,10px)] font-medium", MUTED_LABEL_TEXT_CLASS_NAME)}>
-						{t("agentMap.subagents")}
-					</span>
-					{/* The trunk runs down the left; each child hangs off it on its own branch. */}
-					<ul className="agent-map-tree flex flex-col gap-2">
-						{shown.map((child) => (
-							<li key={child.kind === "task" ? child.task.id : child.run.id} className="agent-map-branch">
-								{child.kind === "task" ? (
-									<SubagentNode
-										title={child.task.description}
-										label={t(KIND_KEYS[child.task.kind])}
-										icon={<BotIcon className="size-3.5 shrink-0 opacity-80" />}
-										run={child.task}
-										extra={
-											child.task.writablePaths.length ? (
-												<span className="truncate font-mono" title={child.task.writablePaths.join(", ")}>
-													✎ {child.task.writablePaths.slice(0, 2).join(", ")}
-													{child.task.writablePaths.length > 2 ? ` +${child.task.writablePaths.length - 2}` : ""}
-												</span>
-											) : null
-										}
-										onOpen={onOpenTask ? () => onOpenTask(child.task.id) : undefined}
-									/>
-								) : (
-									<SubagentNode
-										title={child.run.query}
-										label={t("agentMap.explorer")}
-										icon={<SearchIcon className="size-3.5 shrink-0 opacity-80" />}
-										run={child.run}
-										extra={child.run.model ? <span className="truncate font-mono">{child.run.model.split("/").slice(1).join("/") || child.run.model}</span> : null}
-									/>
-								)}
-							</li>
-						))}
-					</ul>
-					{hidden ? (
-						<p className={cn("px-1 text-[length:var(--app-font-size-ui-xs,10px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-							{t("agentMap.earlier", { count: hidden })}
-						</p>
-					) : null}
+		<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+			<div className={cn("flex min-h-0 flex-1 flex-col", selected && "invisible pointer-events-none")} inert={selected ? true : undefined}>
+			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
+				<AgentMapIcon className="size-4 shrink-0 text-muted-foreground" />
+				<h2 className="min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui,12px)] font-medium">{t("agentMap.title")}</h2>
+				{snapshot ? <span className="text-[length:var(--app-font-size-ui-xs,10px)] tabular-nums text-muted-foreground">{t("agentMap.agentCount", { count: runs.length + 1 })}</span> : null}
+			</header>
+			{snapshot ? <>
+				<div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3 py-2 text-[10px] text-muted-foreground">
+					<span className="min-w-0 flex-1 truncate" title={snapshot.session.title}>{snapshot.session.titlePending ? t("sessions.pendingTitle") : snapshot.session.title}</span>
+					{running > 0 ? <span className="agent-map-status rounded-full px-2 py-1 leading-none" data-tone="active">{t("agentMap.runningCount", { count: running })}</span> : null}
+					{failed > 0 ? <span className="agent-map-status rounded-full px-2 py-1 leading-none" data-tone="failed">{t("agentMap.failedCount", { count: failed })}</span> : null}
 				</div>
-			)}
+				<div className="flex min-h-0 flex-1 flex-col">
+					<AgentMapCanvas key={snapshot.session.id} main={<MainNode snapshot={snapshot} />}>{nodes}</AgentMapCanvas>
+				</div>
+				<footer className="shrink-0 border-t border-[color:var(--app-surface-divider)] px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
+					<p>{t("agentMap.dragHint")}</p>
+					{shown.length === 0 ? <p className="mt-1">{t("agentMap.noSubagents")}</p> : null}
+					{hidden ? <p>{t("agentMap.earlier", { count: hidden })}</p> : null}
+				</footer>
+			</> : <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+				<AgentMapIcon className="size-8 text-muted-foreground/50" />
+				<p className="max-w-xs text-[12px] leading-relaxed text-muted-foreground">{t("agentMap.empty")}</p>
+			</div>}
+			</div>
+			{selected ? <section className="absolute inset-0 z-10 flex min-h-0 flex-col bg-[var(--color-background-surface)]" aria-label={t("agentMap.openDetails")}>
+				<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
+					<Button autoFocus size="xs" variant="ghost" onClick={() => setSelection(null)}><ArrowLeftIcon className="size-3.5" />{t("agentMap.backToMap")}</Button>
+					<h2 className="min-w-0 flex-1 truncate text-[12px] font-medium">{selected.kind === "explorer" ? t("agentMap.explorer") : t("dock.subagent")}</h2>
+				</header>
+				<TaskDetailPanel task={detail} />
+			</section> : null}
 		</div>
 	);
 }

@@ -8,6 +8,7 @@
  */
 
 import type { GitHubAppConfig } from "./github/service";
+import { githubProxyOrigin } from "./github/upstream";
 
 function required(name: string): string {
 	const value = process.env[name]?.trim();
@@ -34,6 +35,8 @@ export interface Env {
 	port: number;
 	/** Optional: GitHub endpoints return a configuration error until registered. */
 	github?: GitHubAppConfig;
+	/** Optional US gitproxy origin. Authorization calls to GitHub go through it. */
+	githubProxy?: string;
 	/**
 	 * Interface to bind.
 	 *
@@ -88,6 +91,7 @@ export function loadEnv(): Env {
 	return {
 		port: integer("PORT", 3000),
 		github: githubConfig(),
+		githubProxy: githubProxyOrigin(process.env.GITHUB_PROXY_URL),
 		bindHost: optional("BIND_HOST", "127.0.0.1"),
 		mongoUri: required("MONGODB_URI"),
 		mongoDb: optional("MONGODB_DB", "nekocode"),

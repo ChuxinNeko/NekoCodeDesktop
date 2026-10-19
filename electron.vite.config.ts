@@ -54,6 +54,7 @@ export default defineConfig({
           index: resolve("src/main/index.ts"),
           // Computer Use runs the native desktop driver in its own utility process.
           "computer-worker": resolve("src/main/computer/worker.ts"),
+          "session-list-worker": resolve("src/main/session-list-worker.ts"),
         },
         formats: ["cjs"],
       },
