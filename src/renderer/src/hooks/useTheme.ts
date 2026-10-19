@@ -3,6 +3,10 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { isMacNavigatorPlatform } from "../lib/utils";
+import {
+	EMPTY_WALLPAPER_THEME, buildWallpaperReadability, resolveWallpaperTheme,
+	updateWallpaperTheme, yieldWallpaperTheme,
+} from "../lib/wallpaperAppearance";
 import { DEFAULT_SHELL_INFO, type WindowMaterial } from "../../../shared/window";
 import {
 	DEFAULT_THEME_STATE,
@@ -33,6 +37,7 @@ import {
 type ThemeSnapshot = {
 	state: ThemeState;
 	systemDark: boolean;
+	resolvedTheme: ThemeVariant;
 };
 
 const STORAGE_KEY = "nekocode:theme";
@@ -42,6 +47,17 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastSnapshotKey = "";
 let lastDesktopTheme: ThemeMode | null = null;
+let wallpaperTheme = EMPTY_WALLPAPER_THEME;
+let wallpaperVariableNames: string[] = [];
+
+/** WallpaperBackdrop owns this temporary layer, never the saved theme preference. */
+export function setWallpaperThemeSource(key: string | null, follow = false, variant: ThemeVariant | null = null) {
+	const next = updateWallpaperTheme(wallpaperTheme, key, follow, variant);
+	if (JSON.stringify(next) === JSON.stringify(wallpaperTheme)) return;
+	wallpaperTheme = next;
+	applyThemeState(readStoredThemeState(), true);
+	emitChange();
+}
 
 const isElectronRuntime = typeof window !== "undefined" && "nekocode" in window;
 // Read straight off the bridge rather than through `api`: the theme is applied at
@@ -75,7 +91,7 @@ function hasThemeStorage(): boolean {
 }
 
 function getSystemDark(): boolean {
-	return typeof window !== "undefined" && window.matchMedia(MEDIA_QUERY).matches;
+	return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(MEDIA_QUERY).matches;
 }
 
 function readStoredThemeState(): ThemeState {
@@ -95,15 +111,18 @@ function writeStoredThemeState(state: ThemeState) {
 function getSnapshot(): ThemeSnapshot {
 	const state = readStoredThemeState();
 	const systemDark = state.mode === "system" ? getSystemDark() : false;
-	const snapshotKey = `${serializeThemeState(state)}|${systemDark ? "dark" : "light"}`;
+	const resolvedTheme = resolveWallpaperTheme(state.mode, systemDark, wallpaperTheme);
+	const snapshotKey = `${serializeThemeState(state)}|${systemDark ? "dark" : "light"}|${resolvedTheme}`;
 	if (lastSnapshot && lastSnapshotKey === snapshotKey) return lastSnapshot;
 	lastSnapshotKey = snapshotKey;
-	lastSnapshot = { state, systemDark };
+	lastSnapshot = { state, systemDark, resolvedTheme };
 	return lastSnapshot;
 }
 
-function updateStoredThemeState(update: (state: ThemeState) => ThemeState) {
-	const nextState = update(readStoredThemeState());
+function updateStoredThemeState(update: (state: ThemeState) => ThemeState, manualTheme = false) {
+	const previous = readStoredThemeState();
+	const nextState = update(previous);
+	if (manualTheme || nextState.mode !== previous.mode) wallpaperTheme = yieldWallpaperTheme(wallpaperTheme);
 	writeStoredThemeState(nextState);
 	applyThemeState(nextState, true);
 	emitChange();
@@ -121,6 +140,9 @@ function subscribe(listener: () => void): () => void {
 	};
 	const handleStorage = (event: StorageEvent) => {
 		if (event.key !== STORAGE_KEY) return;
+		if (parseStoredThemeState(event.oldValue).mode !== readStoredThemeState().mode) {
+			wallpaperTheme = yieldWallpaperTheme(wallpaperTheme);
+		}
 		applyThemeState(readStoredThemeState(), true);
 		emitChange();
 	};
@@ -148,7 +170,7 @@ function applyThemeState(state: ThemeState, suppressTransitions = false) {
 
 	if (suppressTransitions) root.classList.add("no-transitions");
 
-	const variant = resolveThemeVariant(state.mode, getSystemDark());
+	const variant = resolveWallpaperTheme(state.mode, getSystemDark(), wallpaperTheme);
 	const activeTheme = resolveThemePack(state, variant);
 	const cssVariableBuild = buildThemeCssVariables(activeTheme, variant, {
 		electron: isElectronRuntime,
@@ -163,7 +185,12 @@ function applyThemeState(state: ThemeState, suppressTransitions = false) {
 	root.setAttribute("data-theme-variant", variant);
 	root.setAttribute("data-window-material", cssVariableBuild.material);
 
-	for (const [name, value] of Object.entries(cssVariableBuild.variables)) {
+	const readability = wallpaperTheme.key ? buildWallpaperReadability(cssVariableBuild.variables, variant) : {};
+	for (const name of wallpaperVariableNames) {
+		if (!(name in cssVariableBuild.variables)) root.style.removeProperty(name);
+	}
+	wallpaperVariableNames = Object.keys(readability);
+	for (const [name, value] of Object.entries({ ...cssVariableBuild.variables, ...readability })) {
 		if (value.trim().length === 0) {
 			root.style.removeProperty(name);
 			continue;
@@ -171,7 +198,7 @@ function applyThemeState(state: ThemeState, suppressTransitions = false) {
 		root.style.setProperty(name, value);
 	}
 
-	syncDesktopTheme(state.mode);
+	syncDesktopTheme(wallpaperTheme.follow && !wallpaperTheme.yielded && wallpaperTheme.variant ? variant : state.mode);
 
 	if (suppressTransitions) {
 		// Force a reflow so the no-transitions class takes effect before removal.
@@ -198,7 +225,7 @@ if (typeof document !== "undefined") {
 }
 
 function setTheme(nextTheme: ThemeMode) {
-	updateStoredThemeState((state) => ({ ...state, mode: nextTheme }));
+	updateStoredThemeState((state) => ({ ...state, mode: nextTheme }), true);
 }
 
 function setSystemUiFont(enabled: boolean) {
@@ -233,7 +260,7 @@ export function applyCommunityThemeNow(theme: CommunityThemeColorsInput) {
 	updateStoredThemeState((state) => {
 		const next = applyCommunityTheme(state, theme);
 		return resolveThemeVariant(state.mode, getSystemDark()) === theme.variant ? next : { ...next, mode: theme.variant };
-	});
+	}, true);
 }
 
 export function forgetCommunityThemeNow(id: string) {
@@ -249,7 +276,7 @@ function resetThemeVariant(variant: ThemeVariant) {
 }
 
 function resetAllThemes() {
-	updateStoredThemeState(() => DEFAULT_THEME_STATE);
+	updateStoredThemeState(() => DEFAULT_THEME_STATE, true);
 }
 
 function updateThemePack(variant: ThemeVariant, patch: Partial<ChromeTheme>) {
@@ -268,9 +295,10 @@ export function useTheme() {
 	const snapshot = useSyncExternalStore(subscribe, getSnapshot, () => ({
 		state: DEFAULT_THEME_STATE,
 		systemDark: false,
+		resolvedTheme: "light" as ThemeVariant,
 	}));
 	const theme = snapshot.state.mode;
-	const resolvedTheme = resolveThemeVariant(theme, snapshot.systemDark);
+	const resolvedTheme = snapshot.resolvedTheme;
 	const activeTheme = resolveThemePack(snapshot.state, resolvedTheme);
 	const darkTheme = resolveThemePack(snapshot.state, "dark");
 	const lightTheme = resolveThemePack(snapshot.state, "light");

@@ -13,6 +13,8 @@ export interface WallpaperPreferences {
 	/** 0–80. A black veil over the wallpaper so text stays readable. */
 	dim: number;
 	muted: boolean;
+	/** Opt-in: transient light/dark adaptation; manual theme choices take priority. */
+	themeFollow: boolean;
 }
 
 export const DEFAULT_WALLPAPER_PREFERENCES: WallpaperPreferences = {
@@ -25,6 +27,7 @@ export const DEFAULT_WALLPAPER_PREFERENCES: WallpaperPreferences = {
 	blur: 0,
 	dim: 32,
 	muted: true,
+	themeFollow: false,
 };
 
 const STORAGE_KEY = "nekocode:wallpaper";
@@ -59,6 +62,7 @@ export function normalizeWallpaperPreferences(value: unknown): WallpaperPreferen
 		blur: clamp(prefs.blur, 0, 40, defaults.blur),
 		dim: clamp(prefs.dim, 0, 80, defaults.dim),
 		muted: typeof prefs.muted === "boolean" ? prefs.muted : defaults.muted,
+		themeFollow: prefs.themeFollow === true,
 	};
 }
 

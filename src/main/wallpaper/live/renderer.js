@@ -326,12 +326,21 @@ window.addEventListener("pagehide", () => inst.destroy());
 // does not take pointer events. The parent forwards the cursor here.
 window.addEventListener("message", (event) => {
   const data = event.data;
-  if (!data || data.source !== "nekocode-wallpaper" || !window.__wp) return;
+  if (event.source !== window.parent || !data || data.source !== "nekocode-wallpaper" || !window.__wp) return;
   if (data.type === "pointer") {
     window.__wp.pushPointer(Number(data.u) || 0, Number(data.v) || 0, Number(data.buttons) || 0, Number(data.mods) || 0);
   } else if (data.type === "leave") window.__wp.pointerLeave();
   else if (data.type === "pause") window.__wp.pause();
   else if (data.type === "resume") window.__wp.resume();
+  else if (data.type === "theme-capture" && typeof data.requestId === "string" && data.requestId.length <= 80) {
+    // Only our direct parent can request a small colour-analysis frame.
+    // Web wallpapers without a capturable canvas gracefully return null.
+    event.source.postMessage({
+      source: "nekocode-wallpaper-frame",
+      requestId: data.requestId,
+      dataUrl: window.__wp.capture(64),
+    }, event.origin === "null" ? "*" : event.origin);
+  }
 });
 
 loadCurrent();

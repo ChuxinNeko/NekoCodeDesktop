@@ -4035,3 +4035,22 @@ html[data-wallpaper] .split-grid-split,
 html[data-wallpaper] .wallpaper-dock section {
   background: transparent;
 }
+
+/* Wallpaper text uses semantic light/dark roles and the same contrast-protected
+   glass floors as the panels. Navigation stays unfrosted; do not add a filter
+   or a per-button fill here. Do not weaken legibility again with icon opacity. */
+html[data-wallpaper] .sidebar-icon-button {
+  color: var(--muted-foreground);
+}
+
+html[data-wallpaper] .welcome-composer textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Chromium's native option popup is a separate, opaque surface, not glass.
+   Keep its ink/background paired even when the select trigger is translucent. */
+html[data-wallpaper] select option,
+html[data-wallpaper] select optgroup {
+  background: var(--composer-glass-surface);
+  color: var(--foreground);
+}

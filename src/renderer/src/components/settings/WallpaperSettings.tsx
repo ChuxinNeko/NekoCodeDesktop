@@ -250,6 +250,9 @@ export function WallpaperSettings() {
 
 			{chosen ? (
 				<>
+					<SettingsRow hint={t("settings.wallpaper.themeFollowHint")} label={t("settings.wallpaper.themeFollow")}>
+						<Switch checked={preferences.themeFollow} onCheckedChange={(themeFollow) => updatePreferences({ themeFollow })} />
+					</SettingsRow>
 					<SettingsRow hint={t("settings.wallpaper.fitHint")} label={t("settings.wallpaper.fit")}>
 						<Segmented
 							onChange={(fit) => updatePreferences({ fit })}
