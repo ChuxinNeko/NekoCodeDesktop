@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ComposerInsertion } from "../../../shared/browser";
 import type { SlashCommandSummary } from "../../../shared/commands";
 import type { MentionCandidate } from "../../../shared/mentions";
@@ -61,7 +61,6 @@ export function WelcomeView(props: WelcomeViewProps) {
 	const userName = readUserName();
 	const [hour, setHour] = useState(() => new Date().getHours());
 	const [quickInsertion, setQuickInsertion] = useState<ComposerInsertion | null>(null);
-	const composerSurfaceRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const timer = setInterval(() => setHour(new Date().getHours()), 60_000);
 		return () => clearInterval(timer);
@@ -70,7 +69,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 
 	return (
 		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-			{wallpaperOn ? null : <AsciiWaveBackground exclusionRef={composerSurfaceRef} />}
+			{wallpaperOn ? null : <AsciiWaveBackground />}
 			<div className="welcome-theme-toggle absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
 				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
 					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
@@ -93,7 +92,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 				<h1 className="mb-7 text-center text-[clamp(22px,2.5vw,28px)] font-medium leading-snug tracking-[-0.035em] text-foreground">
 					{userName ? t(`welcome.greetingNamed.${greeting}`, { name: userName }) : t(`welcome.greeting.${greeting}`)}
 				</h1>
-				<div ref={composerSurfaceRef} className="welcome-composer-card rounded-[20px] p-[3px]">
+				<div className="welcome-composer-card rounded-[20px] p-[3px]">
 					<ComposerShell
 						className="welcome-composer"
 						insertion={props.insertion ?? quickInsertion}

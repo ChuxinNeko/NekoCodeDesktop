@@ -3892,6 +3892,8 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
    The card itself is the frosted input: one Gaussian blur, so the wallpaper
    shows through the field instead of a flat fill. */
 .welcome-composer-card {
+  --composer-glass-opacity: 38%;
+  --composer-glass-filter: blur(16px);
   background: color-mix(
     in srgb,
     var(--composer-glass-surface) var(--composer-glass-opacity),
@@ -3912,8 +3914,14 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
   backdrop-filter: var(--composer-glass-filter);
 }
 
+.welcome-quick-start {
+  --composer-glass-opacity: 45%;
+  --composer-glass-filter: blur(16px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
 .welcome-quick-start:hover {
-  background: color-mix(in srgb, var(--composer-glass-surface) 72%, transparent);
+  background: color-mix(in srgb, var(--composer-glass-surface) 60%, transparent);
 }
 
 .welcome-composer {
