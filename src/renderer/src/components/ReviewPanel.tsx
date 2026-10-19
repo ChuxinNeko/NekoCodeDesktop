@@ -1,233 +1,215 @@
-import { useCallback, useEffect, useState } from "react";
-import type { RepoStatus, ReviewScope } from "../../../shared/git";
-import { api, errorMessage } from "../api";
-import { useTranslation, type TranslationKey } from "../i18n";
-import { cn } from "../lib/utils";
-import { Button } from "./ui/button";
-import { DiffStat } from "./ui/diff-stat";
-import { DiffView } from "./ui/diff-view";
-import { Spinner } from "./ui/spinner";
-import { XIcon } from "../lib/icons";
+// FILE: ReviewPanel.tsx
+// Purpose: The review workbench, laid out like GitHub Desktop: a toolbar with the
+//          repository, branch picker and sync button, and Changes / History / Compare
+//          tabs, each a list beside a diff. Used full-window and docked beside the chat.
+// Layer: Review workbench
 
-const SCOPES: { id: ReviewScope; labelKey: TranslationKey }[] = [
-	{ id: "unstaged", labelKey: "review.scope.unstaged" },
-	{ id: "staged", labelKey: "review.scope.staged" },
-	{ id: "branch", labelKey: "review.scope.branch" },
-];
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { GitCommit, GitRemoteActionKind } from "../../../shared/git";
+import { api, errorMessage } from "../api";
+import { useTranslation } from "../i18n";
+import { FolderOpenIcon, RefreshCwIcon, XIcon } from "../lib/icons";
+import { cn } from "../lib/utils";
+import { BranchPicker } from "./review/BranchPicker";
+import { ChangesTab } from "./review/ChangesTab";
+import { CompareTab } from "./review/CompareTab";
+import { HistoryTab } from "./review/HistoryTab";
+import { SyncButton } from "./review/SyncButton";
+import { useDiffPrefs, usePersistentState, useRepoStatus } from "./review/hooks";
+import { EMPTY_DRAFT, type CommitDraft, type ReviewTab, type TabProps } from "./review/types";
+import { Button } from "./ui/button";
+import { IconButton } from "./ui/icon-button";
+import { Spinner } from "./ui/spinner";
+
+const TABS: ReviewTab[] = ["changes", "history", "compare"];
+const isTab = (value: unknown): value is ReviewTab => typeof value === "string" && (TABS as string[]).includes(value);
+
+/** How long a success message stays before it fades. */
+const NOTICE_MS = 4500;
 
 export function ReviewPanel({ cwd, onClose }: { cwd: string | null; onClose: () => void }) {
 	const { t } = useTranslation();
-	const [status, setStatus] = useState<RepoStatus | null>(null);
-	const [scope, setScope] = useState<ReviewScope>("unstaged");
-	const [files, setFiles] = useState<string[]>([]);
-	const [selected, setSelected] = useState<string | null>(null);
-	const [patch, setPatch] = useState("");
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const { status, loading, error, setError, refresh } = useRepoStatus(cwd);
+	const [tab, setTab] = usePersistentState<ReviewTab>("nekocode:review:tab", "changes", isTab);
+	const [prefs, setPrefs] = useDiffPrefs();
+	const [draft, setDraftState] = useState<CommitDraft>(EMPTY_DRAFT);
+	const [notice, setNotice] = useState<string | null>(null);
+	const [syncing, setSyncing] = useState<GitRemoteActionKind | null>(null);
+	const [createFrom, setCreateFrom] = useState<{ hash: string; label: string } | null>(null);
+	const noticeTimer = useRef<number | null>(null);
 
-	const refresh = useCallback(async () => {
+	// A different project is a different commit message.
+	useEffect(() => setDraftState(EMPTY_DRAFT), [cwd]);
+	useEffect(
+		() => () => {
+			if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+		},
+		[],
+	);
+
+	const setDraft = useCallback((patch: Partial<CommitDraft>) => setDraftState((current) => ({ ...current, ...patch })), []);
+	const onError = useCallback((message: string) => setError(message), [setError]);
+	const onNotice = useCallback((message: string) => {
+		setNotice(message);
+		if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+		noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+	}, []);
+	const onChanged = useCallback(async () => {
+		setError(null);
+		await refresh();
+	}, [refresh, setError]);
+	const onCreateFromHandled = useCallback(() => setCreateFrom(null), []);
+
+	const sync = async (action: GitRemoteActionKind) => {
 		if (!cwd) return;
-		setLoading(true);
+		setSyncing(action);
+		setError(null);
 		try {
-			// Status first: when git itself is missing, every other git call would
-			// throw too, and the panel needs the status to explain why.
-			const nextStatus = await api.gitStatus(cwd);
-			setStatus(nextStatus);
-			if (!nextStatus.gitAvailable || !nextStatus.isRepo) {
-				setFiles([]);
-				setPatch("");
-				setSelected(null);
-				setError(null);
-				return;
-			}
-			const nextFiles = await api.gitFiles(cwd, scope);
-			setFiles(nextFiles);
-			setError(null);
-			setSelected((current) => (current && nextFiles.includes(current) ? current : (nextFiles[0] ?? null)));
+			await api.gitRemoteAction({ cwd, action });
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
-			setLoading(false);
-		}
-	}, [cwd, scope]);
-
-	useEffect(() => {
-		void refresh();
-	}, [refresh]);
-
-	useEffect(() => {
-		if (!cwd || !selected || status?.gitAvailable === false) {
-			setPatch("");
-			return;
-		}
-		let cancelled = false;
-		api
-			.gitDiff({ cwd, scope, file: selected })
-			.then((next) => {
-				if (!cancelled) setPatch(next);
-			})
-			.catch((cause: unknown) => {
-				if (!cancelled) setError(errorMessage(cause));
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [cwd, scope, selected, status?.gitAvailable]);
-
-	const act = async (action: "stage" | "unstage" | "revert", file?: string) => {
-		if (!cwd) return;
-		try {
-			await api.gitAction({ cwd, action, ...(file === undefined ? {} : { file }) });
+			setSyncing(null);
 			await refresh();
-		} catch (cause) {
-			setError(errorMessage(cause));
 		}
 	};
 
-	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<header className="flex h-11 shrink-0 items-center gap-2 border-b border-[color:var(--app-surface-divider)] px-3">
-				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">{t("review.title")}</span>
-				{status?.branch ? (
-					<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground/70">
-						{status.branch}
-					</span>
-				) : null}
-				<div className="ml-2 flex items-center gap-0.5 rounded-md bg-[var(--color-background-elevated-secondary)] p-0.5">
-					{SCOPES.map((entry) => (
-						<button
-							key={entry.id}
-							type="button"
-							onClick={() => setScope(entry.id)}
-							className={cn(
-								"rounded-sm px-2 py-0.5 text-[length:var(--app-font-size-ui-sm,11px)] transition-colors",
-								scope === entry.id
-									? "bg-[var(--composer-surface)] text-[var(--color-text-foreground)]"
-									: "text-muted-foreground hover:text-foreground",
-							)}
-						>
-							{t(entry.labelKey)}
-						</button>
-					))}
+	const body = () => {
+		if (!cwd) {
+			return <p className="p-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{t("review.openProject")}</p>;
+		}
+		if (!status) {
+			return (
+				<div className="flex flex-1 items-center justify-center">
+					<Spinner className="size-4 text-muted-foreground" />
 				</div>
-				{loading ? <Spinner className="size-3 text-muted-foreground" /> : null}
-				<div className="flex-1" />
-				<Button onClick={() => void refresh()} size="xs" variant="chrome-outline">
-					{t("common.refresh")}
-				</Button>
-				<Button onClick={onClose} size="icon-xs" variant="ghost">
-					<XIcon className="size-3.5" />
-				</Button>
-			</header>
-
-			{error ? (
-				<div className="border-b border-[color:var(--app-surface-divider)] px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
-					{error}
-				</div>
-			) : null}
-
-			{!cwd ? (
-				<p className="p-3 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-					{t("review.openProject")}
-				</p>
-			) : status && !status.gitAvailable ? (
+			);
+		}
+		if (!status.gitAvailable) {
+			return (
 				<div className="flex flex-col items-start gap-2 p-3">
-					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-[var(--warning)]">
-						{status.gitError ?? t("review.gitUnavailable")}
-					</p>
-					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						{t("review.gitUnavailableHint")}
-					</p>
+					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-[var(--warning)]">{status.gitError ?? t("review.gitUnavailable")}</p>
+					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{t("review.gitUnavailableHint")}</p>
 				</div>
-			) : status && !status.isRepo ? (
+			);
+		}
+		if (!status.isRepo) {
+			return (
 				<div className="flex flex-col items-start gap-2 p-3">
-					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-						{t("review.notRepo")}
-					</p>
+					<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{t("review.notRepo")}</p>
 					<Button
-						onClick={() => void api.gitInit(cwd).then(refresh)}
+						onClick={() => void api.gitInit(cwd).then(refresh, (cause: unknown) => setError(errorMessage(cause)))}
 						size="sm"
 						variant="subtle"
 					>
 						{t("review.initRepo")}
 					</Button>
 				</div>
-			) : (
-				<div className="flex min-h-0 flex-1">
-					<div className="flex w-64 min-w-0 shrink-0 flex-col overflow-y-auto border-r border-[color:var(--app-surface-divider)] p-1.5">
-						{files.length === 0 ? (
-							<p className="px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
-								{t("review.noFiles")}
-							</p>
-						) : (
-							files.map((file) => {
-								const entry = status?.files.find((candidate) => candidate.path === file);
-								return (
-									<button
-										key={file}
-										type="button"
-										onClick={() => setSelected(file)}
-										className={cn(
-											"flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[length:var(--app-font-size-ui-sm,11px)] transition-colors",
-											selected === file
-												? "bg-[var(--sidebar-selected)] text-foreground"
-												: "text-muted-foreground hover:bg-[var(--sidebar-accent)] hover:text-foreground",
-										)}
-									>
-										<span className="min-w-0 flex-1 truncate">{file}</span>
-										{entry ? (
-											<DiffStat
-												className="shrink-0 text-[length:var(--app-font-size-ui-2xs,9px)]"
-												deletions={entry.deletions}
-												insertions={entry.additions}
-											/>
-										) : null}
-									</button>
-								);
-							})
-						)}
-					</div>
+			);
+		}
 
-					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
-						{selected ? (
-							<div className="flex h-9 shrink-0 items-center gap-1 border-b border-[color:var(--app-surface-divider)] px-2">
-								<span className="min-w-0 flex-1 truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
-									{selected}
-								</span>
-								{scope === "staged" ? (
-									<Button
-										onClick={() => void act("unstage", selected)}
-										size="xs"
-										variant="chrome-outline"
-									>
-										{t("review.unstage")}
-									</Button>
-								) : scope === "unstaged" ? (
-									<Button
-										onClick={() => void act("stage", selected)}
-										size="xs"
-										variant="chrome-outline"
-									>
-										{t("review.stage")}
-									</Button>
-								) : null}
-								{scope !== "branch" ? (
-									<Button
-										onClick={() => void act("revert", selected)}
-										size="xs"
-										variant="destructive-outline"
-									>
-										{t("review.revert")}
-									</Button>
-								) : null}
-							</div>
+		const tabs = (
+			<div role="tablist" className="flex h-9 shrink-0 items-stretch border-b border-[color:var(--app-surface-divider)] px-1">
+				{TABS.map((id) => (
+					<button
+						key={id}
+						type="button"
+						role="tab"
+						aria-selected={tab === id}
+						onClick={() => setTab(id)}
+						className={cn(
+							"relative flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 text-[length:var(--app-font-size-ui-sm,11px)] font-medium outline-none transition-colors",
+							"after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors",
+							tab === id ? "text-foreground after:bg-[var(--color-text-accent)]" : "text-muted-foreground after:bg-transparent hover:text-foreground",
+						)}
+					>
+						<span className="truncate">{t(`review.tab.${id}` as const)}</span>
+						{id === "changes" && status.files.length > 0 ? (
+							<span className="rounded-full bg-[var(--color-background-elevated-secondary)] px-1.5 text-[length:var(--app-font-size-ui-2xs,9px)] tabular-nums">
+								{status.files.length}
+							</span>
 						) : null}
-						<div className="min-h-0 flex-1 overflow-auto">
-							<DiffView patch={patch} empty={t("review.noChanges")} />
-						</div>
-					</div>
+					</button>
+				))}
+			</div>
+		);
+		const common: TabProps = {
+			cwd,
+			status,
+			prefs,
+			onPrefs: setPrefs,
+			tabs,
+			onChanged,
+			onError,
+			onNotice,
+			onSelectTab: setTab,
+		};
+		if (tab === "history") {
+			return <HistoryTab {...common} onBranchFrom={(commit: GitCommit) => setCreateFrom({ hash: commit.hash, label: `${commit.shortHash} ${commit.subject}` })} />;
+		}
+		if (tab === "compare") return <CompareTab {...common} />;
+		return <ChangesTab {...common} draft={draft} setDraft={setDraft} />;
+	};
+
+	const ready = cwd !== null && status !== null && status.gitAvailable && status.isRepo;
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col">
+			<header className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-[color:var(--app-surface-divider)] px-3 py-1.5">
+				<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">{t("review.title")}</span>
+				{ready && status ? (
+					<>
+						{status.repoName ? (
+							<span
+								title={`${t("review.repo")}: ${cwd}`}
+								className="inline-flex h-7 max-w-48 min-w-0 items-center gap-1.5 px-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground"
+							>
+								<FolderOpenIcon className="size-3.5 shrink-0 opacity-80" />
+								<span className="truncate">{status.repoName}</span>
+							</span>
+						) : null}
+						<BranchPicker
+							cwd={cwd}
+							status={status}
+							onChanged={onChanged}
+							onError={onError}
+							createFrom={createFrom}
+							onCreateFromHandled={onCreateFromHandled}
+						/>
+						<SyncButton status={status} busy={syncing} onRun={(action) => void sync(action)} />
+					</>
+				) : null}
+				<div className="flex-1" />
+				{loading && status ? <Spinner className="size-3 text-muted-foreground" /> : null}
+				<IconButton label={t("common.refresh")} tooltip={t("common.refresh")} onClick={() => void refresh()}>
+					<RefreshCwIcon />
+				</IconButton>
+				<IconButton label={t("common.close")} tooltip={t("common.close")} onClick={onClose}>
+					<XIcon />
+				</IconButton>
+			</header>
+
+			{error ? (
+				<div
+					role="alert"
+					className="flex shrink-0 items-start gap-2 border-b border-[color:var(--app-surface-divider)] bg-[color-mix(in_srgb,var(--destructive)_10%,transparent)] px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive"
+				>
+					<span className="max-h-24 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words">{error}</span>
+					<button type="button" aria-label={t("common.close")} onClick={() => setError(null)} className="mt-0.5 shrink-0 opacity-80 hover:opacity-100">
+						<XIcon className="size-3.5" />
+					</button>
 				</div>
-			)}
+			) : null}
+			{notice ? (
+				<div
+					role="status"
+					className="shrink-0 border-b border-[color:var(--app-surface-divider)] bg-[color-mix(in_srgb,var(--success)_10%,transparent)] px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-success"
+				>
+					{notice}
+				</div>
+			) : null}
+
+			{body()}
 		</div>
 	);
 }

@@ -29,20 +29,56 @@ function isMissingExecutable(error: unknown): boolean {
   return code === "ENOENT" || code === "EACCES" || code === "EPERM";
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
+export interface GitRunOptions {
+  /** Extra environment variables for this one call. */
+  env?: NodeJS.ProcessEnv;
+  /** Kill the process after this many milliseconds. */
+  timeout?: number;
+}
+
+/**
+ * Run git in `cwd` and return stdout.
+ *
+ * Every call treats pathspecs literally, so a file called `a[1].ts` or `*.log`
+ * is that file and not a glob, and read-only calls never take the optional index
+ * lock, so polling `status` cannot make a commit in progress fail.
+ *
+ * A failure is thrown with git's own explanation as its message: git says why it
+ * refused on stderr (or, for `commit`, on stdout) and the default
+ * "Command failed with exit code 1" would throw the useful part away. The
+ * original `stdout`, `stderr` and `code` stay on the error for callers that need
+ * them — `diff --no-index` exits 1 when files differ.
+ */
+export async function git(cwd: string, args: string[], options: GitRunOptions = {}): Promise<string> {
   try {
     const { stdout } = await execFileP("git", args, {
       cwd,
-      maxBuffer: 32 * 1024 * 1024,
+      maxBuffer: 64 * 1024 * 1024,
+      ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      env: {
+        ...process.env,
+        GIT_LITERAL_PATHSPECS: "1",
+        GIT_OPTIONAL_LOCKS: "0",
+        ...options.env,
+      },
     });
     return stdout;
   } catch (error) {
     if (isMissingExecutable(error)) throw new GitUnavailableError(error);
-    throw error;
+    const failure = error as { stdout?: unknown; stderr?: unknown; code?: unknown; killed?: unknown };
+    const stderr = typeof failure.stderr === "string" ? failure.stderr.trim() : "";
+    const stdout = typeof failure.stdout === "string" ? failure.stdout.trim() : "";
+    const detail = failure.killed === true
+      ? "git did not finish in time and was stopped."
+      : [stderr, stdout].filter(Boolean).join("\n").slice(0, 2000) ||
+        (error instanceof Error ? error.message : String(error));
+    const wrapped = new Error(detail);
+    Object.assign(wrapped, { stdout: failure.stdout, stderr: failure.stderr, code: failure.code });
+    throw wrapped;
   }
 }
 
-async function gitOk(cwd: string, args: string[]): Promise<boolean> {
+export async function gitOk(cwd: string, args: string[]): Promise<boolean> {
   try {
     await git(cwd, args);
     return true;
@@ -52,8 +88,34 @@ async function gitOk(cwd: string, args: string[]): Promise<boolean> {
   }
 }
 
+const toplevelCache = new Map<string, string>();
+
+/**
+ * The top of the working tree `cwd` sits in. `git status` reports paths from
+ * there, while a pathspec is read from the directory git runs in, so a project
+ * opened on a subfolder would otherwise ask for `src/a.ts` and mean `sub/src/a.ts`.
+ * Falls back to `cwd` itself when it is not inside a repository.
+ */
+export async function toplevel(cwd: string): Promise<string> {
+  const known = toplevelCache.get(cwd);
+  if (known) return known;
+  try {
+    const top = (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+    if (top) {
+      toplevelCache.set(cwd, top);
+      return top;
+    }
+  } catch (error) {
+    if (error instanceof GitUnavailableError) throw error;
+  }
+  return cwd;
+}
+
+/** The object id of the empty tree: what a root commit is diffed against. */
+export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 /** First ref that resolves: origin/HEAD, origin/main, main, master… */
-async function detectBaseBranch(cwd: string): Promise<string | null> {
+export async function detectBaseBranch(cwd: string): Promise<string | null> {
   for (const ref of ["origin/HEAD", "origin/main", "main", "master"]) {
     if (await gitOk(cwd, ["rev-parse", "--verify", "--quiet", ref])) {
       if (ref === "origin/HEAD") {
@@ -68,20 +130,62 @@ async function detectBaseBranch(cwd: string): Promise<string | null> {
   return null;
 }
 
-function parseNumstat(text: string): Map<string, { additions: number; deletions: number }> {
-  const map = new Map<string, { additions: number; deletions: number }>();
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    const [a, d, ...rest] = line.split("\t");
-    const path = rest.join("\t");
-    if (!path) continue;
-    map.set(path, {
-      additions: a === "-" ? 0 : Number(a) || 0,
-      deletions: d === "-" ? 0 : Number(d) || 0,
-    });
+/**
+ * Parse `git diff --numstat -z`: `added<TAB>removed<TAB>path<NUL>`, where a
+ * rename is `added<TAB>removed<TAB><NUL>old<NUL>new<NUL>`. Binary files report `-`.
+ */
+export function parseNumstatZ(
+  text: string,
+): Map<string, { additions: number; deletions: number; binary: boolean; oldPath?: string }> {
+  const map = new Map<string, { additions: number; deletions: number; binary: boolean; oldPath?: string }>();
+  const tokens = text.split("\0");
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const match = /^(-|\d+)\t(-|\d+)\t([\s\S]*)$/.exec(token);
+    if (!match) continue;
+    const binary = match[1] === "-" || match[2] === "-";
+    const stat = {
+      additions: binary ? 0 : Number(match[1]),
+      deletions: binary ? 0 : Number(match[2]),
+      binary,
+    };
+    if (match[3] === "") {
+      const oldPath = tokens[index + 1] ?? "";
+      const path = tokens[index + 2] ?? "";
+      index += 2;
+      if (path) map.set(path, { ...stat, oldPath });
+    } else {
+      map.set(match[3], stat);
+    }
   }
   return map;
 }
+
+/** Files that are changed relative to HEAD, with line counts. */
+async function statsAgainstHead(
+  cwd: string,
+  hasCommits: boolean,
+): Promise<Map<string, { additions: number; deletions: number }>> {
+  const base = ["diff", "--numstat", "-z", "--no-color", "--no-ext-diff"];
+  if (hasCommits) {
+    return parseNumstatZ(await git(cwd, [...base, "HEAD", "--"]).catch(() => ""));
+  }
+  // No HEAD yet: what is staged is everything there will be to commit.
+  const merged = new Map<string, { additions: number; deletions: number }>();
+  for (const args of [[...base, "--cached", "--"], [...base, "--"]]) {
+    for (const [path, stat] of parseNumstatZ(await git(cwd, args).catch(() => ""))) {
+      const previous = merged.get(path);
+      merged.set(path, {
+        additions: (previous?.additions ?? 0) + stat.additions,
+        deletions: (previous?.deletions ?? 0) + stat.deletions,
+      });
+    }
+  }
+  return merged;
+}
+
+/** Cap on rows the status carries, so an unignored `node_modules` cannot freeze the UI. */
+const MAX_STATUS_FILES = 5000;
 
 export async function getStatus(cwd: string): Promise<RepoStatus> {
   let isRepo: boolean;
@@ -104,31 +208,78 @@ export async function getStatus(cwd: string): Promise<RepoStatus> {
     return { isRepo: false, gitAvailable: true, branch: null, baseBranch: null, files: [] };
   }
 
-  const [porcelain, branch, baseBranch] = await Promise.all([
-    git(cwd, ["status", "--porcelain"]),
+  cwd = await toplevel(cwd);
+  const hasCommits = await gitOk(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const first = async (args: string[]) => (await git(cwd, args).catch(() => "")).trim() || null;
+  const [porcelain, branch, baseBranch, upstream, remote, top, lastRaw] = await Promise.all([
+    git(cwd, ["status", "--porcelain=v1", "-z", "-uall"]),
     git(cwd, ["branch", "--show-current"]).then((s) => s.trim() || null),
     detectBaseBranch(cwd),
+    first(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]),
+    git(cwd, ["remote"]).then((s) => s.split("\n").map((n) => n.trim()).find(Boolean) ?? null, () => null),
+    first(["rev-parse", "--show-toplevel"]),
+    hasCommits ? first(["log", "-1", "--format=%H%x1f%h%x1f%s"]) : Promise.resolve(null),
   ]);
-  const numstat = parseNumstat(await git(cwd, ["diff", "--numstat", "HEAD", "--"]));
+  const numstat = await statsAgainstHead(cwd, hasCommits);
 
-  const files: ChangedFile[] = porcelain
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const status = line.slice(0, 2);
-      const path = line.slice(3).trim();
-      const untracked = status === "??";
-      const stat = numstat.get(path) ?? { additions: 0, deletions: 0 };
-      return {
-        path,
-        status,
-        untracked,
-        staged: !untracked && status[0] !== " " && status[0] !== "?",
-        ...stat,
-      };
+  let ahead = 0;
+  let behind = 0;
+  if (upstream) {
+    const counts = (await first(["rev-list", "--left-right", "--count", "HEAD...@{u}"]))?.split(/\s+/) ?? [];
+    ahead = Number(counts[0]) || 0;
+    behind = Number(counts[1]) || 0;
+  }
+
+  const files: ChangedFile[] = [];
+  const tokens = porcelain.split("\0");
+  for (let index = 0; index < tokens.length; index += 1) {
+    const entry = tokens[index] ?? "";
+    if (entry.length < 4) continue;
+    const status = entry.slice(0, 2);
+    const path = entry.slice(3);
+    let oldPath: string | undefined;
+    if (status[0] === "R" || status[0] === "C" || status[1] === "R" || status[1] === "C") {
+      oldPath = tokens[index + 1];
+      index += 1;
+    }
+    const untracked = status === "??";
+    const stat = numstat.get(path) ?? { additions: 0, deletions: 0 };
+    files.push({
+      path,
+      status,
+      untracked,
+      staged: !untracked && status[0] !== " " && status[0] !== "?",
+      ...stat,
+      ...(oldPath ? { oldPath } : {}),
     });
+  }
+  files.sort((x, y) => x.path.localeCompare(y.path));
 
-  return { isRepo: true, gitAvailable: true, branch, baseBranch, files };
+  const merging = await gitOk(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+
+  let lastCommit: RepoStatus["lastCommit"] = null;
+  if (lastRaw) {
+    const [hash = "", shortHash = "", subject = ""] = lastRaw.split("\x1f");
+    lastCommit = { hash, shortHash, subject, pushed: upstream !== null && ahead === 0 };
+  }
+
+  return {
+    isRepo: true,
+    gitAvailable: true,
+    branch,
+    baseBranch,
+    files: files.slice(0, MAX_STATUS_FILES),
+    repoName: top ? (top.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? undefined) : undefined,
+    hasCommits,
+    upstream,
+    remote,
+    ahead,
+    behind,
+    merging,
+    detachedAt: !branch && hasCommits ? await first(["rev-parse", "--short", "HEAD"]) : null,
+    lastCommit,
+    ...(files.length > MAX_STATUS_FILES ? { truncated: true } : {}),
+  };
 }
 
 async function baseMergePoint(cwd: string): Promise<string | null> {
@@ -141,58 +292,84 @@ async function baseMergePoint(cwd: string): Promise<string | null> {
   }
 }
 
+/** Flags every diff shares: no colour codes, no external tool, renames detected. */
+function diffFlags(ignoreWhitespace?: boolean): string[] {
+  return ["diff", "--no-color", "--no-ext-diff", "-M", ...(ignoreWhitespace ? ["-w"] : [])];
+}
+
+/** `git diff` is empty for an untracked file; synthesize one against /dev/null. */
+async function untrackedDiff(cwd: string, file: string, ignoreWhitespace?: boolean): Promise<string> {
+  try {
+    return await git(cwd, [
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      ...(ignoreWhitespace ? ["-w"] : []),
+      "--no-index",
+      "--",
+      "/dev/null",
+      file,
+    ]);
+  } catch (e) {
+    // diff --no-index exits 1 when files differ; stdout still has the diff
+    return (e as { stdout?: string }).stdout ?? "";
+  }
+}
+
+async function isUntracked(cwd: string, file: string): Promise<boolean> {
+  const status = await git(cwd, ["status", "--porcelain", "-uall", "--", file]);
+  return status.startsWith("??");
+}
+
 export async function getDiff(req: GitDiffRequest): Promise<string> {
-  const { cwd, scope, file } = req;
-  const target = file ? ["--", file] : [];
+  const { scope, file, ignoreWhitespace } = req;
+  const cwd = await toplevel(req.cwd);
+  const target = file ? ["--", ...(req.oldPath && req.oldPath !== file ? [req.oldPath] : []), file] : [];
+  const flags = diffFlags(ignoreWhitespace);
 
   switch (scope) {
     case "unstaged":
-      if (file) {
-        // `git diff` is empty for untracked files; synthesize one vs /dev/null.
-        const status = await git(cwd, ["status", "--porcelain", "--", file]);
-        if (status.startsWith("??")) {
-          try {
-            return await git(cwd, [
-              "diff",
-              "--no-index",
-              "--",
-              "/dev/null",
-              file,
-            ]);
-          } catch (e) {
-            // diff --no-index exits 1 when files differ; stdout still has the diff
-            return (e as { stdout?: string }).stdout ?? "";
-          }
-        }
-      }
-      return git(cwd, ["diff", ...target]);
+      if (file && (await isUntracked(cwd, file))) return untrackedDiff(cwd, file, ignoreWhitespace);
+      return git(cwd, [...flags, ...target]);
+    case "head": {
+      // Everything that would be committed, staged or not, against HEAD.
+      if (file && (await isUntracked(cwd, file))) return untrackedDiff(cwd, file, ignoreWhitespace);
+      const hasHead = await gitOk(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+      return git(cwd, [...flags, hasHead ? "HEAD" : EMPTY_TREE, ...target]);
+    }
     case "staged":
-      return git(cwd, ["diff", "--cached", ...target]);
+      return git(cwd, [...flags, "--cached", ...target]);
     case "branch": {
       const mergeBase = await baseMergePoint(cwd);
       if (!mergeBase) return "";
-      return git(cwd, ["diff", `${mergeBase}...HEAD`, ...target]);
+      return git(cwd, [...flags, `${mergeBase}...HEAD`, ...target]);
     }
     case "lastturn":
       // Placeholder until the agent runtime reports per-turn changes:
       // show the most recent commit's diff.
       if (!(await gitOk(cwd, ["rev-parse", "--verify", "--quiet", "HEAD~1"]))) {
-        return git(cwd, ["show", "--format=", "HEAD", ...target]).catch(() => "");
+        return git(cwd, ["show", "--format=", "--no-color", "HEAD", ...target]).catch(() => "");
       }
-      return git(cwd, ["diff", "HEAD~1...HEAD", ...target]);
+      return git(cwd, [...flags, "HEAD~1...HEAD", ...target]);
   }
 }
 
 export async function listScopeFiles(
-  cwd: string,
+  start: string,
   scope: GitDiffRequest["scope"],
 ): Promise<string[]> {
+  const cwd = await toplevel(start);
   const names = async (args: string[]) =>
     (await git(cwd, args)).split("\n").filter(Boolean);
 
   switch (scope) {
     case "unstaged": {
       const modified = await names(["diff", "--name-only"]);
+      const untracked = await names(["ls-files", "--others", "--exclude-standard"]);
+      return [...new Set([...modified, ...untracked])];
+    }
+    case "head": {
+      const modified = await names(["diff", "--name-only", (await gitOk(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"])) ? "HEAD" : EMPTY_TREE]);
       const untracked = await names(["ls-files", "--others", "--exclude-standard"]);
       return [...new Set([...modified, ...untracked])];
     }
@@ -241,7 +418,8 @@ export async function initRepo(cwd: string): Promise<void> {
 }
 
 export async function applyAction(req: GitActionRequest): Promise<void> {
-  const { cwd, action, file } = req;
+  const { action, file } = req;
+  const cwd = await toplevel(req.cwd);
   const target = file ? ["--", file] : [];
 
   switch (action) {
@@ -249,6 +427,11 @@ export async function applyAction(req: GitActionRequest): Promise<void> {
       await git(cwd, file ? ["add", ...target] : ["add", "-A"]);
       return;
     case "unstage":
+      if (!(await gitOk(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]))) {
+        // Nothing to restore from yet: drop the path from the index instead.
+        await git(cwd, file ? ["rm", "-r", "--cached", "-q", ...target] : ["rm", "-r", "--cached", "-q", "."]).catch(() => undefined);
+        return;
+      }
       await git(cwd, file ? ["restore", "--staged", ...target] : ["reset", "-q"]);
       return;
     case "revert":

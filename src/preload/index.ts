@@ -136,7 +136,25 @@ import type {
 	RestoreCheckpointRequest,
 	RestoreCheckpointResult,
 } from "../shared/checkpoints";
-import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
+import type {
+	GitActionRequest,
+	GitBranchActionRequest,
+	GitBranchList,
+	GitCommitDetail,
+	GitCommitRequest,
+	GitCommitResult,
+	GitCompareInfo,
+	GitDiffRequest,
+	GitDiscardRequest,
+	GitFileChange,
+	GitLogRequest,
+	GitLogResult,
+	GitRangeDiffRequest,
+	GitRangeRequest,
+	GitRemoteActionRequest,
+	GitUndoCommitResult,
+	ReviewScope,
+} from "../shared/git";
 import type {
 	TerminalCreateRequest,
 	TerminalExit,
@@ -238,6 +256,20 @@ const api = {
 		ipcRenderer.invoke("git:files", cwd, scope),
 	gitAction: (req: GitActionRequest) => ipcRenderer.invoke("git:action", req),
 	gitInit: (cwd: string) => ipcRenderer.invoke("git:init", cwd),
+	gitLog: (req: GitLogRequest): Promise<GitLogResult> => ipcRenderer.invoke("git:log", req),
+	gitCommitDetail: (cwd: string, hash: string): Promise<GitCommitDetail> =>
+		ipcRenderer.invoke("git:commitDetail", cwd, hash),
+	gitRangeFiles: (req: GitRangeRequest): Promise<GitFileChange[]> => ipcRenderer.invoke("git:rangeFiles", req),
+	gitRangeDiff: (req: GitRangeDiffRequest): Promise<string> => ipcRenderer.invoke("git:rangeDiff", req),
+	gitCompareInfo: (cwd: string): Promise<GitCompareInfo> => ipcRenderer.invoke("git:compareInfo", cwd),
+	gitCommit: (req: GitCommitRequest): Promise<GitCommitResult> => ipcRenderer.invoke("git:commit", req),
+	gitUndoCommit: (cwd: string): Promise<GitUndoCommitResult> => ipcRenderer.invoke("git:undoCommit", cwd),
+	gitRevertCommit: (cwd: string, hash: string): Promise<void> => ipcRenderer.invoke("git:revertCommit", cwd, hash),
+	gitAbortMerge: (cwd: string): Promise<void> => ipcRenderer.invoke("git:abortMerge", cwd),
+	gitDiscard: (req: GitDiscardRequest): Promise<void> => ipcRenderer.invoke("git:discard", req),
+	gitBranches: (cwd: string): Promise<GitBranchList> => ipcRenderer.invoke("git:branches", cwd),
+	gitBranchAction: (req: GitBranchActionRequest): Promise<void> => ipcRenderer.invoke("git:branchAction", req),
+	gitRemoteAction: (req: GitRemoteActionRequest): Promise<void> => ipcRenderer.invoke("git:remoteAction", req),
 
 	fsList: (cwd: string, relPath: string): Promise<FsEntry[]> =>
 		ipcRenderer.invoke("fs:list", cwd, relPath),

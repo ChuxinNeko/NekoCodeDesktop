@@ -71,7 +71,26 @@ import type { GoalAction } from "../../shared/goal";
 import type { ProjectInstructions, SaveInstructionsRequest } from "../../shared/instructions";
 import type { MemorySnapshot, SaveMemoryRequest } from "../../shared/memory";
 import type { HooksSnapshot, SaveHookRequest } from "../../shared/hooks";
-import type { GitActionRequest, GitDiffRequest, RepoStatus, ReviewScope } from "../../shared/git";
+import type {
+	GitActionRequest,
+	GitBranchActionRequest,
+	GitBranchList,
+	GitCommitDetail,
+	GitCommitRequest,
+	GitCommitResult,
+	GitCompareInfo,
+	GitDiffRequest,
+	GitDiscardRequest,
+	GitFileChange,
+	GitLogRequest,
+	GitLogResult,
+	GitRangeDiffRequest,
+	GitRangeRequest,
+	GitRemoteActionRequest,
+	GitUndoCommitResult,
+	RepoStatus,
+	ReviewScope,
+} from "../../shared/git";
 import type {
 	FetchModelsRequest,
 	FetchedModel,
@@ -222,6 +241,19 @@ export interface AgentApi {
 	gitFiles(cwd: string, scope: ReviewScope): Promise<string[]>;
 	gitAction(req: GitActionRequest): Promise<void>;
 	gitInit(cwd: string): Promise<void>;
+	gitLog(req: GitLogRequest): Promise<GitLogResult>;
+	gitCommitDetail(cwd: string, hash: string): Promise<GitCommitDetail>;
+	gitRangeFiles(req: GitRangeRequest): Promise<GitFileChange[]>;
+	gitRangeDiff(req: GitRangeDiffRequest): Promise<string>;
+	gitCompareInfo(cwd: string): Promise<GitCompareInfo>;
+	gitCommit(req: GitCommitRequest): Promise<GitCommitResult>;
+	gitUndoCommit(cwd: string): Promise<GitUndoCommitResult>;
+	gitRevertCommit(cwd: string, hash: string): Promise<void>;
+	gitAbortMerge(cwd: string): Promise<void>;
+	gitDiscard(req: GitDiscardRequest): Promise<void>;
+	gitBranches(cwd: string): Promise<GitBranchList>;
+	gitBranchAction(req: GitBranchActionRequest): Promise<void>;
+	gitRemoteAction(req: GitRemoteActionRequest): Promise<void>;
 
 	fsList(cwd: string, relPath: string): Promise<FsEntry[]>;
 	fsPreviewReference?(cwd: string, path: string): Promise<FsReadResult & { external: boolean }>;

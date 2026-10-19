@@ -53,6 +53,22 @@ import { GitHubAuthService } from "./github-auth";
 import { GitHubClientService } from "./github-client-service";
 import type { GitHubClientRequest } from "../shared/github-client";
 import { applyAction, getDiff, getStatus, initRepo, listScopeFiles, showHeadFile, commitChanges } from "./git";
+import {
+	abortMerge,
+	branchAction,
+	commitWorkbench,
+	configureGitAuth,
+	discardChanges,
+	getCommitDetail,
+	getCompareInfo,
+	getLog,
+	getRangeDiff,
+	getRangeFiles,
+	listBranches,
+	remoteAction,
+	revertCommit,
+	undoLastCommit,
+} from "./git-workbench";
 import { listProjectFiles, rankPaths } from "./mentions";
 import {
 	createEntry,
@@ -98,7 +114,18 @@ import type {
 	StartBackgroundTaskResult,
 	ThinkingLevel,
 } from "../shared/agent";
-import type { GitActionRequest, GitDiffRequest, ReviewScope } from "../shared/git";
+import type {
+	GitActionRequest,
+	GitBranchActionRequest,
+	GitCommitRequest,
+	GitDiffRequest,
+	GitDiscardRequest,
+	GitLogRequest,
+	GitRangeDiffRequest,
+	GitRangeRequest,
+	GitRemoteActionRequest,
+	ReviewScope,
+} from "../shared/git";
 import type {
 	CreateSkillRequest,
 	ImportSkillsRequest,
@@ -957,6 +984,8 @@ function createWindow(): void {
 	terminalService = new TerminalService(win, () => ssh().service);
 
 	if (!githubAuth) githubAuth = new GitHubAuthService();
+	// Push/pull fall back to the signed-in GitHub account when git has no credentials.
+	configureGitAuth(async () => (await githubAuth?.resolveToken())?.token ?? null);
 	if (!githubLogin) githubLogin = new GitHubLoginService(new GitHubOAuthClient(), (url) => shell.openExternal(url),
 		(grant, active) => githubAuth!.saveOAuth(grant, active), () => githubAuth!.assertStorage());
 	if (!pullRequests) pullRequests = new PullRequestService(githubAuth);
@@ -1113,6 +1142,19 @@ function registerIpc(): void {
 	);
 	ipcMain.handle("git:action", (_e, req: GitActionRequest) => applyAction(req));
 	ipcMain.handle("git:init", (_e, cwd: string) => initRepo(cwd));
+	ipcMain.handle("git:log", (_e, req: GitLogRequest) => getLog(req));
+	ipcMain.handle("git:commitDetail", (_e, cwd: string, hash: string) => getCommitDetail(cwd, hash));
+	ipcMain.handle("git:rangeFiles", (_e, req: GitRangeRequest) => getRangeFiles(req));
+	ipcMain.handle("git:rangeDiff", (_e, req: GitRangeDiffRequest) => getRangeDiff(req));
+	ipcMain.handle("git:compareInfo", (_e, cwd: string) => getCompareInfo(cwd));
+	ipcMain.handle("git:commit", (_e, req: GitCommitRequest) => commitWorkbench(req));
+	ipcMain.handle("git:undoCommit", (_e, cwd: string) => undoLastCommit(cwd));
+	ipcMain.handle("git:revertCommit", (_e, cwd: string, hash: string) => revertCommit(cwd, hash));
+	ipcMain.handle("git:abortMerge", (_e, cwd: string) => abortMerge(cwd));
+	ipcMain.handle("git:discard", (_e, req: GitDiscardRequest) => discardChanges(req));
+	ipcMain.handle("git:branches", (_e, cwd: string) => listBranches(cwd));
+	ipcMain.handle("git:branchAction", (_e, req: GitBranchActionRequest) => branchAction(req));
+	ipcMain.handle("git:remoteAction", (_e, req: GitRemoteActionRequest) => remoteAction(req));
 
 	// Local desktop only: deliberately excluded from the remote API allowlist.
 	ipcMain.handle("fs:previewReference", (_e, cwd: string, path: string) => previewReferencedFile(cwd, path));
