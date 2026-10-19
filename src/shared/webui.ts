@@ -215,6 +215,7 @@ export const WEBUI_EVENT_CHANNELS = [
 	"browser:elementSelected",
 	"browser:inspectStopped",
 	"browser:revealAutomation",
+	"browser:automationPointer",
 	"agent:sessionsChanged",
 	"agent:revealSession",
 	"agent:tasks",

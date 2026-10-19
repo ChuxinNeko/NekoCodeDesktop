@@ -9,6 +9,7 @@ const SUBSCRIPTIONS = {
 	onBrowserElementSelected: "browser:elementSelected",
 	onBrowserInspectStopped: "browser:inspectStopped",
 	onBrowserRevealAutomation: "browser:revealAutomation",
+	onBrowserAutomationPointer: "browser:automationPointer",
 	onSessionsChanged: "agent:sessionsChanged",
 	onRevealSession: "agent:revealSession",
 	onAgentTasks: "agent:tasks",

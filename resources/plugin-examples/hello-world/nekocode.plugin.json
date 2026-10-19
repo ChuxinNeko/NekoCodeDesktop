@@ -1,0 +1,8 @@
+{
+  "id": "hello-world",
+  "name": "Hello NekoCode",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "main": "index.mjs",
+  "description": "原生插件示例：问候工具、/hello-world.hello 命令和会话生命周期通知。"
+}

@@ -415,6 +415,9 @@ export function buildModePrompt(context: PromptContext): string {
 		tools.includes("browser_screenshot")
 			? "browser_screenshot 仅在用户明确要求截图或图片对比时使用，不是默认验收步骤；保存 PNG，并仅在模型支持图片输入时附图。若模型不支持或无法可靠判断图片、结果没有图片，停止截图尝试，回到元素验证并说明图片验证未完成。"
 			: "",
+		tools.includes("browser_action")
+			? "浏览器交互验收使用 browser_action：它在右侧浏览器显示鼠标移动、点击、拖拽和输入过程，通过浏览器原生输入触发真实事件。按钮、表单、悬停、滚动、拖动和按键测试优先用它；不要用 browser_evaluate 调用 click()、直接写入 value 或派发合成事件来代替用户操作。browser_evaluate 用于读取页面状态并验证操作结果。坐标使用页面 CSS 像素，优先使用选择器定位；遇到遮挡、禁用或不可见目标先检查原因，不绕过目标状态。"
+			: "",
 		!readOnly && !context.child && !context.headless
 			? "浏览器预览：成功编辑独立 HTML 后界面会自动预览。若任务需要启动前端开发服务，使用实际命令并保持服务运行，从启动输出或日志中取得完整本地 URL；运行时验证后自动打开右侧浏览器，不猜测端口。自动预览不等于已完成元素验证。"
 			: "",

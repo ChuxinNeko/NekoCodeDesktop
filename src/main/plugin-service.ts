@@ -9,6 +9,8 @@ import {
 	type PluginsSnapshot,
 } from "../shared/plugins";
 import { pi } from "./pi";
+import { discoverNativePlugins, installNativePlugin, removeNativePlugin, NATIVE_PLUGIN_PREFIX } from "./native-plugin-manifest";
+import { nativePluginStates } from "./native-plugin-runtime";
 
 type LoadedExtension = LoadExtensionsResult["extensions"][number];
 
@@ -117,9 +119,11 @@ export class PluginService {
 	enabledTools(extensions: LoadExtensionsResult | undefined): string[] {
 		const names: string[] = [];
 		for (const extension of extensions?.extensions ?? []) {
+			if (extension.path === "<inline:nekocode-native>") continue;
 			if (!isLoose(extension) && !this.enabled.has(extension.sourceInfo.source)) continue;
 			names.push(...extension.tools.keys());
 		}
+		for (const plugin of nativePluginStates(extensions)) if (this.enabled.has(plugin.source)) names.push(...plugin.tools);
 		return [...new Set(names)];
 	}
 
@@ -179,18 +183,40 @@ export class PluginService {
 			commands: [...new Set(commands.get(entry.source) ?? [])],
 			...(failures.has(entry.source) ? { error: failures.get(entry.source)!.join("\n") } : {}),
 		}));
+		const agentDir = this.options.agentDir ?? (await pi()).getAgentDir();
+		const nativeStates = nativePluginStates(extensions);
+		for (const native of await discoverNativePlugins(cwd, agentDir)) {
+			const state = nativeStates.find(state => state.source === native.source);
+			const error = native.error ?? state?.error;
+			plugins.push({ kind: "nekocode", source: native.source, scope: native.scope, installedPath: native.root,
+				name: native.manifest?.name, version: native.manifest?.version, description: native.manifest?.description,
+				enabled: this.enabled.has(native.source), tools: state?.tools ?? [], commands: state?.commands ?? [],
+				...(error ? { error } : {}),
+			});
+		}
 		return { plugins, local, errors: loose, busy: this.busy, loaded: extensions !== undefined };
 	}
 
 	async install(cwd: string, request: InstallPluginRequest): Promise<void> {
 		if (!isPluginSource(request.source)) throw new Error("不是有效的插件来源");
 		await this.run(cwd, async (manager) => {
+			const agentDir = this.options.agentDir ?? (await pi()).getAgentDir();
+			const native = await installNativePlugin(cwd, agentDir, request.source.trim(), request.scope);
+			if (native) {
+				this.enabled.delete(native.source);
+				this.writeEnabled();
+				return;
+			}
 			await manager.installAndPersist(request.source.trim(), { local: request.scope === "project" });
 		});
 	}
 
 	async remove(cwd: string, request: PluginActionRequest): Promise<void> {
 		await this.run(cwd, async (manager) => {
+			if (request.source.startsWith(NATIVE_PLUGIN_PREFIX)) {
+				await removeNativePlugin(cwd, this.options.agentDir ?? (await pi()).getAgentDir(), request.source);
+				return;
+			}
 			await manager.removeAndPersist(request.source, { local: request.scope === "project" });
 		});
 		// Leaving it enabled would silently re-authorize a reinstall later.
@@ -200,6 +226,7 @@ export class PluginService {
 
 	async update(cwd: string, source?: string): Promise<void> {
 		await this.run(cwd, async (manager) => {
+			if (source?.startsWith(NATIVE_PLUGIN_PREFIX)) return; // The following session reload reimports it.
 			await manager.update(source);
 		});
 	}

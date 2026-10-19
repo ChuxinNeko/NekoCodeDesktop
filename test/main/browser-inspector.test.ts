@@ -7,17 +7,31 @@ function fakeGuest(id: number) {
 	const guest = Object.assign(new EventEmitter(), {
 		id,
 		isDestroyed: () => false,
+		getZoomFactor: () => 1.5,
 		debugger: Object.assign(new EventEmitter(), { isAttached: () => false }),
 	});
 	return guest as unknown as WebContents & EventEmitter;
 }
 
 function fakeWindow() {
-	const webContents = { send: mock(() => undefined) };
+	const webContents = { send: mock(() => undefined), getZoomFactor: () => 2 };
 	return { win: { isDestroyed: () => false, webContents } as unknown as BrowserWindow, webContents };
 }
 
 describe("BrowserInspector automation", () => {
+	test("routes pointer updates to the bound guest and accounts for app zoom", async () => {
+		const { win, webContents } = fakeWindow();
+		const inspector = new BrowserInspector(win);
+		inspector.register(fakeGuest(7));
+		const host = inspector.automationHost("a");
+		const bound = host.requestAutomation("req", () => undefined);
+		inspector.bindAutomation(webContents as never, "req", 7);
+		await bound;
+		host.updateAutomationPointer({ x: 120, y: 80, phase: "down" });
+		expect(webContents.send).toHaveBeenCalledWith("browser:automationPointer", { guestId: 7, x: 120, y: 80, phase: "down", scale: 0.75 });
+		inspector.automationHost("b").updateAutomationPointer({ x: 1, y: 1, phase: "move" });
+		expect(webContents.send).toHaveBeenCalledTimes(1);
+	});
 	test("keeps each session's page separate", async () => {
 		const { win, webContents } = fakeWindow();
 		const inspector = new BrowserInspector(win);

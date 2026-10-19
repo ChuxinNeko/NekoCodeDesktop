@@ -1,0 +1,11 @@
+{
+  "name": "@nekocode/plugin-api",
+  "version": "0.1.0",
+  "description": "Public API for NekoCode native plugins",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": { ".": { "types": "./index.d.ts", "default": "./index.js" } },
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "license": "MIT"
+}

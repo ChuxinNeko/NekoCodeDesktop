@@ -42,7 +42,7 @@ import type {
 	StartBackgroundTaskResult,
 	ThinkingLevel,
 } from "../../shared/agent";
-import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection } from "../../shared/browser";
+import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection, BrowserAutomationPointer } from "../../shared/browser";
 import type {
 	AutomationEvent,
 	AutomationRun,
@@ -226,6 +226,7 @@ export interface AgentApi {
 	onBrowserInspectStopped(listener: (state: { guestId: number }) => void): () => void;
 	/** Main needs the automation page painted (a screenshot): bring its tab to the front. */
 	onBrowserRevealAutomation(listener: (state: { guestId: number }) => void): () => void;
+	onBrowserAutomationPointer(listener: (state: BrowserAutomationPointer) => void): () => void;
 	browserSetInspect(guestId: number, enabled: boolean): Promise<void>;
 	browserBindAutomation(requestId: string, guestId: number): Promise<void>;
 

@@ -34,7 +34,9 @@ import type { TaskBoardEntry } from "../shared/task-board";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
 import { registerWallpaperIpc } from "./wallpaper/host";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, session, shell, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, screen, session, shell, utilityProcess } from "electron";
+import { initialWindowSize } from "../shared/display-scale";
+import { installDisplayScale } from "./display-scale";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
@@ -745,30 +747,30 @@ function opaqueBackgroundColor(): string {
  * color. Follow the resolved system theme, which the renderer keeps in sync
  * through `theme:set`.
  */
-function captionOverlay() {
+function captionOverlay(scale = 1) {
 	return {
 		// Transparent so the title bar row behind the buttons (and whatever
 		// material backs the window) shows through instead of a flat patch of color.
 		color: "#00000000",
 		symbolColor: nativeTheme.shouldUseDarkColors ? "#ffffff" : "#1a1a19",
-		height: TITLE_BAR_HEIGHT,
+		height: Math.round(TITLE_BAR_HEIGHT * scale),
 	};
 }
 
 /** How long a new window may stay hidden waiting for its first paint. */
 const WINDOW_REVEAL_TIMEOUT_MS = 2000;
+const displayScaleRefreshers = new Set<() => void>();
 
 function createWindow(): void {
+	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	const display = screen.getPrimaryDisplay();
 	// A system backdrop is composited behind the window by DWM, so the window's
 	// own background has to be fully transparent for it to show at all. Bound to
 	// a local so the narrowing survives into the options object below.
 	const material = activeMaterial;
 	const backdrop = material === "mica" || material === "acrylic";
 	const win = new BrowserWindow({
-		width: 1267,
-		height: 792,
-		minWidth: 1100,
-		minHeight: 700,
+		...initialWindowSize(display.workAreaSize, display.bounds),
 		title: "NekoCode Desktop",
 		icon: process.platform === "win32" ? appIconIco : appIconPng,
 		// Shown on first paint (below), which is the boot splash — never the
@@ -800,6 +802,11 @@ function createWindow(): void {
 			webviewTag: true,
 		},
 	});
+	const refreshDisplayScale = installDisplayScale(win, () => preferences?.get().uiScalePercent ?? null, (scale) => {
+		if (process.platform === "win32") win.setTitleBarOverlay(captionOverlay(scale));
+	});
+	displayScaleRefreshers.add(refreshDisplayScale);
+	win.once("closed", () => displayScaleRefreshers.delete(refreshDisplayScale));
 
 	// The first paint is the splash in index.html, a few milliseconds after the
 	// HTML arrives. The timer is for a page that never paints — a load that
@@ -830,7 +837,7 @@ function createWindow(): void {
 		// Repaint the caption glyphs when the app flips light/dark, otherwise they
 		// stay in the color they had when the window opened.
 		const syncOverlay = () => {
-			if (!win.isDestroyed()) win.setTitleBarOverlay(captionOverlay());
+			if (!win.isDestroyed()) win.setTitleBarOverlay(captionOverlay(win.webContents.getZoomFactor()));
 		};
 		nativeTheme.on("updated", syncOverlay);
 		win.on("closed", () => nativeTheme.off("updated", syncOverlay));
@@ -1572,6 +1579,9 @@ function registerIpc(): void {
 	ipcMain.handle("preferences:update", (_e, patch: Partial<AppPreferences>): AppPreferences => {
 		preferences ??= new AppPreferencesStore(app.getPath("userData"));
 		const next = preferences.update(patch);
+		if (Object.hasOwn(patch, "uiScalePercent")) {
+			for (const refresh of displayScaleRefreshers) refresh();
+		}
 		taskNotifier?.setEnabled(next.notifyOnTaskFinish);
 		// Switching it off should also end an action already under way, not only
 		// keep the tools out of the next session.

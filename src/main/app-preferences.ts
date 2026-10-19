@@ -2,9 +2,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import { DEFAULT_APP_PREFERENCES, isCommandShellId, type AppPreferences } from "../shared/preferences";
 import { isTeamSettings } from "../shared/team";
+import { isUiScalePercent } from "../shared/display-scale";
 
 /** What each key may hold; anything else falls back to its default. */
 const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPreferences[K] } = {
+	uiScalePercent: isUiScalePercent,
 	notifyOnTaskFinish: (value): value is boolean => typeof value === "boolean",
 	isolateBackgroundTasks: (value): value is boolean => typeof value === "boolean",
 	computerUse: (value): value is boolean => typeof value === "boolean",

@@ -8,6 +8,8 @@
 import { DEFAULT_TEAM, type TeamSettings } from "./team";
 
 export interface AppPreferences {
+	/** null follows the current display; a percentage overrides app zoom. */
+	uiScalePercent: number | null;
 	/** Announce a task finishing when it is not the one on screen. */
 	notifyOnTaskFinish: boolean;
 	/**
@@ -53,6 +55,7 @@ export interface CommandShellOption {
 }
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
+	uiScalePercent: null,
 	notifyOnTaskFinish: true,
 	isolateBackgroundTasks: true,
 	computerUse: false,

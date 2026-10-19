@@ -30,6 +30,7 @@ import { FusionLeadContextProjection } from "./fusion-context";
 import { FusionDocumentBudget, FusionDocumentReviewBudget, FUSION_DOCUMENT_RETURN } from "./fusion-document-budget";
 import { FUSION_RUN_ENTRY, FusionProgressGuard, FusionRequestDeadline, fusionFileFingerprint, isFusionContinuation } from "./fusion-resilience";
 import { Type } from "typebox";
+import { createNativePluginBridge } from "./native-plugin-runtime";
 import { FileJournalRecorder } from "./file-journal-recorder";
 import { CommandExecutionControl } from "./command-execution-control";
 import {
@@ -235,9 +236,11 @@ export async function createPromptResources(
 	const { DefaultResourceLoader, getAgentDir, SettingsManager } = await pi();
 	const noContextFiles = isolated && getContext().mode === "commit";
 	const dir = agentDir ?? getAgentDir();
+	const nativePlugins = plugins && !isolated ? createNativePluginBridge({ cwd, agentDir: dir, policy: plugins }) : undefined;
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir: dir,
+		...(nativePlugins ? { extensionFactories: [nativePlugins.extension], extensionsOverride: nativePlugins.annotate } : {}),
 		...(plugins && !isolated
 			? { settingsManager: withEnabledPackages(SettingsManager.create(cwd, dir), (source) => plugins.isEnabled(source)) }
 			: {}),

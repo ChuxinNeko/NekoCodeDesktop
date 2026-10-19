@@ -29,7 +29,7 @@ import type {
 import type { WorkMode, WorkflowAnswer } from "../shared/workflow";
 import type { TaskBoardEntry } from "../shared/task-board";
 import type { AutomationEvent, AutomationRun, AutomationWithState, SaveAutomationRequest } from "../shared/automation";
-import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection } from "../shared/browser";
+import type { BrowserPopupRequest, BrowserPreviewRequest, BrowserElementSelection, BrowserAutomationPointer } from "../shared/browser";
 import type {
 	CreatePullRequestRequest,
 	GitHubAuthStatus,
@@ -241,6 +241,7 @@ const api = {
 	onBrowserElementSelected: (listener: (selection: BrowserElementSelection) => void) => subscribe("browser:elementSelected", listener),
 	onBrowserInspectStopped: (listener: (state: { guestId: number }) => void) => subscribe("browser:inspectStopped", listener),
 	onBrowserRevealAutomation: (listener: (state: { guestId: number }) => void) => subscribe("browser:revealAutomation", listener),
+	onBrowserAutomationPointer: (listener: (state: BrowserAutomationPointer) => void) => subscribe("browser:automationPointer", listener),
 	browserSetInspect: (guestId: number, enabled: boolean): Promise<void> => ipcRenderer.invoke("browser:setInspect", guestId, enabled),
 	browserBindAutomation: (requestId: string, guestId: number): Promise<void> =>
 		ipcRenderer.invoke("browser:bindAutomation", requestId, guestId),

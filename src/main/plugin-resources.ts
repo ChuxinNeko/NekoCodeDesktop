@@ -55,7 +55,7 @@ export function withEnabledPackages(settings: SettingsManager, isEnabled: (sourc
  * nearly every folder opened, for no code run.
  */
 export function projectRunsCode(configDir: string): boolean {
-	if (existsSync(join(configDir, "extensions"))) return true;
+	if (existsSync(join(configDir, "extensions")) || existsSync(join(configDir, "plugins"))) return true;
 	try {
 		const raw = JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as {
 			packages?: unknown;

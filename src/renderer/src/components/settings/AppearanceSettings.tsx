@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { UI_SCALE_OPTIONS } from "../../../../shared/display-scale";
 import { applyCommunityThemeNow, useTheme } from "../../hooks/useTheme";
 import { installThemePackage, removeCommunityTheme, useThemeLibrary } from "../../hooks/useThemeLibrary";
 import { api, errorMessage } from "../../api";
@@ -519,6 +520,31 @@ export function AppearanceSettings({ embedded = false }: { embedded?: boolean } 
 	const activeCommunity = communityThemeId ? communityThemes.find((entry) => entry.id === communityThemeId) : undefined;
 	const [managing, setManaging] = useState(false);
 	const { preferences, updatePreferences, resetPreferences } = useAppearancePreferences();
+	const [uiScalePercent, setUiScalePercent] = useState<number | null>(null);
+	const [scaleReady, setScaleReady] = useState(false);
+	const [scaleError, setScaleError] = useState<string | null>(null);
+	useEffect(() => {
+		if (api.runtime === "web") return;
+		let cancelled = false;
+		void api.preferencesGet().then((value) => {
+			if (cancelled) return;
+			setUiScalePercent(value.uiScalePercent);
+			setScaleReady(true);
+		}).catch((cause: unknown) => { if (!cancelled) setScaleError(errorMessage(cause)); });
+		return () => { cancelled = true; };
+	}, []);
+	const saveDisplayScale = async (percent: number | null) => {
+		setScaleReady(false);
+		setScaleError(null);
+		try {
+			const next = await api.preferencesUpdate({ uiScalePercent: percent });
+			setUiScalePercent(next.uiScalePercent);
+		} catch (cause) {
+			setScaleError(errorMessage(cause));
+		} finally {
+			setScaleReady(true);
+		}
+	};
 	const codeThemes = useMemo(() => getAvailableCodeThemes(resolvedTheme), [resolvedTheme]);
 	const activeCodeThemeId = themeState.codeThemeIds[resolvedTheme as ThemeVariant];
 	const [menuOpen, setMenuOpen] = useState(false);
@@ -745,6 +771,23 @@ export function AppearanceSettings({ embedded = false }: { embedded?: boolean } 
 			<WallpaperSettings />
 
 			<SettingsGroup title={t("settings.appearance.group.fonts")}>
+				{api.runtime !== "web" ? (
+					<SettingsRow hint={t("settings.uiScaleHint")} label={t("settings.uiScale")}>
+						<select
+							aria-label={t("settings.uiScale")}
+							disabled={!scaleReady}
+							value={uiScalePercent ?? "auto"}
+							onChange={(event) => void saveDisplayScale(event.target.value === "auto" ? null : Number(event.target.value))}
+							className="rounded-md border border-border bg-background px-2 py-1 text-[length:var(--app-font-size-ui)]"
+						>
+							<option value="auto">{t("settings.uiScaleAuto")}</option>
+							{[...new Set([...UI_SCALE_OPTIONS, ...(uiScalePercent === null ? [] : [uiScalePercent])])].sort((a, b) => a - b).map((percent) => (
+								<option key={percent} value={percent}>{percent}%</option>
+							))}
+						</select>
+					</SettingsRow>
+				) : null}
+				{scaleError ? <p role="alert" className="text-destructive text-sm">{scaleError}</p> : null}
 				<SettingsRow hint={t("settings.uiFontHint")} label={t("settings.uiFont")}>
 					<div className="flex items-center gap-1">
 						<FontFamilyPicker
@@ -881,6 +924,7 @@ export function AppearanceSettings({ embedded = false }: { embedded?: boolean } 
 							resetAllThemes();
 							resetPreferences();
 							resetWallpaperPreferences();
+							if (api.runtime !== "web") void saveDisplayScale(null);
 						}}
 						size="sm"
 						variant="chrome-outline"

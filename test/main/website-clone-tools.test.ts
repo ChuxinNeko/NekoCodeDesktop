@@ -156,8 +156,10 @@ function emulatedPage(initial = { width: 1024, height: 768 }) {
 			state.height = parameters.viewSize.height;
 		},
 		executeJavaScript: (code) => {
+			if (code.includes("const verifyTarget")) return Promise.resolve(true);
 			if (code === "document.visibilityState") return Promise.resolve("visible");
 			if (code === "[scrollX, scrollY]") return Promise.resolve([0, state.scrollY]);
+			if (code.includes("const selector =")) return Promise.resolve({ x: 100, y: 100, width: state.width, height: state.height, scrollY: state.scrollY });
 			if (code.startsWith("({ width: innerWidth")) return Promise.resolve({ width: state.width, height: state.height, dpr: 1 });
 			return Promise.resolve({ answer: 42, list: [1, 2, 3] });
 		},
@@ -189,14 +191,16 @@ function toolsFor(page: WebsiteCloneGuest, cwd = tmpdir(), extra: { acceptsImage
 }
 
 describe("page calls", () => {
-	test("leave the debugger alone and do not re-emulate a viewport that held", async () => {
+	test("read calls leave the debugger alone; native input attaches only for its action", async () => {
 		const { page, state } = emulatedPage();
 		const run = toolsFor(page);
 		await run("browser_viewport", { width: 390, height: 844 });
 		await run("browser_evaluate", { expression: "1" });
+		expect(state.attaches).toBe(0);
 		await run("browser_action", { action: "scroll", scrollY: 200 });
 		expect(state.emulations).toBe(1);
-		expect(state.attaches).toBe(0);
+		expect(state.attaches).toBe(1);
+		expect(state.commands.some(command => command.method === "Input.dispatchMouseEvent" && command.params?.type === "mouseWheel")).toBe(true);
 	});
 
 	test("evaluate saveTo writes the full result and returns a preview", async () => {
@@ -265,6 +269,27 @@ describe("website_clone_scaffold", () => {
 	});
 });
 
+
+describe("browser_action navigation", () => {
+	test("a click that navigates is reported as delivered and stops the pending input", async () => {
+		const { page } = emulatedPage();
+		const watchers = new Set<(reason: string) => void>();
+		const commands: Record<string, unknown>[] = [];
+		page.debugger.sendCommand = async (_method, params) => {
+			if (params) commands.push(params);
+			if (params?.type === "mousePressed") for (const invalidate of [...watchers]) invalidate("Page navigated");
+		};
+		const tools = createWebsiteCloneTools({
+			cwd: tmpdir(), templateDir: null, onNavigate: () => {},
+			browser: { ...browser, automationGuest: () => page, watchAutomation: listener => { watchers.add(listener); return () => { watchers.delete(listener); }; } },
+		});
+		const action = tools.find(tool => tool.name === "browser_action")!;
+		const result = await action.execute("call", { action: "click", selector: "a" }, undefined, undefined, {} as never);
+		expect(result.details).toMatchObject({ action: "click", navigated: true });
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect(commands.at(-1)).toMatchObject({ type: "mouseReleased", buttons: 0 });
+	});
+});
 
 describe("webpage QA guidance", () => {
 	test("screenshot tools carry the opt-in and stopping rules into PI tool guidelines", () => {

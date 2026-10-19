@@ -1,5 +1,5 @@
 import type { BrowserWindow, WebContents } from "electron";
-import type { BrowserElementSelection } from "../shared/browser";
+import type { BrowserElementSelection, BrowserPointerUpdate, BrowserAutomationPointer } from "../shared/browser";
 
 /** Runs against the user-picked DOM node. Never includes input values or HTML. */
 export function describeSelectedElement(this: Element) {
@@ -40,6 +40,7 @@ export interface BrowserAutomationHost {
 	/** Bring the automation page's tab on screen so it paints again. */
 	revealAutomation(): void;
 	watchAutomation(onInvalidate: (reason: string) => void): () => void;
+	updateAutomationPointer(update: BrowserPointerUpdate): void;
 }
 
 /** Chrome's inspector intercepts the click, so selecting a link cannot follow it. */
@@ -159,6 +160,15 @@ export class BrowserInspector {
 			automationGuest: () => this.automationGuest(sessionId),
 			revealAutomation: () => this.revealAutomation(sessionId),
 			watchAutomation: (onInvalidate) => this.watchAutomation(sessionId, onInvalidate),
+			updateAutomationPointer: (update) => {
+				const guest = this.automation.get(sessionId);
+				if (!guest || guest.isDestroyed() || this.win.isDestroyed()) return;
+				const pointer: BrowserAutomationPointer = {
+					...update, guestId: guest.id,
+					scale: guest.getZoomFactor() / this.win.webContents.getZoomFactor(),
+				};
+				this.win.webContents.send("browser:automationPointer", pointer);
+			},
 		};
 	}
 

@@ -129,6 +129,16 @@
 }
 
 @layer components {
+  @keyframes browser-automation-click {
+    from { transform: scale(0.45); opacity: 1; }
+    to { transform: scale(1.5); opacity: 0; }
+  }
+  .browser-automation-click {
+    animation: browser-automation-click 500ms ease-out forwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .browser-automation-click { animation-duration: 1ms; }
+  }
   /* ─── Window caption strip ────────────────────────────────────────────────────
      The window is frameless (main sets titleBarStyle: "hidden"), so this row is
      the app's only drag handle — it spans the full width above the sidebar and

@@ -20,6 +20,15 @@ pi/                      -> pi agent 内核源码（本项目的一部分，可�
 pi 的 `AgentSession` 在 Electron 主进程中运行，事件经 IPC 推送到渲染进程，由
 `agent-projection` 投影成 UI 单元（user / assistant / tool / notice）。
 
+## 原生插件
+
+NekoCode 插件 API v1 支持注册智能体工具、斜杠命令和生命周期事件。插件使用独立的
+`nekocode.plugin.json` 清单，在设置 → 插件 → 手动安装中选择本地目录，安装后启用。
+
+- [开发指南与 API](docs/plugins.md)
+- [SDK](packages/plugin-api)
+- [可直接安装的示例](resources/plugin-examples/hello-world)
+
 ## 环境要求
 
 - Bun 1.4+

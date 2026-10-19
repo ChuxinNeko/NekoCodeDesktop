@@ -64,6 +64,12 @@ asarUnpack:
   # from native code, which cannot read inside app.asar (src/main/ast-tools.ts).
   - node_modules/@ast-grep/**/*
 extraResources:
+  - from: resources/plugin-examples
+    to: plugin-examples
+  - from: packages/plugin-api
+    to: plugin-api
+  - from: docs/plugins.md
+    to: plugin-api/guide.md
   - from: resources/skills
     to: skills
   - from: resources/templates

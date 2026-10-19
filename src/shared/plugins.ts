@@ -1,10 +1,6 @@
 /**
- * PI packages, as this app manages them.
- *
- * A "plugin" here is a pi package — the same thing `pi install` handles — which
- * may bundle extensions, skills, prompt templates, or themes. The name follows
- * the settings page rather than pi's vocabulary because that is what a user
- * looking for this feature will search for.
+ * Plugins managed by NekoCode: native versioned plugin folders and compatible
+ * PI packages that may bundle extensions, skills, prompts or themes.
  */
 
 /** Where a package is recorded, and therefore who it applies to. */
@@ -48,7 +44,12 @@ export function pluginPackageName(source: string): string | null {
 }
 
 export interface PluginSummary {
-	/** The install source, which is also its identity: `npm:@foo/bar`, `git:…`. */
+	/** Omitted means a legacy PI package. */
+	kind?: "nekocode";
+	name?: string;
+	version?: string;
+	description?: string;
+	/** Opaque identity: npm/git source for PI, scope and installation path for native plugins. */
 	source: string;
 	scope: PluginScope;
 	/** Absent when the source is configured but not yet installed on disk. */
@@ -123,14 +124,13 @@ export interface SetPluginEnabledRequest extends PluginActionRequest {
  */
 export function isPluginSource(value: string): boolean {
 	const source = value.trim();
-	if (!source || source.length > 500 || /\s/.test(source)) return false;
+	if (!source || source.length > 500 || /[\r\n\0]/.test(source)) return false;
+	if (source.startsWith(".") || source.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(source)) return true;
+	if (/\s/.test(source)) return false;
 	return (
 		source.startsWith("npm:") ||
 		source.startsWith("git:") ||
 		source.startsWith("http://") ||
-		source.startsWith("https://") ||
-		source.startsWith(".") ||
-		source.startsWith("/") ||
-		/^[a-zA-Z]:[\\/]/.test(source)
+		source.startsWith("https://")
 	);
 }

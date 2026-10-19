@@ -69,7 +69,8 @@ function PluginRow({
 					htmlFor={"plugin-" + plugin.scope + ":" + plugin.source}
 					className="min-w-0 flex-1 cursor-pointer break-all font-medium"
 				>
-					{plugin.source}
+					{plugin.name ?? plugin.source}
+					{plugin.kind === "nekocode" ? <span className="ml-2 text-muted-foreground">NekoCode · {plugin.version}</span> : null}
 				</label>
 				<span
 					className={cn(
@@ -85,12 +86,14 @@ function PluginRow({
 					)}
 				</span>
 				<Button size="xs" variant="ghost" disabled={busy} onClick={onUpdate}>
-					{t("plugins.update")}
+				{t(plugin.kind === "nekocode" ? "plugins.reload" : "plugins.update")}
 				</Button>
 				<Button size="xs" variant="outline" disabled={busy} onClick={onRemove}>
 					{t("plugins.remove")}
 				</Button>
 			</div>
+			{plugin.description ? <p className={SMALL_MUTED}>{plugin.description}</p> : null}
+			{plugin.kind === "nekocode" ? <p className={SMALL_MUTED}>{plugin.installedPath}</p> : null}
 			{!plugin.installedPath ? (
 				<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-[var(--warning)]">
 					{t("plugins.notInstalled")}
@@ -235,6 +238,7 @@ export function PluginSettings() {
 
 			{tab === "manual" ? (
 				<div className="flex flex-col gap-2">
+					<p className={SMALL_MUTED}>{t("plugins.nativeHint")}</p>
 					<div className="flex gap-2">
 						<Input
 							className="min-w-0 flex-1"

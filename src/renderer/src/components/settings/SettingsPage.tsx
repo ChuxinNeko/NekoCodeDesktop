@@ -99,8 +99,8 @@ export function SettingsPage({
 
 	return (
 		<SettingsSurfaceContext.Provider value={true}>
-			<div className="flex min-h-0 flex-1">
-				<nav className="flex w-52 shrink-0 flex-col border-r border-[color:var(--app-surface-divider)]">
+			<div className="flex min-h-0 min-w-0 flex-1">
+				<nav className="flex w-36 shrink-0 flex-col border-r border-[color:var(--app-surface-divider)] min-[1100px]:w-52">
 					<div className="flex shrink-0 items-center gap-1 px-3 pb-2 pt-2">
 						<Button onClick={onClose} size="icon-xs" variant="ghost">
 							<ArrowLeftIcon className="size-3.5" />
@@ -138,7 +138,7 @@ export function SettingsPage({
 
 				{/* Keep navigation outside the glass scope; only settings controls
 				    in the content column and their portalled popups use it. */}
-				<div className="min-h-0 flex-1 overflow-y-auto p-5" data-settings-surface="page">
+				<div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 min-[1100px]:p-5" data-settings-surface="page">
 					<div
 						className={cn(
 							"mx-auto flex w-full flex-col gap-4",

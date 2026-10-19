@@ -4,7 +4,8 @@ import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, relative } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { BrowserPreviewRequest } from "../shared/browser";
+import type { BrowserPreviewRequest, BrowserPointerUpdate } from "../shared/browser";
+import { performBrowserInput } from "./browser-input";
 import { devServers as defaultDevServers, type DevServerRegistry } from "./website-clone-dev-server";
 import {
 	compareExtractions,
@@ -107,6 +108,7 @@ export interface WebsiteCloneBrowserHost {
 	/** Bring the automation page's tab on screen so it paints again. */
 	revealAutomation(): void;
 	watchAutomation(onInvalidate: (reason: string) => void): () => void;
+	updateAutomationPointer?(update: BrowserPointerUpdate): void;
 }
 
 /**
@@ -250,11 +252,22 @@ const actionSchema = Type.Object(
 			Type.Literal("scroll"),
 			Type.Literal("type"),
 			Type.Literal("wait"),
+			Type.Literal("drag"),
+			Type.Literal("keypress"),
 		]),
 		selector: Type.Optional(Type.String({ minLength: 1, maxLength: 2000 })),
 		scrollY: Type.Optional(Type.Number({ minimum: 0 })),
 		text: Type.Optional(Type.String({ maxLength: 10_000 })),
 		waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: WAIT_MAX_MS })),
+		x: Type.Optional(Type.Number({ minimum: 0 })),
+		y: Type.Optional(Type.Number({ minimum: 0 })),
+		toX: Type.Optional(Type.Number({ minimum: 0 })),
+		toY: Type.Optional(Type.Number({ minimum: 0 })),
+		deltaX: Type.Optional(Type.Number()),
+		deltaY: Type.Optional(Type.Number()),
+		key: Type.Optional(Type.Union(["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", " "].map(key => Type.Literal(key)))),
+		button: Type.Optional(Type.Union([Type.Literal("left"), Type.Literal("middle"), Type.Literal("right")])),
+		clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 2 })),
 	},
 	{ additionalProperties: false },
 );
@@ -275,15 +288,6 @@ function serializeEvaluation(result: unknown): { text: string; truncated: boolea
 	return { text, truncated: false };
 }
 
-function elementCenter(selector: string): string {
-	return `(() => {
-		const el = document.querySelector(${JSON.stringify(selector)});
-		if (!el) return null;
-		el.scrollIntoView({ block: "center", inline: "center" });
-		const r = el.getBoundingClientRect();
-		return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-	})()`;
-}
 
 export function createWebsiteCloneTools(options: {
 	cwd: string;
@@ -410,7 +414,7 @@ export function createWebsiteCloneTools(options: {
 		guarded(limits, async () => operation(await settleViewport(guest)));
 
 	/**
-	 * Only captures use the debugger. Holding it for every call locked the user
+	 * Captures and native input briefly use the debugger. Holding it for every call locked the user
 	 * out of DevTools and element picking while a clone ran, and failed every call
 	 * outright while DevTools was open on the page.
 	 */
@@ -773,107 +777,58 @@ export function createWebsiteCloneTools(options: {
 		},
 	};
 
+
 	const action: ToolDefinition = {
 		name: "browser_action",
 		label: "browser_action",
 		description:
-			"Interact with the inspected page: click, hover, scroll to a Y offset, type into a field, or wait. Scroll an element into view before clicking it.",
+			"Operate the visible browser with a moving pointer and native Chromium input. Prefer this over JavaScript for UI testing. click/hover/type/drag accept a selector or viewport CSS x/y; type replaces field contents with native text input. click supports button and clickCount (1 or 2). drag requires toX/toY. scroll accepts deltaX/deltaY (wheel at selector or x/y), or absolute scrollY. keypress sends Enter, Tab, Escape, arrows, Backspace, Delete, Home, End, PageUp, PageDown or space to the focused control. wait accepts waitMs. Read DOM/state after actions to verify outcomes.",
 		parameters: actionSchema,
 		executionMode: "sequential",
 		async execute(_id, params, signal) {
-			const { action, selector, scrollY, text, waitMs } = params as Static<typeof actionSchema>;
+			const input = params as Static<typeof actionSchema>;
+			const { action } = input;
+			if (["click", "hover", "type", "drag"].includes(action) && !input.selector && (input.x === undefined || input.y === undefined)) {
+				throw new Error(action + " requires a selector or x/y coordinates");
+			}
+			if (action === "scroll" && input.scrollY === undefined && input.deltaX === undefined && input.deltaY === undefined) throw new Error("scroll requires scrollY or deltaX/deltaY");
 			const guest = browser.automationGuest();
-			// A click that follows a link tears the page down mid-call. The interaction
-			// itself landed; only the scroll probe behind it can no longer come back, so
-			// report the navigation rather than the probe that was lost to it.
+			const controller = new AbortController();
+			const actionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 			let interacted = false;
-			const interact = async () => {
-				switch (action) {
-					case "click":
-					case "hover": {
-						if (!selector) throw new Error(`${action} requires a selector`);
-						const rect = (await guest.executeJavaScript(elementCenter(selector), true)) as
-							| { x: number; y: number }
-							| null;
-						if (!rect) throw new Error(`No element matches selector: ${selector}`);
-						const x = Math.round(rect.x);
-						const y = Math.round(rect.y);
-						guest.sendInputEvent({ type: "mouseMove", x, y });
-						if (action === "click") {
-							guest.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
-							guest.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
-						}
-						break;
-					}
-					case "scroll": {
-						if (typeof scrollY !== "number" || scrollY < 0) throw new Error("scroll requires scrollY >= 0");
-						await guest.executeJavaScript(`window.scrollTo(0, ${Math.floor(scrollY)})`, true);
-						break;
-					}
-					case "type": {
-						if (!selector) throw new Error("type requires a selector");
-						if (typeof text !== "string") throw new Error("type requires text");
-						const typed = await guest.executeJavaScript(
-							`(() => {
-							const el = document.querySelector(${JSON.stringify(selector)});
-							if (!el) return false;
-							el.focus();
-							const proto = el instanceof HTMLTextAreaElement
-								? HTMLTextAreaElement.prototype
-								: el instanceof HTMLInputElement ? HTMLInputElement.prototype : null;
-							const setter = proto && Object.getOwnPropertyDescriptor(proto, "value")?.set;
-							if (setter) setter.call(el, ${JSON.stringify(text)});
-							else el.value = ${JSON.stringify(text)};
-							el.dispatchEvent(new Event("input", { bubbles: true }));
-							el.dispatchEvent(new Event("change", { bubbles: true }));
-							return true;
-						})()`,
-							true,
-						);
-						if (typed !== true) throw new Error(`No element matches selector: ${selector}`);
-						break;
-					}
-					case "wait": {
-						if (signal?.aborted) throw new Error("Tool call cancelled");
-						const ms = Math.min(Math.max(waitMs ?? 0, 0), WAIT_MAX_MS);
-						await new Promise<void>((resolve, reject) => {
-							const finish = () => {
-								clearTimeout(timer);
-								signal?.removeEventListener("abort", abort);
-								resolve();
-							};
-							const abort = () => {
-								clearTimeout(timer);
-								signal?.removeEventListener("abort", abort);
-								reject(new Error("Tool call cancelled"));
-							};
-							const timer = setTimeout(finish, ms);
-							signal?.addEventListener("abort", abort, { once: true });
-						});
-						break;
-					}
-				}
-				interacted = true;
-				const position = await guest.executeJavaScript("window.scrollY", true);
-				return {
-					content: [{ type: "text" as const, text: `${action} done on ${guest.getURL()}` }],
-					details: { action, url: guest.getURL(), scrollY: typeof position === "number" ? position : 0 },
-				};
-			};
 			try {
-				return await onPage(
-					guest,
-					{ signal, timeoutMs: GUEST_TIMEOUT_MS + WAIT_MAX_MS },
-					interact,
-				);
+				return await onPage(guest, { signal, timeoutMs: GUEST_TIMEOUT_MS + WAIT_MAX_MS }, async () => {
+					if (action === "wait") {
+						await new Promise<void>((resolve, reject) => {
+							if (actionSignal.aborted) { reject(new Error("Tool call cancelled")); return; }
+							const finish = () => { actionSignal.removeEventListener("abort", abort); resolve(); };
+							const timer = setTimeout(finish, Math.min(Math.max(input.waitMs ?? 0, 0), WAIT_MAX_MS));
+							const abort = () => { clearTimeout(timer); reject(new Error("Tool call cancelled")); };
+							actionSignal.addEventListener("abort", abort, { once: true });
+						});
+					} else {
+						await ensurePainting(guest, actionSignal);
+						await performBrowserInput(guest, { ...input, action }, {
+							signal: actionSignal,
+							onPointer: update => browser.updateAutomationPointer?.(update),
+							onDispatched: () => { interacted = true; },
+						});
+					}
+					interacted = true;
+					const position = await guest.executeJavaScript("window.scrollY", true);
+					return {
+						content: [{ type: "text" as const, text: action + " done on " + guest.getURL() }],
+						details: { action, url: guest.getURL(), scrollY: typeof position === "number" ? position : 0 },
+					};
+				});
 			} catch (error) {
-				const navigatedAway =
-					interacted && !guest.isDestroyed() && error instanceof GuestUnavailableError && error.pageGone;
-				if (!navigatedAway) throw error;
+				if (!(interacted && !guest.isDestroyed() && error instanceof GuestUnavailableError && error.pageGone)) throw error;
 				return {
-					content: [{ type: "text", text: `${action} done, then the page navigated to ${guest.getURL()}` }],
+					content: [{ type: "text", text: action + " done, then the page navigated to " + guest.getURL() }],
 					details: { action, url: guest.getURL(), scrollY: 0, navigated: true },
 				};
+			} finally {
+				controller.abort();
 			}
 		},
 	};

@@ -38,6 +38,18 @@ export interface BrowserElementSelection {
 	selector: string;
 }
 
+/** Page CSS coordinates; the host converts them to the webview's CSS scale. No typed text. */
+export interface BrowserPointerUpdate {
+	x: number;
+	y: number;
+	phase: "move" | "down" | "up" | "scroll" | "type" | "key" | "idle" | "hide";
+}
+
+export interface BrowserAutomationPointer extends BrowserPointerUpdate {
+	guestId: number;
+	scale: number;
+}
+
 export interface ComposerInsertion {
 	id: string;
 	text: string;

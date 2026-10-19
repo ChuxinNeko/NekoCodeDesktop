@@ -4,11 +4,13 @@ import {
 	BROWSER_PARTITION,
 	type BrowserTabState,
 	type BrowserPreviewRequest,
+	type BrowserAutomationPointer,
 	browserUrlLabel,
 	isBlankBrowserUrl,
 	resolveBrowserInputUrl,
 } from "../../../shared/browser";
 import { api } from "../api";
+import { BrowserAutomationCursor } from "./BrowserAutomationCursor";
 import { useTranslation } from "../i18n";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -105,6 +107,21 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 	const webviews = useRef(new Map<string, WebviewTag>());
 	const stripRef = useRef<HTMLDivElement | null>(null);
 	const hostRef = useRef<HTMLDivElement | null>(null);
+	const [automationPointer, setAutomationPointer] = useState<(BrowserAutomationPointer & { tabId: string; pulse: number }) | null>(null);
+	useEffect(() => {
+		const unsubscribe = api.onBrowserAutomationPointer((pointer) => {
+			let tabId: string | undefined;
+			for (const [id, element] of webviews.current) {
+				try { if (element.getWebContentsId() === pointer.guestId) { tabId = id; break; } } catch { /* Guest not ready. */ }
+			}
+			if (!tabId) return;
+			setAutomationPointer(current => pointer.phase === "hide" ? null : {
+				...pointer, tabId: tabId!,
+				pulse: (current?.guestId === pointer.guestId ? current.pulse : 0) + (pointer.phase === "down" && current?.phase !== "down" ? 1 : 0),
+			});
+		});
+		return unsubscribe;
+	}, []);
 
 	const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
@@ -510,10 +527,10 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 				</div>
 			) : null}
 
-			<div
-				ref={hostRef}
-				className="relative min-h-0 flex-1 bg-[var(--color-background-surface-under,var(--background))]"
-			/>
+			<div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--color-background-surface-under,var(--background))]">
+				<div ref={hostRef} className="absolute inset-0" />
+				{visible && automationPointer?.tabId === activeTabId ? <BrowserAutomationCursor pointer={automationPointer} /> : null}
+			</div>
 		</section>
 	);
 }
