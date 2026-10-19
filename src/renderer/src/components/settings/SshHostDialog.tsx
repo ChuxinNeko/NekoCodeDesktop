@@ -97,6 +97,7 @@ export function SshHostDialog({
 					)}
 				/>
 				<Dialog.Popup
+					data-settings-surface="dialog"
 					className={cn(
 						"fixed left-1/2 top-1/2 z-50 flex max-h-[min(36rem,calc(100dvh-4rem))] -translate-x-1/2 -translate-y-1/2",
 						"flex-col gap-3 overflow-hidden rounded-2xl border p-4",
@@ -136,10 +137,11 @@ export function SshHostDialog({
 
 						<div className="flex flex-col gap-1.5">
 							<Label>{t("ssh.auth")}</Label>
-							<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+							<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 								{(["password", "key"] as const).map((auth) => (
 									<button
 										key={auth}
+										aria-pressed={draft.auth === auth}
 										type="button"
 										onClick={() => setDraft({ ...draft, auth, secret: "" })}
 										className={cn(
@@ -210,10 +212,11 @@ export function SshHostDialog({
 						</div>
 						<div className="flex flex-col gap-1.5">
 							<Label>{t("ssh.desktop")}</Label>
-							<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+							<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 								{(["sandbox", "auto", "vnc"] as const).map((mode) => (
 									<button
 										key={mode}
+										aria-pressed={draft.desktop === mode}
 										type="button"
 										onClick={() => setDraft({ ...draft, desktop: mode })}
 										className={cn(

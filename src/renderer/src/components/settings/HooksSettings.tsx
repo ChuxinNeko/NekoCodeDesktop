@@ -305,10 +305,11 @@ export function HooksSettings({ projects }: { projects: readonly string[] }) {
 
 					<div className="flex flex-col gap-1">
 						<Label>{t("hooks.field.event")}</Label>
-						<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+						<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 							{(["pre_tool", "post_tool"] as const).map((event) => (
 								<button
 									key={event}
+									aria-pressed={draft.event === event}
 									type="button"
 									onClick={() => setDraft({ ...draft, event, action: event === "post_tool" ? "command" : draft.action })}
 									className={cn(
@@ -352,10 +353,11 @@ export function HooksSettings({ projects }: { projects: readonly string[] }) {
 					{draft.event === "pre_tool" ? (
 						<div className="flex flex-col gap-1">
 							<Label>{t("hooks.field.action")}</Label>
-							<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+							<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 								{(["block", "command"] as const).map((action) => (
 									<button
 										key={action}
+										aria-pressed={draft.action === action}
 										type="button"
 										onClick={() => setDraft({ ...draft, action })}
 										className={cn(

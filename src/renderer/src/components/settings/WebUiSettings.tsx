@@ -111,10 +111,11 @@ export function WebUiSettings() {
 			) : null}
 			<section className="flex flex-col divide-y divide-[color:var(--app-surface-divider)] rounded-xl border border-[color:var(--app-surface-divider)] px-4">
 				<SettingsRow hint={t("webui.hostHint")} label={t("webui.host")}>
-					<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+					<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 						{HOSTS.map((entry) => (
 							<button
 								key={entry}
+								aria-pressed={host === entry}
 								type="button"
 								disabled={!status || busy}
 								onClick={() => void selectHost(entry)}

@@ -23,6 +23,7 @@ import { CodeIntelSettings } from "./CodeIntelSettings";
 import { PromptSettings } from "./PromptSettings";
 import { api } from "../../api";
 import { ArrowLeftIcon } from "../../lib/icons";
+import { SettingsSurfaceContext } from "../../lib/settingsSurface";
 
 /**
  * What you open settings to change, then how the agent behaves, then the
@@ -97,73 +98,78 @@ export function SettingsPage({
 	})).filter((group) => group.entries.length > 0);
 
 	return (
-		<div className="flex min-h-0 flex-1">
-			<nav className="flex w-52 shrink-0 flex-col border-r border-[color:var(--app-surface-divider)]">
-				<div className="flex shrink-0 items-center gap-1 px-3 pb-2 pt-2">
-					<Button onClick={onClose} size="icon-xs" variant="ghost">
-						<ArrowLeftIcon className="size-3.5" />
-					</Button>
-					<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
-						{t("settings.title")}
-					</span>
-				</div>
-				<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3">
-					{groups.map((group) => (
-						<div key={group.id} className="flex flex-col gap-0.5">
-							<div className="px-2 pb-0.5 text-[length:var(--app-font-size-ui-xs,10px)] font-medium text-muted-foreground">
-								{t(group.labelKey)}
+		<SettingsSurfaceContext.Provider value={true}>
+			<div className="flex min-h-0 flex-1">
+				<nav className="flex w-52 shrink-0 flex-col border-r border-[color:var(--app-surface-divider)]">
+					<div className="flex shrink-0 items-center gap-1 px-3 pb-2 pt-2">
+						<Button onClick={onClose} size="icon-xs" variant="ghost">
+							<ArrowLeftIcon className="size-3.5" />
+						</Button>
+						<span className="text-[length:var(--app-font-size-ui,12px)] font-medium">
+							{t("settings.title")}
+						</span>
+					</div>
+					<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3">
+						{groups.map((group) => (
+							<div key={group.id} className="flex flex-col gap-0.5">
+								<div className="px-2 pb-0.5 text-[length:var(--app-font-size-ui-xs,10px)] font-medium text-muted-foreground">
+									{t(group.labelKey)}
+								</div>
+								{group.entries.map((entry) => (
+									<button
+										key={entry.id}
+										type="button"
+										aria-current={section === entry.id ? "page" : undefined}
+										onClick={() => setSection(entry.id)}
+										className={cn(
+											"flex h-[var(--app-density-row-height,1.75rem)] items-center rounded-md px-2 text-left text-[length:var(--app-font-size-ui,12px)] transition-colors",
+											section === entry.id
+												? "bg-[var(--sidebar-selected)] text-foreground"
+												: "text-foreground/95 hover:bg-[var(--sidebar-accent)]",
+										)}
+									>
+										{t(entry.labelKey)}
+									</button>
+								))}
 							</div>
-							{group.entries.map((entry) => (
-								<button
-									key={entry.id}
-									type="button"
-									onClick={() => setSection(entry.id)}
-									className={cn(
-										"flex h-[var(--app-density-row-height,1.75rem)] items-center rounded-md px-2 text-left text-[length:var(--app-font-size-ui,12px)] transition-colors",
-										section === entry.id
-											? "bg-[var(--sidebar-selected)] text-foreground"
-											: "text-foreground/95 hover:bg-[var(--sidebar-accent)]",
-									)}
-								>
-									{t(entry.labelKey)}
-								</button>
-							))}
-						</div>
-					))}
-				</div>
-			</nav>
+						))}
+					</div>
+				</nav>
 
-			<div className="min-h-0 flex-1 overflow-y-auto p-5">
-				<div
-					className={cn(
-						"mx-auto flex w-full flex-col gap-4",
-						SECTION_WIDTH[section] ?? "max-w-[42rem]",
-					)}
-				>
-					<h2 className="text-[length:var(--app-font-size-ui-lg,13px)] font-medium">
-						{t(sections.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
-					</h2>
-					{section === "general" ? <GeneralSettings /> : null}
-					{section === "connect" ? <ConnectSettings /> : null}
-					{section === "appearance" ? <AppearanceSettings /> : null}
-					{section === "providers" ? <ProviderModelSettings /> : null}
-					{section === "agents" && api.runtime !== "web" ? <AcpSettings /> : null}
-					{section === "team" ? <TeamSettings /> : null}
-					{section === "tokens" ? <TokenUsageSettings /> : null}
-					{section === "prompts" ? <PromptSettings /> : null}
-					{section === "context" ? <ContextSettings cwd={cwd} projects={projects} /> : null}
-					{section === "hooks" ? <HooksSettings projects={projects} /> : null}
-					{section === "web" ? <WebToolsSettings /> : null}
-					{section === "codeIntel" && api.runtime !== "web" ? <CodeIntelSettings cwd={cwd} onOpenProviders={() => setSection("providers")} /> : null}
-					{section === "skills" ? <SkillSettings /> : null}
-					{section === "plugins" ? <PluginSettings /> : null}
-					{section === "mcp" ? <McpSettings /> : null}
-					{section === "github" ? <GitHubSettings /> : null}
-					{section === "ssh" && api.runtime !== "web" ? <SshSettings /> : null}
-					{section === "webui" && api.runtime !== "web" ? <WebUiSettings /> : null}
-					{section === "about" ? <AboutSettings /> : null}
+				{/* Keep navigation outside the glass scope; only settings controls
+				    in the content column and their portalled popups use it. */}
+				<div className="min-h-0 flex-1 overflow-y-auto p-5" data-settings-surface="page">
+					<div
+						className={cn(
+							"mx-auto flex w-full flex-col gap-4",
+							SECTION_WIDTH[section] ?? "max-w-[42rem]",
+						)}
+					>
+						<h2 className="text-[length:var(--app-font-size-ui-lg,13px)] font-medium">
+							{t(sections.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
+						</h2>
+						{section === "general" ? <GeneralSettings /> : null}
+						{section === "connect" ? <ConnectSettings /> : null}
+						{section === "appearance" ? <AppearanceSettings /> : null}
+						{section === "providers" ? <ProviderModelSettings /> : null}
+						{section === "agents" && api.runtime !== "web" ? <AcpSettings /> : null}
+						{section === "team" ? <TeamSettings /> : null}
+						{section === "tokens" ? <TokenUsageSettings /> : null}
+						{section === "prompts" ? <PromptSettings /> : null}
+						{section === "context" ? <ContextSettings cwd={cwd} projects={projects} /> : null}
+						{section === "hooks" ? <HooksSettings projects={projects} /> : null}
+						{section === "web" ? <WebToolsSettings /> : null}
+						{section === "codeIntel" && api.runtime !== "web" ? <CodeIntelSettings cwd={cwd} onOpenProviders={() => setSection("providers")} /> : null}
+						{section === "skills" ? <SkillSettings /> : null}
+						{section === "plugins" ? <PluginSettings /> : null}
+						{section === "mcp" ? <McpSettings /> : null}
+						{section === "github" ? <GitHubSettings /> : null}
+						{section === "ssh" && api.runtime !== "web" ? <SshSettings /> : null}
+						{section === "webui" && api.runtime !== "web" ? <WebUiSettings /> : null}
+						{section === "about" ? <AboutSettings /> : null}
+					</div>
 				</div>
 			</div>
-		</div>
+		</SettingsSurfaceContext.Provider>
 	);
 }

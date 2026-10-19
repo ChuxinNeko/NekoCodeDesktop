@@ -146,10 +146,11 @@ export function GeneralSettings() {
 	return (
 		<section className="flex flex-col divide-y divide-[color:var(--app-surface-divider)]">
 			<SettingsRow hint={t("settings.languageHint")} label={t("settings.language")}>
-				<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+				<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 					{LANGUAGE_OPTIONS.map((entry) => (
 						<button
 							key={entry.id}
+							aria-pressed={language === entry.id}
 							type="button"
 							onClick={() => setLanguage(entry.id)}
 							className={cn(

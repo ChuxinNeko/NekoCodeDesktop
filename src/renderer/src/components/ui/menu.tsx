@@ -6,6 +6,7 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { observeNativeSurfaceOverlay } from "~/lib/nativeSurfaceOcclusion";
+import { useSettingsSurface } from "~/lib/settingsSurface";
 import {
   APP_TRANSLUCENT_POPUP_SURFACE_CLASS_NAME,
   COMPOSER_PICKER_MENU_OPTION_CLASS_NAME,
@@ -84,6 +85,7 @@ function MenuPopupBase({
   pickerSize?: "small" | "normal" | undefined;
 }) {
   const surface = surfaceProp ?? "default";
+  const settingsSurface = useSettingsSurface();
   const sideOffset = sideOffsetProp ?? 4;
   const align = alignProp ?? "center";
   const side = sideProp ?? "bottom";
@@ -116,6 +118,7 @@ function MenuPopupBase({
             isComposerSurface ? className : null,
           )}
           data-slot="menu-popup"
+          data-settings-surface={settingsSurface ? "popup" : undefined}
           {...props}
         >
           {surface === "composer" ? (

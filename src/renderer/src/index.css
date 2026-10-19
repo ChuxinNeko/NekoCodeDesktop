@@ -3230,6 +3230,110 @@ diffs-container {
   );
 }
 
+/* Wallpaper settings controls share the composer's glass, not an independent
+   approximation. The wallpaper renderer owns data-wallpaper: removing/turning
+   off the wallpaper restores all original control styles automatically.
+   Scope markers also live on portalled settings dialogs and picker shells. */
+html[data-wallpaper] [data-settings-surface] {
+  --settings-glass-fill: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-opacity),
+    transparent
+  );
+}
+
+/* Keep segmented-control backings from hiding the wallpaper behind the fields. */
+html[data-wallpaper] [data-settings-surface] [data-settings-segmented],
+html[data-wallpaper] [data-settings-surface] [data-settings-segmented-thumb] {
+  background: transparent;
+}
+
+/* Inputs already have a single surface wrapper. Frost that wrapper only, not
+   the inner editable input/textarea a second time. Native fields are included;
+   color/range/file/hidden inputs and palette swatches keep their own rendering. */
+html[data-wallpaper] [data-settings-surface] :is(
+  button:not([role="switch"], [role="checkbox"], [role^="menuitem"], [role="option"], [data-settings-glass-exempt]),
+  [data-slot="button"]:not([data-settings-glass-exempt]),
+  [data-slot="input-control"],
+  [data-slot="textarea-control"],
+  [data-slot="select-trigger"],
+  [data-slot="select-button"],
+  input:not([data-slot="input"], [type="color"], [type="range"], [type="file"], [type="hidden"], [type="checkbox"], [type="radio"]),
+  textarea:not([data-slot="textarea"]),
+  select,
+  [data-slot="switch"],
+  [data-slot="checkbox"]
+) {
+  background: var(--settings-glass-fill);
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
+}
+
+/* Filled primary buttons formerly used inverse ink on an opaque accent. Use
+   readable theme ink on glass, while destructive actions retain red semantics. */
+html[data-wallpaper] [data-settings-surface] [data-slot="button"]:is(
+  [data-variant="default"], [data-variant="prominent"]
+) {
+  color: var(--foreground);
+  border-color: var(--color-text-accent);
+}
+
+html[data-wallpaper] [data-settings-surface] [data-slot="button"][data-variant^="destructive"] {
+  color: var(--destructive);
+  border-color: color-mix(in srgb, var(--destructive) 40%, transparent);
+}
+
+html[data-wallpaper] [data-settings-surface] button.text-white:not([data-settings-glass-exempt]) {
+  color: var(--foreground);
+}
+
+html[data-wallpaper] [data-settings-surface] :is(
+  button:not([role="switch"], [role="checkbox"], [role^="menuitem"], [role="option"], [data-settings-glass-exempt]),
+  [data-slot="button"]:not([data-settings-glass-exempt]),
+  [data-slot="select-trigger"], [data-slot="select-button"]
+):is(:hover, [data-pressed], [aria-pressed="true"], [aria-checked="true"], [aria-current="page"]) {
+  background: color-mix(in srgb, var(--composer-glass-surface) 72%, transparent);
+}
+
+/* Keep persistent selection visible after pointer-out, even on a flat image. */
+html[data-wallpaper] [data-settings-surface] :is(
+  [aria-pressed="true"], [aria-current="page"], [role="radio"][aria-checked="true"]
+):not([data-settings-glass-exempt]) {
+  box-shadow: inset 0 0 0 1px var(--color-text-accent);
+}
+
+/* Checked controls keep their accent and white indicator rather than becoming
+   indistinguishable from unchecked glass. Focus/invalid/disabled rules remain
+   owned by the primitives; this override changes the material only. */
+html[data-wallpaper] [data-settings-surface] :is(
+  [data-slot="switch"], [data-slot="checkbox"]
+):is([data-checked], [data-indeterminate]) {
+  background: color-mix(in srgb, var(--color-text-accent) 85%, transparent);
+}
+
+/* Dialogs/popup shells use the composer's negative-z pseudo-layer, so their
+   content is not trapped in another backdrop root. No layout/radius overrides. */
+html[data-wallpaper] [data-settings-surface]:is(
+  [data-settings-surface="dialog"], [data-settings-surface="popup"]
+) {
+  background: var(--settings-glass-fill);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-wallpaper] [data-settings-surface]:is(
+  [data-settings-surface="dialog"], [data-settings-surface="popup"]
+)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
+}
+
 /* Recessed track: a hairline border + faint inner shadow read the base as a sunken
    well, so the raised selected thumb appears to protrude out of it (macOS style). */
 .sidebar-segmented-picker {
@@ -3868,17 +3972,35 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
   .welcome-hero { padding-top: 3rem; padding-bottom: 2rem; }
 }
 
-/* A wallpaper sits behind the window. These rules are unlayered so they win
-   over Tailwind utility backgrounds. The chrome row is the left rail's fill;
-   once a wallpaper is on, that row steps aside and the rail keeps the fill
-   itself, so the main card and the right dock can frost directly over the
-   picture. Inner sheets that would paint a second opaque fill step aside. */
-html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) {
+/* The wallpaper spans the whole window, including opaque-window mode.
+   Isolation keeps the negative-z artwork above the body's solid background
+   without creating a new containing block for fixed-position overlays.
+
+   Override the chrome token on the window, not on :root (where theme.logic
+   writes an inline value). Caption, activity rail, workspace list, main card,
+   and dock then share one translucent tint instead of covering the artwork
+   with the theme's opaque sidebar color. No per-button blur is added here;
+   the settings navigation deliberately stays outside the control-glass scope.
+   Removing data-wallpaper restores the original theme token automatically. */
+html[data-wallpaper] .app-window-backdrop {
+  isolation: isolate;
+  --app-sidebar-surface: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-stacked-opacity),
+    transparent
+  );
+}
+
+/* Keep the layout row clear so sibling panels tint the same wallpaper once,
+   rather than compounding a shared backing with their own translucent fill. */
+html[data-wallpaper] .app-chrome-surface {
   background: transparent;
 }
 
-html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) > nav,
-html[data-wallpaper] .app-chrome-surface:has(.wallpaper-dock) > .contents > aside {
+html[data-wallpaper] .app-titlebar,
+html[data-wallpaper] .app-sidebar-surface,
+html[data-wallpaper] .app-chrome-surface > nav,
+html[data-wallpaper] .app-chrome-surface > .contents > aside {
   background: var(--app-sidebar-surface, var(--card));
 }
 

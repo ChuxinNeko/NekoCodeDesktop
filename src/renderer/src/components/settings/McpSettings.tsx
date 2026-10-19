@@ -230,10 +230,11 @@ export function McpSettings() {
 						value={draft.name}
 						onChange={(event) => setDraft({ ...draft, name: event.target.value })}
 					/>
-					<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+					<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 						{(["stdio", "http"] as const).map((transport) => (
 							<button
 								key={transport}
+								aria-pressed={draft.transport === transport}
 								type="button"
 								onClick={() => setDraft({ ...draft, transport })}
 								className={cn(

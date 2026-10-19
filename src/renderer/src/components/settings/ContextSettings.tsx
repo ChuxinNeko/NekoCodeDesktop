@@ -353,10 +353,11 @@ export function ContextSettings({ cwd, projects }: { cwd: string | null; project
 					}
 				>
 					{memoryDraft.id ? null : (
-						<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+						<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 							{(["project", "user"] as const).map((scope) => (
 								<button
 									key={scope}
+									aria-pressed={memoryDraft.scope === scope}
 									type="button"
 									disabled={scope === "project" && !project}
 									onClick={() => setMemoryDraft({ ...memoryDraft, scope })}

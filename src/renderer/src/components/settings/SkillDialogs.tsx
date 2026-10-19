@@ -36,10 +36,11 @@ function ScopePicker({
 	return (
 		<div className="flex flex-col gap-1">
 			<Label>{t("skills.field.scope")}</Label>
-			<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+			<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 				{(["user", "project"] as const).map((scope) => (
 					<button
 						key={scope}
+						aria-pressed={value === scope}
 						type="button"
 						disabled={scope === "project" && !hasProject}
 						onClick={() => onChange(scope)}

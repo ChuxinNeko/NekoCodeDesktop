@@ -194,6 +194,7 @@ export function FontFamilyPicker({
 			<Popover.Portal>
 				<Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={4}>
 					<Popover.Popup
+						data-settings-surface="popup"
 						className={cn(
 							APP_TRANSLUCENT_POPUP_SURFACE_BASE_CLASS_NAME,
 							COMPOSER_SURFACE_SHADOW_CLASS_NAME,

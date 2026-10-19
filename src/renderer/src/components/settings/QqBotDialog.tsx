@@ -63,6 +63,7 @@ export function QqBotDialog({
 					)}
 				/>
 				<Dialog.Popup
+					data-settings-surface="dialog"
 					className={cn(
 						"fixed left-1/2 top-1/2 z-50 flex max-h-[min(34rem,calc(100dvh-4rem))] -translate-x-1/2 -translate-y-1/2",
 						"flex-col gap-3 overflow-hidden rounded-2xl border p-4",
@@ -81,10 +82,11 @@ export function QqBotDialog({
 					<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
 						<div className="flex flex-col gap-1.5">
 							<Label>{t("qqbot.protocol")}</Label>
-							<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+							<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 								{(["onebot", "official"] as const).map((protocol: QqBotProtocol) => (
 									<button
 										key={protocol}
+										aria-pressed={draft.protocol === protocol}
 										type="button"
 										onClick={() => setDraft({ ...draft, protocol })}
 										className={cn(

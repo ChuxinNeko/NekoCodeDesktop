@@ -78,10 +78,11 @@ function SegmentedControl<T extends string>({
 	onChange: (value: T) => void;
 }) {
 	return (
-		<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+		<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 			{options.map((entry) => (
 				<button
 					key={entry.id}
+					aria-pressed={value === entry.id}
 					type="button"
 					onClick={() => onChange(entry.id)}
 					className={cn(
@@ -169,6 +170,7 @@ function AccentPicker({ value, onChange }: { value: string; onChange: (value: st
 				<button
 					key={color}
 					aria-label={color}
+					data-settings-glass-exempt
 					className="flex size-5 items-center justify-center rounded-full ring-offset-2 ring-offset-[var(--app-settings-surface)] transition-transform hover:scale-110 data-[active=true]:ring-2 data-[active=true]:ring-[color:var(--color-border-heavy)]"
 					data-active={value === color}
 					onClick={() => onChange(color)}

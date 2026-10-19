@@ -331,6 +331,7 @@ function MemberDialog({
 					)}
 				/>
 				<Dialog.Popup
+					data-settings-surface="dialog"
 					className={cn(
 						"fixed left-1/2 top-1/2 z-50 flex max-h-[min(34rem,calc(100dvh-4rem))] -translate-x-1/2 -translate-y-1/2",
 						"flex-col gap-3 overflow-hidden rounded-2xl border p-4",
@@ -425,7 +426,7 @@ function MemberDialog({
 									{TEAM_AVATAR_COLORS.map((color) => {
 										const selected = avatar.color === color;
 										return (
-											<button key={color} type="button" role="radio" aria-checked={selected} title={color}
+											<button data-settings-glass-exempt key={color} type="button" role="radio" aria-checked={selected} title={color}
 												className={selected ? "size-4 rounded-full ring-2 ring-foreground/60 ring-offset-1 ring-offset-background" : "size-4 rounded-full opacity-60 hover:opacity-100"}
 												style={{ background: TEAM_AVATAR_FILL[color] }}
 												onClick={() => patch({ avatar: { ...avatar, color } })} />

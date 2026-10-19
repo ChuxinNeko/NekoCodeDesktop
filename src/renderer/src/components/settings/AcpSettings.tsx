@@ -96,6 +96,7 @@ function AgentDialog({
 					)}
 				/>
 				<Dialog.Popup
+					data-settings-surface="dialog"
 					className={cn(
 						"fixed left-1/2 top-1/2 z-50 flex max-h-[min(34rem,calc(100dvh-4rem))] -translate-x-1/2 -translate-y-1/2",
 						"flex-col gap-3 overflow-hidden rounded-2xl border p-4",

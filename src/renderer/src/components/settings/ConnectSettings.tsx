@@ -26,10 +26,11 @@ export function ConnectSettings() {
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+			<div data-settings-segmented className="flex items-center gap-1 self-start rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 				{TABS.map((entry) => (
 					<button
 						key={entry.id}
+						aria-pressed={tab === entry.id}
 						type="button"
 						onClick={() => setTab(entry.id)}
 						className={cn(

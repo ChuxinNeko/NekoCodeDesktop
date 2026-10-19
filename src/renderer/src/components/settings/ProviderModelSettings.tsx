@@ -279,10 +279,11 @@ export function ProviderModelSettings() {
 			) : null}
 
 			<div className="flex items-center gap-2">
-				<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+				<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 					{TABS.map((entry) => (
 						<button
 							key={entry.id}
+							aria-pressed={tab === entry.id}
 							type="button"
 							onClick={() => setTab(entry.id)}
 							className={cn(

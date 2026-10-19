@@ -20,6 +20,7 @@ export function LayoutModeSwitch({ value, onChange }: { value: LayoutMode; onCha
 	const index = MODES.findIndex((entry) => entry.mode === value);
 	return (
 		<div
+			data-settings-segmented
 			role="radiogroup"
 			aria-label={t("layout.switch")}
 			className="relative grid shrink-0 grid-cols-2 rounded-full bg-[var(--color-background-elevated-secondary)] p-0.5"
@@ -30,6 +31,7 @@ export function LayoutModeSwitch({ value, onChange }: { value: LayoutMode; onCha
 			}}
 		>
 			<span
+				data-settings-segmented-thumb
 				aria-hidden="true"
 				className="absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-[var(--composer-surface)] shadow-sm transition-transform duration-200 ease-out"
 				style={{ transform: `translateX(${index * 100}%)` }}

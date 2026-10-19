@@ -283,10 +283,11 @@ export function TokenUsageDashboard({
 	return (
 		<section className="flex flex-col gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+				<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 					{RANGES.map((entry) => (
 						<button
 							key={entry.id}
+							aria-pressed={range === entry.id}
 							type="button"
 							onClick={() => setRange(entry.id)}
 							className={cn(
@@ -549,10 +550,11 @@ export function TokenUsageDashboard({
 					title={t("tokens.breakdown")}
 					hint={t("tokens.breakdownHint")}
 					action={
-						<div className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
+						<div data-settings-segmented className="flex items-center gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5">
 							{DIMENSIONS.map((entry) => (
 								<button
 									key={entry.id}
+									aria-pressed={dimension === entry.id}
 									type="button"
 									onClick={() => setDimension(entry.id)}
 									className={cn(

@@ -38,6 +38,7 @@ export function SettingsDialog({
 					)}
 				/>
 				<Dialog.Popup
+					data-settings-surface="dialog"
 					className={cn(
 						"fixed left-1/2 top-1/2 z-50 flex -translate-x-1/2 -translate-y-1/2",
 						wide ? "max-h-[min(44rem,calc(100dvh-4rem))]" : "max-h-[min(36rem,calc(100dvh-4rem))]",

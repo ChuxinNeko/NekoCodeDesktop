@@ -8,6 +8,7 @@ import { ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "~/lib/icons"
 import * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { useSettingsSurface } from "~/lib/settingsSurface";
 import {
   APP_TRANSLUCENT_POPUP_SURFACE_BASE_CLASS_NAME,
   COMPOSER_PICKER_MENU_POPUP_BODY_CLASS_NAME,
@@ -149,6 +150,7 @@ function SelectPopup({
   shellClassName?: string;
 }) {
   const side = sideProp ?? "bottom";
+  const settingsSurface = useSettingsSurface();
   const sideOffset = sideOffsetProp ?? 4;
   const align = alignProp ?? "start";
   const alignOffset = alignOffsetProp ?? 0;
@@ -204,7 +206,10 @@ function SelectPopup({
             </SelectPrimitive.ScrollUpArrow>
             {/* Keep a hard popup viewport cap so long theme lists can always scroll
                 fully to both edges even when the positioner reports a tight height. */}
-            <div className={viewportClassName}>
+            <div
+              className={viewportClassName}
+              data-settings-surface={settingsSurface || surface === "settings" ? "popup" : undefined}
+            >
               <SelectPrimitive.List
                 className={cn(listClassName, "relative z-1")}
                 data-slot="menu-popup-body"
