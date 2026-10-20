@@ -1,6 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useId } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import type { AgentCell, ModelOption } from "../../../shared/agent";
+import { displayInteractiveMessage } from "../../../shared/interactive-message";
 import type { CheckpointSummary } from "../../../shared/checkpoints";
 import type { ExplorerRun, WorkflowTask } from "../../../shared/workflow";
 import {
@@ -43,7 +44,8 @@ import {
 import { ThinkingBlock, ThinkingStream } from "./chat/Thinking";
 import { SourceList } from "./chat/WebSources";
 import { Markdown } from "./chat/Markdown";
-import { OpenUIActionsContext } from "../lib/openuiActions";
+import { createOpenUIHostActions, OpenUIActionsContext } from "../lib/openuiActions";
+import { api } from "../api";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../surfaceStyles";
 import { CommandStopContext, type StopCommand } from "./chat/CommandStopButton";
@@ -77,7 +79,7 @@ const UserCell = memo(function UserCell({
 						"rounded-[var(--radius-user-message)] bg-[var(--app-user-message-background)]",
 					)}
 				>
-					<Markdown text={cell.text} user />
+					<Markdown text={displayInteractiveMessage(cell.text) ?? cell.text} user />
 				</div>
 				{/* The rewind belongs on the prompt it would undo — that is the thing
 				    the user is looking at when they decide this turn was a mistake.
@@ -607,15 +609,19 @@ const TranscriptView = function Transcript({
 	onStopCommand,
 	teamTurns,
 	onSend,
+	onInteractiveSend,
 	interactionsDisabled = false,
 	modelKey,
 	sessionId,
+	cwd,
 }: {
 	cells: AgentCell[];
 	onSend?: SelectionSend;
+	onInteractiveSend?: SelectionSend;
 	interactionsDisabled?: boolean;
 	modelKey?: string | null;
 	sessionId?: string;
+	cwd?: string;
 	models?: readonly ModelOption[];
 	streaming?: boolean;
 	settling?: boolean;
@@ -646,13 +652,32 @@ const TranscriptView = function Transcript({
 	// The handlers come from parents that recreate them every render. Reached
 	// through a ref, they stop being a reason for every row to re-render: the
 	// context value and the memoized rows only change with what they show.
-	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend });
-	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend };
-	const sendInteractive = useCallback<SelectionSend>(request => handlers.current.onSend?.(request), []);
+	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend, onInteractiveSend });
+	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend, onInteractiveSend };
+	const sendInteractive = useCallback<SelectionSend>(request => (handlers.current.onInteractiveSend ?? handlers.current.onSend)?.(request), []);
+	const interactiveBusy = streaming === true || settling || interactionsDisabled;
+	const scopeIdentity = useMemo(() => ({}), [cwd, sessionId]);
+	const actionMounted = useRef(true);
+	useEffect(() => {
+		actionMounted.current = true;
+		return () => { actionMounted.current = false; };
+	}, []);
+	const actionScope = useRef({ cwd, sessionId, tasks, interactiveBusy, scopeIdentity });
+	actionScope.current = { cwd, sessionId, tasks, interactiveBusy, scopeIdentity };
+	const { openFile: openInteractiveFile, openTask: openInteractiveTask } = useMemo(() => createOpenUIHostActions(() => ({
+		...actionScope.current,
+		identity: actionScope.current.scopeIdentity,
+		active: actionMounted.current,
+		disabled: actionScope.current.interactiveBusy,
+		onOpenFile: handlers.current.onOpenFile,
+		onOpenTask: handlers.current.onOpenTask,
+	}), (root, path) => api.fsReadFile(root, path)), []);
 	const openuiActions = useMemo(() => ({
-		send: onSend ? sendInteractive : undefined,
-		disabled: streaming === true || settling || interactionsDisabled,
-	}), [!!onSend, sendInteractive, streaming, settling, interactionsDisabled]);
+		send: onInteractiveSend || onSend ? sendInteractive : undefined,
+		openFile: onOpenFile && cwd && sessionId ? openInteractiveFile : undefined,
+		openTask: onOpenTask && sessionId ? openInteractiveTask : undefined,
+		disabled: interactiveBusy,
+	}), [!!onSend, !!onInteractiveSend, !!onOpenFile, !!onOpenTask, cwd, sessionId, sendInteractive, openInteractiveFile, openInteractiveTask, interactiveBusy]);
 	const stopCommand = useCallback((id: string) => handlers.current.onStopCommand?.(id) ?? Promise.resolve(false), []);
 	const forkMessage = useCallback((cellId: string) => handlers.current.onForkMessage?.(cellId), []);
 	const openTask = useCallback((taskId: string) => handlers.current.onOpenTask?.(taskId), []);

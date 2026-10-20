@@ -123,7 +123,7 @@ export type OAuthLoginEvent =
 	| { kind: "cancelled"; provider: OAuthProviderId };
 
 /**
- * Token limits for a custom endpoint, which does not advertise its own.
+ * Fallback limits when neither discovered metadata nor manual settings exist.
  *
  * The output ceiling is what decides whether a model can finish a `write` call
  * in one response: a response truncated by the limit has all of its tool calls
@@ -141,6 +141,16 @@ export const MAX_OUTPUT_TOKENS = 1_000_000;
 export interface ModelTokenLimits {
 	contextWindow: number;
 	maxTokens: number;
+}
+
+/** Discovered values stay separate from the user's overrides. */
+export interface ModelCapabilities {
+	contextWindow?: number;
+	maxTokens?: number;
+	thinkingLevels?: ThinkingLevel[];
+	anthropicThinking?: { adaptive: boolean; disabled?: boolean };
+	sources: Partial<Record<"contextWindow" | "maxTokens" | "thinkingLevels" | "anthropicThinking", "endpoint" | "catalog">>;
+	fetchedAt: number;
 }
 
 export interface OAuthModelSummary extends ModelTokenLimits {
@@ -167,14 +177,14 @@ export interface ModelProfileSummary {
 	 * fails outright — so it follows the model, not the file being edited.
 	 */
 	maxTokens: number;
-	/** Explicit per-model ceilings only; a model without an entry inherits
-	 *  this profile's `contextWindow`/`maxTokens`. */
+	/** Explicit per-model ceilings; otherwise discovered values precede provider defaults. */
 	modelOverrides: Record<string, ModelTokenLimits>;
 	/**
 	 * Thinking levels a model supports, where the user set them; a model
-	 * without an entry follows the profile's `reasoning` switch.
+	 * without an entry uses discovered levels, then the profile's `reasoning` switch.
 	 */
 	modelThinking: Record<string, ThinkingLevel[]>;
+	modelCapabilities?: Record<string, ModelCapabilities>;
 	hasApiKey: boolean;
 	createdAt: number;
 	updatedAt: number;
@@ -237,6 +247,7 @@ export interface FetchModelsRequest {
 export interface FetchedModel {
 	id: string;
 	name: string;
+	capabilities?: ModelCapabilities;
 }
 
 export interface ModelTestRequest {
@@ -272,8 +283,19 @@ export function normalizeThinkingLevels(levels: unknown): ThinkingLevel[] | null
 
 /** The levels a model offers: its own, else the endpoint's default. */
 export function effectiveThinkingLevels(
-	profile: Pick<ModelProfileSummary, "reasoning" | "modelThinking">,
+	profile: Pick<ModelProfileSummary, "reasoning" | "modelThinking" | "modelCapabilities">,
 	modelId: string,
 ): ThinkingLevel[] {
-	return profile.modelThinking?.[modelId] ?? defaultThinkingLevels(profile.reasoning);
+	return profile.modelThinking?.[modelId] ?? profile.modelCapabilities?.[modelId]?.thinkingLevels ?? defaultThinkingLevels(profile.reasoning);
+}
+
+export function effectiveModelLimits(
+	profile: Pick<ModelProfileSummary, "contextWindow" | "maxTokens" | "modelOverrides" | "modelCapabilities">,
+	modelId: string,
+): ModelTokenLimits {
+	const detected = profile.modelCapabilities?.[modelId];
+	return profile.modelOverrides?.[modelId] ?? {
+		contextWindow: detected?.contextWindow ?? profile.contextWindow,
+		maxTokens: detected?.maxTokens ?? profile.maxTokens,
+	};
 }

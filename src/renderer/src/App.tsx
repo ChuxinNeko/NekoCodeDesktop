@@ -761,12 +761,11 @@ export default function App() {
 		return chunk;
 	};
 
-	const send = async (request: SendPromptRequest) => {
+	const send = async (request: SendPromptRequest, propagateFailure = false) => {
 		try {
 			const result = await api.agentSend(request);
 			if (!result.accepted) {
-				setError(result.error);
-				return;
+				throw new Error(result.error);
 			}
 			if (result.action === "new-session") await createSession();
 			if (result.action === "open-terminal") setTerminalOpen(true);
@@ -774,6 +773,7 @@ export default function App() {
 			// prompt names the session and again when the run settles.
 		} catch (cause) {
 			setError(errorMessage(cause));
+			if (propagateFailure) throw cause;
 		}
 	};
 
@@ -944,6 +944,14 @@ export default function App() {
 				if (!split) void action(...args);
 				else void panes.ready(slot.key).then(() => action(...args));
 			};
+		// Interactive cards must await selection and host acceptance so failures
+		// appear in the card instead of being reported as successful submissions.
+		const inPaneInteractive =
+			<A extends unknown[]>(action: (...args: A) => unknown) =>
+			async (...args: A): Promise<void> => {
+				if (split) await panes.ready(slot.key);
+				await action(...args);
+			};
 		return (
 			<ChatView
 				composerHeader={split ? undefined : workspacePicker}
@@ -973,6 +981,7 @@ export default function App() {
 				browserOpen={focused && dockOpen && dockActive === "browser"}
 				onPickProject={pickProject}
 				onSend={inPane(send)}
+				onInteractiveSend={inPaneInteractive((request: SendPromptRequest) => send(request, true))}
 				onSendBackground={inPane((text: string) => startBackgroundTask(text, sessionCwd))}
 				// Stopping a run needs no selection: main can abort any live session.
 				onAbort={() => void (split && paneSnapshot ? api.agentAbortTask(paneSnapshot.session.id) : api.agentAbort())}
@@ -997,8 +1006,8 @@ export default function App() {
 				})}
 				onToggleTerminal={inPane(() => setTerminalOpen((open) => !open))}
 				onToggleBrowser={inPane(() => toggleDockTool("browser"))}
-				onOpenTask={layoutMode === "ide" ? undefined : inPane((taskId: string) => openDockTab(taskTabId(taskId)))}
-				onOpenFile={inPane(openDockFile)}
+				onOpenTask={layoutMode === "ide" ? undefined : inPaneInteractive((taskId: string) => openDockTab(taskTabId(taskId)))}
+				onOpenFile={inPaneInteractive(openDockFile)}
 				onOpenDiff={layoutMode === "ide" ? undefined : inPane((checkpoint: CheckpointSummary, path: string) => {
 					setDockDiff({ checkpoint, path, nonce: Date.now() });
 					openDockTab("diff");

@@ -3023,6 +3023,42 @@ label:has(> select#reasoning-effort) select {
   overscroll-behavior-x: contain;
 }
 
+.openui-response .openui-native-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 400 var(--app-font-size-ui, 12px)/1.5 var(--font-ui-family);
+  color-scheme: light;
+}
+
+.dark .openui-native-select {
+  color-scheme: dark;
+}
+
+.openui-response .openui-native-select[data-size="small"] {
+  min-height: 28px;
+}
+
+.openui-response .openui-native-select[data-size="large"] {
+  min-height: 36px;
+}
+
+.openui-response .openui-native-select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.openui-response .openui-native-select:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .chat-markdown th,
 .chat-markdown td {
   border: 1px solid var(--border);

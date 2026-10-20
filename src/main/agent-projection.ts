@@ -2,6 +2,7 @@ import type { AgentCell, TurnUsage } from "../shared/agent";
 import { displayGoalPrompt, GOAL_MESSAGE } from "../shared/goal";
 import { displayInitPrompt } from "../shared/instructions";
 import { stripMentionBlock } from "../shared/mentions";
+import { displayInteractiveMessage } from "../shared/interactive-message";
 
 // Structural shapes mirroring pi-ai/pi-agent-core messages and events so the
 // projection stays pure and testable without importing the agent runtime.
@@ -130,6 +131,8 @@ function displayUserText(raw: string): string {
 	// What `@` references pulled in is for the model; the transcript shows the
 	// prompt as it was typed.
 	const text = stripMentionBlock(raw);
+	const interaction = displayInteractiveMessage(text);
+	if (interaction !== null) return interaction;
 	const expanded = displayInitPrompt(text) ?? displayGoalPrompt(text);
 	if (expanded) return expanded;
 	const skill = text.match(

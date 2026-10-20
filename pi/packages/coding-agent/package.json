@@ -18,6 +18,14 @@
 		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
+		},
+		"./model-runtime": {
+			"types": "./dist/core/model-runtime.d.ts",
+			"import": "./dist/core/model-runtime.js"
+		},
+		"./settings": {
+			"types": "./dist/core/settings-manager.d.ts",
+			"import": "./dist/core/settings-manager.js"
 		}
 	},
 	"files": [

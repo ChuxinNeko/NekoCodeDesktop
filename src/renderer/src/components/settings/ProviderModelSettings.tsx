@@ -12,6 +12,7 @@ import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Spinner } from "../ui/spinner";
 import { ModelsTab , type ModelSettingsChange } from "./ModelsTab";
+import { applyModelSettings } from "../../lib/modelSettings";
 import {
 	draftContextWindow,
 	draftMaxTokens,
@@ -230,22 +231,18 @@ export function ProviderModelSettings() {
 				route: profile.route,
 				api: profile.api,
 			});
+			await reload();
 		});
 		return models;
 	};
 
 	const saveModelSettings = (
 		profile: ModelProfileSummary,
-		modelId: string,
+		modelIds: string[],
 		change: ModelSettingsChange,
 	) =>
 		void run(async () => {
-			const modelOverrides = { ...(profile.modelOverrides ?? {}) };
-			if (change.limits === null) delete modelOverrides[modelId];
-			else if (change.limits) modelOverrides[modelId] = { ...change.limits };
-			const modelThinking = { ...(profile.modelThinking ?? {}) };
-			if (change.thinking === null) delete modelThinking[modelId];
-			else if (change.thinking) modelThinking[modelId] = [...change.thinking];
+			const { modelOverrides, modelThinking } = applyModelSettings(profile, modelIds, change);
 			await api.modelSave({
 				id: profile.id,
 				kind: profile.kind,

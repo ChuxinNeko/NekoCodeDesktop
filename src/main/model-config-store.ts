@@ -9,6 +9,7 @@ import {
 	type ModelApiProtocol,
 	type ModelProfileSummary,
 	type ModelTokenLimits,
+	type ModelCapabilities,
 	type ProviderKind,
 } from "../shared/settings";
 import type { ThinkingLevel } from "../shared/agent";
@@ -61,6 +62,7 @@ export interface StoredProfile {
 	modelOverrides?: Record<string, ModelTokenLimits>;
 	/** Per-model thinking levels, in order; absent follows `reasoning`. */
 	modelThinking?: Record<string, ThinkingLevel[]>;
+	modelCapabilities?: Record<string, ModelCapabilities>;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -134,6 +136,25 @@ export function isValidModelThinking(value: unknown): value is Record<string, Th
 	});
 }
 
+export function isValidModelCapabilities(value: unknown): value is Record<string, ModelCapabilities> {
+	if (value === undefined) return true;
+	if (!isPlainObject(value) || Object.keys(value).length > MAX_MODELS) return false;
+	return Object.entries(value).every(([id, entry]) => {
+		if (!isNonEmptyString(id) || id.length > MAX_MODEL_ID || !isPlainObject(entry)) return false;
+		if (!isValidTokenLimit(entry.contextWindow, MAX_CONTEXT_WINDOW) || !isValidTokenLimit(entry.maxTokens, MAX_OUTPUT_TOKENS)) return false;
+		if (entry.thinkingLevels !== undefined && !isValidModelThinking({ [id]: entry.thinkingLevels })) return false;
+		if (entry.anthropicThinking !== undefined && (!isPlainObject(entry.anthropicThinking) ||
+			typeof entry.anthropicThinking.adaptive !== "boolean" ||
+			(entry.anthropicThinking.disabled !== undefined && typeof entry.anthropicThinking.disabled !== "boolean"))) return false;
+		if (!isPlainObject(entry.sources) || typeof entry.fetchedAt !== "number" || !Number.isFinite(entry.fetchedAt)) return false;
+		const sources = entry.sources;
+		const fields = ["contextWindow", "maxTokens", "thinkingLevels", "anthropicThinking"];
+		return Object.keys(sources).length > 0 && Object.keys(sources).every((key) => fields.includes(key)) &&
+			fields.every((key) => entry[key] === undefined ? sources[key] === undefined
+				: sources[key] === "endpoint" || sources[key] === "catalog");
+	});
+}
+
 /**
  * Validate a parsed profile file. Throws the uniform shape error on any bad
  * field so a corrupt file is never partially loaded or overwritten.
@@ -186,6 +207,10 @@ export function validateProfileFile(parsed: unknown): StoredProfile[] {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (p.imageInput !== undefined && typeof p.imageInput !== "boolean") {
+			throw new Error(SHAPE_ERROR);
+		}
+		if (!isValidModelCapabilities(p.modelCapabilities) ||
+			(p.modelCapabilities !== undefined && !Object.keys(p.modelCapabilities).every((id) => (p.modelIds as string[]).includes(id)))) {
 			throw new Error(SHAPE_ERROR);
 		}
 		if (
@@ -282,6 +307,7 @@ export function toSummary(p: StoredProfile): ModelProfileSummary {
 		modelThinking: Object.fromEntries(
 			Object.entries(p.modelThinking ?? {}).map(([id, levels]) => [id, [...levels]]),
 		),
+		...(p.modelCapabilities ? { modelCapabilities: structuredClone(p.modelCapabilities) } : {}),
 		hasApiKey: p.encryptedApiKey.length > 0,
 		createdAt: p.createdAt,
 		updatedAt: p.updatedAt,

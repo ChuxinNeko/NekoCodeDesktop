@@ -804,7 +804,7 @@ function createWindow(): void {
 	});
 	const refreshDisplayScale = installDisplayScale(win, () => preferences?.get().uiScalePercent ?? null, (scale) => {
 		if (process.platform === "win32") win.setTitleBarOverlay(captionOverlay(scale));
-	});
+	}, screen);
 	displayScaleRefreshers.add(refreshDisplayScale);
 	win.once("closed", () => displayScaleRefreshers.delete(refreshDisplayScale));
 
@@ -1676,9 +1676,11 @@ function registerIpc(): void {
 		modelConfig?.delete(id);
 		await taskManager?.reloadModels();
 	});
-	ipcMain.handle("settings:fetchModels", (_e, req: FetchModelsRequest) =>
-		modelConfig?.fetchModels(req),
-	);
+	ipcMain.handle("settings:fetchModels", async (_e, req: FetchModelsRequest) => {
+		const models = await modelConfig?.fetchModels(req);
+		await taskManager?.reloadModels();
+		return models;
+	});
 	ipcMain.handle("settings:testModel", (_e, req: ModelTestRequest) =>
 		taskManager?.active.testConfiguredModel(req),
 	);

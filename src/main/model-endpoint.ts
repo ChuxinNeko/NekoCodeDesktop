@@ -1,5 +1,6 @@
 import type { FetchedModel, ModelApiProtocol } from "../shared/settings";
 import { PROTOCOL_SUFFIX } from "../shared/model-protocol";
+import { parseModelCapabilities } from "./model-capabilities";
 
 export { PROTOCOL_SUFFIX };
 
@@ -146,7 +147,7 @@ export function parseModelsJson(json: unknown): FetchedModel[] {
 	if (!list) {
 		throw new Error("Unexpected models response shape");
 	}
-	const seen = new Map<string, string>();
+	const seen = new Map<string, FetchedModel>();
 	for (const item of list) {
 		if (typeof item !== "object" || item === null) continue;
 		const entry = item as ModelsListEntry;
@@ -158,9 +159,9 @@ export function parseModelsJson(json: unknown): FetchedModel[] {
 				: typeof entry.display_name === "string" && entry.display_name.trim()
 					? entry.display_name.trim()
 					: id;
-		if (!seen.has(id)) seen.set(id, name);
+		const capabilities = parseModelCapabilities(entry);
+		if (!seen.has(id)) seen.set(id, { id, name, ...(capabilities ? { capabilities } : {}) });
 	}
-	return [...seen.entries()]
-		.map(([id, name]) => ({ id, name }))
+	return [...seen.values()]
 		.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }

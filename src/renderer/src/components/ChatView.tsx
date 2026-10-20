@@ -116,6 +116,8 @@ interface ChatViewProps {
 	browserOpen: boolean;
 	onPickProject: () => void;
 	onSend: (request: SendPromptRequest) => void;
+	/** Awaitable submission for cards, including host rejection feedback. */
+	onInteractiveSend?: (request: SendPromptRequest) => Promise<void>;
 	/**
 	 * Run this prompt as a task of its own without leaving the open session.
 	 * Absent on surfaces that cannot hold more than one task at a time.
@@ -481,9 +483,11 @@ export function ChatView(props: ChatViewProps) {
 							) : null}
 							<Transcript
 							onSend={props.onSend}
+							onInteractiveSend={props.onInteractiveSend}
 							interactionsDisabled={busy || !!snapshot.workflow.request}
 							modelKey={snapshot.modelKey}
 							sessionId={snapshot.session.id}
+							cwd={snapshot.session.cwd}
 							cells={snapshot.cells}
 							models={snapshot.models}
 							streaming={snapshot.streaming}

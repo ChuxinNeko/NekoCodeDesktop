@@ -15,10 +15,12 @@ import type {
 	ModelApiProtocol,
 	ModelProfileSummary,
 	ModelTokenLimits,
+	ModelCapabilities,
 	ModelStoreStatus,
 	SaveModelProfileRequest,
 } from "../shared/settings";
 import type { ThinkingLevel } from "../shared/agent";
+import { fillCatalogCapabilities } from "./model-capabilities";
 import {
 	buildModelsHeaders,
 	parseModelsJson,
@@ -65,11 +67,14 @@ export interface RegistrationProfile {
 	maxTokens: number;
 	modelOverrides: Record<string, ModelTokenLimits>;
 	modelThinking: Record<string, ThinkingLevel[]>;
+	modelCapabilities?: Record<string, ModelCapabilities>;
 }
 
 export class ModelConfigService {
 	private filePath: string;
 	private profiles: StoredProfile[] | null = null;
+	private discovered = new Map<string, { endpoint: string; models: FetchedModel[] }>();
+	private fetchVersions = new Map<string, number>();
 
 	constructor() {
 		const dir = app.getPath("userData");
@@ -208,6 +213,13 @@ export class ModelConfigService {
 		);
 
 		const submittedKey = req.apiKey?.trim() ?? "";
+		const endpoint = `${req.api}:${resolveEndpoints(baseUrl, route, req.api).endpoint}`;
+		const sameEndpoint = existing && `${existing.api}:${resolveEndpoints(existing.baseUrl, existing.route, existing.api).endpoint}` === endpoint;
+		const cached = sameEndpoint && req.id ? this.discovered.get(req.id) : undefined;
+		const detected = cached?.endpoint === endpoint
+			? Object.fromEntries(cached.models.filter((model) => model.capabilities).map((model) => [model.id, model.capabilities!]))
+			: sameEndpoint ? existing.modelCapabilities ?? {} : {};
+		const modelCapabilities = Object.fromEntries(modelIds.filter((id) => Object.hasOwn(detected, id)).map((id) => [id, structuredClone(detected[id])]));
 		let encryptedApiKey: string;
 		if (submittedKey) {
 			if (!safeStorage.isEncryptionAvailable()) {
@@ -245,6 +257,7 @@ export class ModelConfigService {
 					maxTokens: req.maxTokens ?? existing.maxTokens,
 					modelOverrides,
 					modelThinking,
+					modelCapabilities,
 					updatedAt: now,
 				}
 			: {
@@ -262,6 +275,7 @@ export class ModelConfigService {
 					maxTokens: req.maxTokens,
 					modelOverrides,
 					modelThinking,
+					modelCapabilities,
 					createdAt: now,
 					updatedAt: now,
 				};
@@ -269,6 +283,10 @@ export class ModelConfigService {
 			? profiles.map((p) => (p === existing ? record : p))
 			: [...profiles, record];
 		this.persist(candidate);
+		if (existing && !sameEndpoint) {
+			this.discovered.delete(existing.id);
+			this.fetchVersions.set(existing.id, (this.fetchVersions.get(existing.id) ?? 0) + 1);
+		}
 		return toSummary(record);
 	}
 
@@ -277,6 +295,8 @@ export class ModelConfigService {
 		const index = profiles.findIndex((p) => p.id === id);
 		if (index === -1) throw new Error("Profile not found");
 		this.persist(profiles.filter((_, i) => i !== index));
+		this.discovered.delete(id);
+		this.fetchVersions.delete(id);
 	}
 
 	private decryptApiKey(profile: StoredProfile): string {
@@ -303,6 +323,8 @@ export class ModelConfigService {
 			throw new Error(`Unknown API protocol: ${String(req.api)}`);
 		}
 		const { modelsUrl } = resolveEndpoints(req.baseUrl, req.route, req.api);
+		const version = (this.fetchVersions.get(req.profileId ?? "") ?? 0) + 1;
+		this.fetchVersions.set(req.profileId ?? "", version);
 
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -328,7 +350,33 @@ export class ModelConfigService {
 					`HTTP ${response.status}: ${text.slice(0, MAX_ERROR_BODY)}`,
 				);
 			}
-			return parseModelsJson(JSON.parse(text));
+			let models = parseModelsJson(JSON.parse(text));
+			// Load the bundled reference catalog only on an explicit model fetch.
+			// No network request or credential is sent to a catalog provider.
+			try {
+				const [catalog, helpers] = await Promise.all([
+					import("@earendil-works/pi-ai/providers/all"),
+					import("@earendil-works/pi-ai/models"),
+				]);
+				const host = new URL(req.baseUrl).hostname;
+				const preferred = host === "api.openai.com" ? "openai" : host === "api.anthropic.com" ? "anthropic" : host === "openrouter.ai" ? "openrouter" : undefined;
+				const providers = catalog.getBuiltinProviders().filter((id) => !preferred || id === preferred);
+				models = fillCatalogCapabilities(models, providers.flatMap((id) => catalog.getBuiltinModels(id)), helpers.getSupportedThinkingLevels);
+			} catch {
+				// A missing reference catalog must not discard usable endpoint data.
+			}
+			if (req.profileId && this.fetchVersions.get(req.profileId) === version) {
+				const profiles = this.load();
+				const current = profiles.find((profile) => profile.id === req.profileId);
+				const endpoint = `${req.api}:${resolveEndpoints(req.baseUrl, req.route, req.api).endpoint}`;
+				if (current && `${current.api}:${resolveEndpoints(current.baseUrl, current.route, current.api).endpoint}` === endpoint) {
+					this.discovered.set(current.id, { endpoint, models });
+					const modelCapabilities = Object.fromEntries(models.filter((model) => model.capabilities && current.modelIds.includes(model.id))
+						.map((model) => [model.id, model.capabilities!]));
+					this.persist(profiles.map((profile) => profile === current ? { ...profile, modelCapabilities } : profile));
+				}
+			}
+			return models;
 		} finally {
 			clearTimeout(timer);
 		}
@@ -359,6 +407,7 @@ export class ModelConfigService {
 					modelThinking: Object.fromEntries(
 						Object.entries(p.modelThinking ?? {}).map(([id, levels]) => [id, [...levels]]),
 					),
+					modelCapabilities: structuredClone(p.modelCapabilities ?? {}),
 				};
 			});
 	}

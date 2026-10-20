@@ -4,6 +4,7 @@ import type { ThinkingLevel } from "../../../../shared/agent";
 import {
 	defaultThinkingLevels,
 	effectiveThinkingLevels,
+	effectiveModelLimits,
 	MAX_CONTEXT_WINDOW,
 	MAX_OUTPUT_TOKENS,
 	MIN_TOKEN_LIMIT,
@@ -22,6 +23,8 @@ import { Input } from "../ui/input";
 import { Checkbox } from "../ui/checkbox";
 import { CheckIcon, PlusIcon, RefreshCwIcon, XIcon } from "../../lib/icons";
 import { OAuthUsage } from "./OAuthUsage";
+import type { ModelSettingsChange } from "../../lib/modelSettings";
+export type { ModelSettingsChange } from "../../lib/modelSettings";
 
 /** Below this many entries the list is short enough to scan without a filter. */
 const SEARCH_THRESHOLD = 8;
@@ -72,11 +75,6 @@ function FetchedRow({
 	);
 }
 
-export interface ModelSettingsChange {
-	limits?: ModelTokenLimits | null;
-	thinking?: ThinkingLevel[] | null;
-}
-
 /**
  * One toggle per thinking level, in order. The last checked level cannot be
  * unchecked: a model offers at least one, even if that one is "off".
@@ -124,6 +122,20 @@ function sameLevels(a: readonly ThinkingLevel[], b: readonly ThinkingLevel[]): b
 	return a.length === b.length && a.every((level, index) => level === b[index]);
 }
 
+function CapabilitySources({ profile, modelId }: { profile: ModelProfileSummary; modelId: string }) {
+	const { t } = useTranslation();
+	const detected = profile.modelCapabilities?.[modelId];
+	const source = (key: "contextWindow" | "maxTokens" | "thinkingLevels") => {
+		const manual = key === "thinkingLevels" ? profile.modelThinking?.[modelId] : profile.modelOverrides?.[modelId];
+		return t(manual ? "models.sourceManual" : detected?.sources[key] === "endpoint" ? "models.sourceEndpoint"
+			: detected?.sources[key] === "catalog" ? "models.sourceCatalog" : "models.sourceDefault");
+	};
+	return <span className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground"
+		title={detected ? t("models.capabilitiesUpdated", { time: new Date(detected.fetchedAt).toLocaleString() }) : undefined}>
+		{t("models.capabilitySources", { context: source("contextWindow"), output: source("maxTokens"), thinking: source("thinkingLevels") })}
+	</span>;
+}
+
 /** A token limit the backend would accept — blank is not one, the field is required. */
 function parseLimit(raw: string, max: number): number | null {
 	const value = Number(raw.trim());
@@ -159,7 +171,7 @@ export function ModelsTab({
 	 * A model's own settings. For each half, `undefined` leaves it as stored and
 	 * `null` clears it, so the model follows the provider again.
 	 */
-	onSaveModelSettings: (profile: ModelProfileSummary, modelId: string, settings: ModelSettingsChange) => void;
+	onSaveModelSettings: (profile: ModelProfileSummary, modelIds: string[], settings: ModelSettingsChange) => void;
 	onTest: (profileId: string, modelId: string) => void;
 	onAddProvider: () => void;
 }) {
@@ -174,6 +186,8 @@ export function ModelsTab({
 	const [limitsEditor, setLimitsEditor] = useState<string | null>(null);
 	/** The model a removal confirmation is open for; the row's X only opens it. */
 	const [removing, setRemoving] = useState<string | null>(null);
+	const [batchPicked, setBatchPicked] = useState<Set<string>>(new Set());
+	const [batchEditor, setBatchEditor] = useState<string[] | null>(null);
 
 	const load = async (target: ModelProfileSummary) => {
 		const result = await onFetch(target);
@@ -202,6 +216,8 @@ export function ModelsTab({
 
 	useEffect(() => {
 		setPicked(new Set());
+		setBatchPicked(new Set());
+		setBatchEditor(null);
 	}, [profileId]);
 
 	// An OAuth subscription's model list is the provider's to decide, so those
@@ -223,6 +239,13 @@ export function ModelsTab({
 	}
 
 	const enabled = profile?.modelIds ?? [];
+	const batchSelection = enabled.filter((id) => batchPicked.has(id));
+	const batchAllSelected = enabled.length > 0 && batchSelection.length === enabled.length;
+	const toggleBatch = (modelId: string) => setBatchPicked((previous) => {
+		const next = new Set(previous);
+		if (!next.delete(modelId)) next.add(modelId);
+		return next;
+	});
 	const available = profile ? (fetched[profile.id] ?? null) : null;
 	const needle = query.trim().toLowerCase();
 	const filtered = (available ?? []).filter(
@@ -281,10 +304,7 @@ export function ModelsTab({
 	};
 
 	const effectiveLimits = (modelId: string): ModelTokenLimits =>
-		profile?.modelOverrides?.[modelId] ?? {
-			contextWindow: profile?.contextWindow ?? 0,
-			maxTokens: profile?.maxTokens ?? 0,
-		};
+		profile ? effectiveModelLimits(profile, modelId) : { contextWindow: 0, maxTokens: 0 };
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -404,6 +424,21 @@ export function ModelsTab({
 							{t(available ? "models.refetch" : "models.fetch")}
 						</Button>
 					</div>
+					{enabled.length > 0 ? (
+						<div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--app-surface-divider)] pb-2">
+							<label className="flex cursor-pointer items-center gap-2 text-[length:var(--app-font-size-ui-sm,11px)]">
+								<Checkbox checked={batchAllSelected} indeterminate={batchSelection.length > 0 && !batchAllSelected}
+									disabled={busy} onCheckedChange={() => setBatchPicked(batchAllSelected ? new Set() : new Set(enabled))} />
+								{t("models.selectAllEnabled")}
+							</label>
+							<span className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{t("models.selectedCount", { count: batchSelection.length })}</span>
+							<div className="flex-1" />
+							<Button size="xs" variant="chrome-outline" disabled={busy || batchSelection.length === 0}
+								onClick={() => { setLimitsEditor(null); setBatchEditor(batchSelection); }}>
+								{t("models.batchConfigure")}
+							</Button>
+						</div>
+					) : null}
 
 					{enabled.length === 0 ? (
 						<p className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">
@@ -416,6 +451,8 @@ export function ModelsTab({
 								return (
 									<div key={modelId} className="flex flex-col gap-1.5 py-1">
 										<div className="flex items-center gap-2">
+											<Checkbox checked={batchPicked.has(modelId)} disabled={busy}
+												onCheckedChange={() => toggleBatch(modelId)} aria-label={t("models.selectModel", { name: modelId })} />
 											<div className="flex min-w-0 flex-1 flex-col">
 												<span className="truncate font-mono text-[length:var(--app-font-size-ui-xs,10px)]">
 													{modelId}
@@ -426,10 +463,11 @@ export function ModelsTab({
 														maxTokens: limits.maxTokens,
 													})}
 													{" · "}
-													{t(profile.modelThinking?.[modelId] ? "models.thinkingSummary" : "models.thinkingSummaryDefault", {
+													{t(profile.modelThinking?.[modelId] || profile.modelCapabilities?.[modelId]?.thinkingLevels ? "models.thinkingSummary" : "models.thinkingSummaryDefault", {
 														levels: effectiveThinkingLevels(profile, modelId).join(" / "),
 													})}
 												</span>
+												<CapabilitySources profile={profile} modelId={modelId} />
 											</div>
 											<Button
 												onClick={() => setLimitsEditor(modelId)}
@@ -631,10 +669,14 @@ export function ModelsTab({
 					busy={busy}
 					onClose={() => setLimitsEditor(null)}
 					onSave={(change) => {
-						onSaveModelSettings(profile, limitsEditor, change);
+						onSaveModelSettings(profile, [limitsEditor], change);
 						setLimitsEditor(null);
 					}}
 				/>
+			) : null}
+			{profile && batchEditor ? (
+				<BatchLimitsDialog profile={profile} modelIds={batchEditor} busy={busy} onClose={() => setBatchEditor(null)}
+					onSave={(change) => { onSaveModelSettings(profile, batchEditor, change); setBatchEditor(null); }} />
 			) : null}
 		</div>
 	);
@@ -685,14 +727,7 @@ function LimitsDialog({
 		}
 		onSave({
 			...(limitsChanged ? { limits: { contextWindow, maxTokens } } : {}),
-			// Back to exactly the default is the same as following it.
-			...(thinkingChanged
-				? {
-						thinking: sameLevels(draft.thinking, defaultThinkingLevels(profile.reasoning))
-							? null
-							: draft.thinking,
-					}
-				: {}),
+			...(thinkingChanged ? { thinking: draft.thinking } : {}),
 		});
 	};
 
@@ -749,6 +784,7 @@ function LimitsDialog({
 						<p className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
 							{t("models.modelLimitsHint")}
 						</p>
+						<CapabilitySources profile={profile} modelId={modelId} />
 						<div className="flex flex-col gap-1 border-t border-[color:var(--app-surface-divider)] pt-1.5">
 							<span className="text-[length:var(--app-font-size-ui-2xs,9px)] text-muted-foreground">
 								{t("models.thinkingLevels")}
@@ -788,6 +824,88 @@ function LimitsDialog({
 						>
 							{t("common.save")}
 						</Button>
+					</div>
+				</Dialog.Popup>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
+function BatchLimitsDialog({ profile, modelIds, busy, onClose, onSave }: {
+	profile: ModelProfileSummary;
+	modelIds: string[];
+	busy: boolean;
+	onClose: () => void;
+	onSave: (change: ModelSettingsChange) => void;
+}) {
+	const { t } = useTranslation();
+	const [draft, setDraft] = useState(() => {
+		const limits = modelIds.map((id) => effectiveModelLimits(profile, id));
+		const levels = modelIds.map((id) => effectiveThinkingLevels(profile, id));
+		return {
+			contextWindow: limits.every((value) => value.contextWindow === limits[0].contextWindow) ? String(limits[0].contextWindow) : "",
+			maxTokens: limits.every((value) => value.maxTokens === limits[0].maxTokens) ? String(limits[0].maxTokens) : "",
+			thinking: levels.every((value) => sameLevels(value, levels[0])) ? levels[0] : [],
+			applyContext: false, applyOutput: false, applyThinking: false,
+		};
+	});
+	const contextWindow = parseLimit(draft.contextWindow, MAX_CONTEXT_WINDOW);
+	const maxTokens = parseLimit(draft.maxTokens, MAX_OUTPUT_TOKENS);
+	const valid = (draft.applyContext || draft.applyOutput || draft.applyThinking) &&
+		(!draft.applyContext || contextWindow !== null) && (!draft.applyOutput || maxTokens !== null) &&
+		(!draft.applyThinking || draft.thinking.length > 0);
+	const save = () => {
+		if (!valid) return;
+		onSave({
+			...(draft.applyContext || draft.applyOutput ? { limits: {
+				...(draft.applyContext && contextWindow !== null ? { contextWindow } : {}),
+				...(draft.applyOutput && maxTokens !== null ? { maxTokens } : {}),
+			} } : {}),
+			...(draft.applyThinking ? { thinking: draft.thinking } : {}),
+		});
+	};
+	return (
+		<Dialog.Root open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+			<Dialog.Portal>
+				<Dialog.Backdrop className="fixed inset-0 z-50 min-h-dvh bg-black/35 backdrop-blur-[1px]" />
+				<Dialog.Popup data-settings-surface="dialog" className={cn(
+					"fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-4rem)] w-[32rem] max-w-[calc(100vw-3rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 overflow-hidden rounded-2xl border bg-popover p-4 text-popover-foreground shadow-2xl outline-none",
+					RAISED_SURFACE_BORDER_CLASS_NAME,
+				)}>
+					<Dialog.Title className="text-[length:var(--app-font-size-ui-lg,13px)] font-semibold">{t("models.batchTitle", { count: modelIds.length })}</Dialog.Title>
+					<Dialog.Description className="text-[length:var(--app-font-size-ui-sm,11px)] text-muted-foreground">{profile.name} · {t("models.batchHint")}</Dialog.Description>
+					<div className="flex min-h-0 flex-col gap-3 overflow-y-auto">
+						<div className="max-h-20 overflow-y-auto break-all font-mono text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{modelIds.join(" · ")}</div>
+						{(["contextWindow", "maxTokens"] as const).map((key) => {
+							const flag = key === "contextWindow" ? "applyContext" : "applyOutput";
+							const invalid = draft[flag] && (key === "contextWindow" ? contextWindow : maxTokens) === null;
+							return <div key={key} className="flex flex-col gap-1.5">
+								<label className="flex items-center gap-2 text-[length:var(--app-font-size-ui,12px)]">
+									<Checkbox checked={draft[flag]} disabled={busy} onCheckedChange={(checked) => setDraft((current) => ({ ...current, [flag]: checked === true }))} />
+									{t(key === "contextWindow" ? "providers.contextWindow" : "providers.maxTokens")}
+								</label>
+								<Input aria-label={t(key === "contextWindow" ? "providers.contextWindow" : "providers.maxTokens")}
+									disabled={!draft[flag] || busy} value={draft[key]} aria-invalid={invalid} inputMode="numeric"
+									placeholder={t("models.batchMixed")} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />
+								{invalid ? <p className="text-[length:var(--app-font-size-ui-xs,10px)] text-destructive">{t("models.batchLimitRange", { min: MIN_TOKEN_LIMIT, max: key === "contextWindow" ? MAX_CONTEXT_WINDOW : MAX_OUTPUT_TOKENS })}</p> : null}
+							</div>;
+						})}
+						<div className="flex flex-col gap-1.5">
+							<label className="flex items-center gap-2 text-[length:var(--app-font-size-ui,12px)]">
+								<Checkbox checked={draft.applyThinking} disabled={busy} onCheckedChange={(checked) => setDraft((current) => ({ ...current, applyThinking: checked === true }))} />
+								{t("models.thinkingLevels")}
+							</label>
+							<fieldset disabled={!draft.applyThinking || busy} className="disabled:opacity-50">
+								<ThinkingLevelPicker value={draft.thinking} onChange={(thinking) => setDraft((current) => ({ ...current, thinking }))} />
+							</fieldset>
+							<p className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{t("models.batchThinkingHint")}</p>
+						</div>
+					</div>
+					<div className="flex flex-wrap items-center gap-2">
+						<Button size="sm" variant="ghost" disabled={busy} onClick={onClose}>{t("common.cancel")}</Button>
+						<Button size="sm" variant="ghost" disabled={busy} onClick={() => onSave({ limits: null, thinking: null })}>{t("models.batchReset")}</Button>
+						<div className="flex-1" />
+						<Button size="sm" variant="chrome-outline" disabled={busy || !valid} onClick={save}>{t("models.batchApply", { count: modelIds.length })}</Button>
 					</div>
 				</Dialog.Popup>
 			</Dialog.Portal>

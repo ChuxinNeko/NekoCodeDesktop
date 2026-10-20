@@ -14,7 +14,7 @@ The following specification applies only INSIDE fenced openui code blocks in ass
 ## Component Signatures
 
 Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
-Props typed `ActionExpression` accept one @step, or Action([@steps...]) for several. See the Action section for available steps (@ToAssistant, @OpenUrl).
+Props typed `ActionExpression` accept one @step, or Action([@steps...]) for several. See the Action section for available steps (@ToAssistant, @OpenUrl, @OpenFile, @OpenTask, @SubmitToAgent).
 Props marked `$binding<type>` accept a `$variable` reference for two-way binding.
 
 ### Content
@@ -76,6 +76,9 @@ Buttons without an action automatically send their label to the assistant (equiv
 Available steps:
 - @ToAssistant(message: string, context?: any) — Send a message to the assistant (for conversational buttons like "Tell me more", "Explain this"). The optional context is any value (object, array, string, number) passed to the assistant as hidden data, e.g. @ToAssistant("Show details", {orderId: 42})
 - @OpenUrl(url: string) — Navigate to a URL
+- @OpenFile(path: string, line?: number) — Open a project-relative file, optionally at a 1-based line. Use only paths seen in the conversation or tool results.
+- @OpenTask(taskId: string) — Show an existing task belonging to this session. Use its actual task ID from tool results.
+- @SubmitToAgent(message: string, context?: Record<string, any>) — Send a user message with optional structured context and submitted form fields to the current agent under its existing permissions.
 
 Example — simple nav:
 ```
@@ -98,6 +101,14 @@ During streaming, the output is re-parsed on every chunk. Undefined references a
 Always write the root = Card(...) statement first so the UI shell appears immediately, even before child data has streamed in.
 
 ## Examples
+
+```openui
+root = Card([header, buttons])
+header = CardHeader("查看实现")
+buttons = Buttons([open, explain])
+open = Button("打开入口", @OpenFile("src/main/index.ts", 1))
+explain = Button("解释入口", @SubmitToAgent("请解释这个文件", {path: "src/main/index.ts", line: 1}))
+```
 
 ```openui
 root = Card([header, choices])
@@ -130,6 +141,9 @@ Before finishing, walk your output and verify:
 - Use real data from the user, conversation or tool results. Never invent metrics. Label explicitly requested example data as examples.
 - Use @ToAssistant(message) for follow-up buttons and form submits. This sends a user message to the current agent; it does not itself execute an application operation.
 - Use @OpenUrl(url) only for real http/https URLs present in the conversation or tool results.
+- Use @OpenFile(path, line?) to open an existing project-relative file at an optional 1-based line, and @OpenTask(taskId) to show an existing task in the current session. Only use paths and IDs from the conversation or tool results; never invent them. These actions may be unavailable in auxiliary or mobile views.
+- Use @SubmitToAgent(message, context?) for a follow-up with a JSON object of structured context. Form fields accompany the user message automatically. This requests agent work under existing permissions; it does not directly execute commands, edit files or raise permissions. Use one action per button.
+- When a user message contains a nekocode:interactive-context block, use its params and formState as supporting user data and respond naturally to the user's request. Do not echo the metadata, JSON, action provenance or form plumbing unless the user asks to inspect it.
 - Form requires Form(name, buttons, fields). Put each field inside its own FormControl. Include exactly one primary submit Button; field names must be unique. Form values will accompany the submitted message.
 - Table is column-oriented: Table([col1, col2]); each Col(label, data) holds an equally sized array of strings or numbers.
 - Keep the UI small and use the user's language. Plain questions and code edits generally need only Markdown; do not add decorative forms or fake actions.

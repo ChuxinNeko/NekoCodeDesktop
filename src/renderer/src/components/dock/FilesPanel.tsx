@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FsEntry, FsReadResult } from "../../../../shared/files";
 import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
@@ -9,7 +9,7 @@ import {
 	SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
 } from "../../lib/sidebarRowStyles";
 import { FileTypeIcon } from "../../lib/fileIcons";
-import { highlightFileToHtml } from "../../lib/codeHighlight";
+import { highlightFilePreview } from "../../lib/filePreviewHighlight";
 import {
 	ArrowLeftIcon,
 	FolderIcon,
@@ -37,6 +37,7 @@ export function FilesPanel({
 	const [preview, setPreview] = useState<(FsReadResult & { external?: boolean }) | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [previewLine, setPreviewLine] = useState<number | undefined>();
 
 	const dir = stack[stack.length - 1] ?? "";
 
@@ -44,6 +45,7 @@ export function FilesPanel({
 	useEffect(() => {
 		setStack([]);
 		setPreview(null);
+		setPreviewLine(undefined);
 		setError(null);
 	}, [cwd]);
 
@@ -56,7 +58,8 @@ export function FilesPanel({
 		if (!cwd || !fileRequest) return;
 		const norm = (p: string) => p.replace(/\\/g, "/");
 		const root = norm(cwd).replace(/\/+$/, "");
-		let rel = norm(fileRequest.path).replace(/^\.\//, "");
+		const location = fileRequest.path.match(/^(.*?):(\d+)(?::(\d+))?$/);
+		let rel = norm(location?.[1] ?? fileRequest.path).replace(/^\.\//, "");
 		if (rel.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
 			rel = rel.slice(root.length + 1);
 		}
@@ -68,6 +71,7 @@ export function FilesPanel({
 			.then((result) => {
 				if (cancelled) return;
 				setPreview(result);
+				setPreviewLine(location ? Number(location[2]) : undefined);
 				setError(null);
 				const segments = "external" in result && result.external ? [] : result.relPath.split("/").slice(0, -1).filter(Boolean);
 				setStack(segments.map((_, index) => segments.slice(0, index + 1).join("/")));
@@ -107,6 +111,7 @@ export function FilesPanel({
 		try {
 			const result = await api.fsReadFile(cwd, entry.relPath);
 			setPreview(result);
+			setPreviewLine(undefined);
 			setError(null);
 		} catch (cause) {
 			setError(errorMessage(cause));
@@ -122,7 +127,7 @@ export function FilesPanel({
 	}
 
 	if (preview) {
-		return <FilePreview file={preview} onBack={() => setPreview(null)} />;
+		return <FilePreview file={preview} line={previewLine} onBack={() => setPreview(null)} />;
 	}
 
 	return (
@@ -189,7 +194,7 @@ function formatBytes(size: number): string {
 }
 
 /** Header with a back button over whichever body suits the file's kind. */
-function FilePreview({ file, onBack }: { file: FsReadResult & { external?: boolean }; onBack: () => void }) {
+function FilePreview({ file, line, onBack }: { file: FsReadResult & { external?: boolean }; line?: number; onBack: () => void }) {
 	const { t } = useTranslation();
 	const name = file.relPath;
 
@@ -215,7 +220,7 @@ function FilePreview({ file, onBack }: { file: FsReadResult & { external?: boole
 				) : null}
 			</div>
 			{file.kind === "text" ? (
-				<TextPreview name={name} text={file.text} truncated={file.truncated} />
+				<TextPreview name={name} text={file.text} truncated={file.truncated} line={line} />
 			) : file.kind === "image" ? (
 				<div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
 					<img
@@ -244,26 +249,45 @@ function TextPreview({
 	name,
 	text,
 	truncated,
+	line,
 }: {
 	name: string;
 	text: string;
 	truncated: boolean;
+	line?: number;
 }) {
 	const { t } = useTranslation();
 	const [html, setHtml] = useState<string | null>(null);
+	const container = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (!line || !container.current) return;
+		const lines = container.current.querySelectorAll<HTMLElement>(".line");
+		const target = lines[Math.min(line, lines.length) - 1];
+		if (target) {
+			container.current.scrollTop = Math.max(0, target.offsetTop - container.current.clientHeight / 2);
+		}
+	}, [line, html, text]);
 
 	useEffect(() => {
-		let cancelled = false;
+		const controller = new AbortController();
+		const started = performance.now();
+		let applyHighlight: ReturnType<typeof setTimeout> | undefined;
 		setHtml(null);
-		highlightFileToHtml(text, name)
+		highlightFilePreview(text, name, controller.signal)
 			.then((next) => {
-				if (!cancelled) setHtml(next);
+				if (controller.signal.aborted || next === null) return;
+				// Tokenization happens off-thread; inserting thousands of token spans
+				// still costs layout, so keep that commit outside the 200ms dock reveal.
+				applyHighlight = setTimeout(() => {
+					if (!controller.signal.aborted) setHtml(next);
+				}, Math.max(0, 220 - (performance.now() - started)));
 			})
 			.catch(() => {
-				if (!cancelled) setHtml(null);
+				if (!controller.signal.aborted) setHtml(null);
 			});
 		return () => {
-			cancelled = true;
+			controller.abort();
+			clearTimeout(applyHighlight);
 		};
 	}, [text, name]);
 
@@ -274,7 +298,7 @@ function TextPreview({
 					{t("files.truncated")}
 				</p>
 			) : null}
-			<div className="editor-file-viewer min-h-0 flex-1 overflow-auto">
+			<div ref={container} className="editor-file-viewer relative min-h-0 flex-1 overflow-auto">
 				{html !== null ? (
 					<div
 						className="editor-file-viewer__highlight"

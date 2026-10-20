@@ -92,12 +92,12 @@ import {
 	type ProjectionEvent,
 } from "./agent-projection";
 import type { ModelConfigService } from "./model-config-service";
-import { modelInputList, thinkingRegistration } from "./model-config-store";
+import { customModelDefinition } from "./custom-model-definition";
 import { decideModelAfterReload } from "./model-refresh";
 import { registerOAuthClientIdentity } from "./oauth-service";
 import type { AntigravityOAuthService } from "./antigravity-oauth-service";
 import { registerAntigravityProvider } from "./antigravity-provider";
-import { pi, piAi } from "./pi";
+import { pi, piAi, piModels } from "./pi";
 import { SessionHistoryReader } from "./session-history";
 import { buildTitleRequest, sanitizeGeneratedTitle, TITLE_TIMEOUT_MS } from "./session-title";
 import {
@@ -145,6 +145,7 @@ import {
 	type GoalState,
 } from "../shared/goal";
 import { displayInitPrompt, isInstructionFileName } from "../shared/instructions";
+import { displayInteractiveMessage } from "../shared/interactive-message";
 import type { MentionCandidate } from "../shared/mentions";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
@@ -963,7 +964,7 @@ export class AgentService {
 			});
 		}
 		if (!this.modelRuntimePromise) {
-			this.modelRuntimePromise = pi()
+			this.modelRuntimePromise = piModels()
 				.then((m) => m.ModelRuntime.create())
 				.then(async (runtime) => {
 					this.supportedThinking = (await piAi()).getSupportedThinkingLevels;
@@ -987,6 +988,7 @@ export class AgentService {
 			runtime.unregisterProvider(id);
 		}
 		this.customProviderIds.clear();
+		const catalog = runtime.getModels();
 		for (const profile of this.modelConfig.registrationProfiles()) {
 			runtime.registerProvider(profile.providerId, {
 				name: profile.name,
@@ -994,26 +996,7 @@ export class AgentService {
 				apiKey: profile.apiKey,
 				api: profile.api,
 				authHeader: profile.api === "openai-completions" || profile.api === "openai-responses",
-				models: profile.modelIds.map((id) => {
-					const limits = profile.modelOverrides[id];
-					return {
-						id,
-						name: id,
-						api: profile.api,
-						// PI clamps every thinking level to "off" on a model that is not
-						// flagged as reasoning, so this is what makes the picker do anything;
-						// a model's own levels, where set, decide exactly which it offers.
-						...thinkingRegistration(profile.modelThinking[id], profile.reasoning),
-						input: modelInputList(profile.imageInput),
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-						// A custom endpoint advertises neither limit, and PI clamps every
-						// response to the one declared here — too low and long writes are
-						// truncated mid-argument. A model's explicit override wins; the
-						// profile values are the defaults it falls back to.
-						contextWindow: limits?.contextWindow ?? profile.contextWindow,
-						maxTokens: limits?.maxTokens ?? profile.maxTokens,
-					};
-				}),
+				models: profile.modelIds.map((id) => customModelDefinition(profile, id, catalog)),
 			});
 			this.customProviderIds.add(profile.providerId);
 		}
@@ -1089,7 +1072,9 @@ export class AgentService {
 							},
 						],
 					},
-					{ maxTokens: req.profileId === "antigravity" ? 2048 : 8, signal: controller.signal },
+					// Adaptive-only Claude models may think even for a health check.
+					// Eight tokens can exhaust the budget before any answer is emitted.
+					{ maxTokens: req.profileId === "antigravity" || model.api === "anthropic-messages" ? 2048 : 8, signal: controller.signal },
 				);
 				const text = assistantText(message);
 				const ok =
@@ -1338,13 +1323,16 @@ export class AgentService {
 	async send(req: SendPromptRequest): Promise<SendPromptResult> {
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
-		let text = expandNekoSlashAlias(req.text);
+		const interaction = displayInteractiveMessage(req.text);
+		let text = interaction !== null ? req.text : expandNekoSlashAlias(req.text);
 		const imagesSupplied = req.images !== undefined;
 		const emptyImages = Array.isArray(req.images) && req.images.length === 0;
 		if (!text.trim() && (!imagesSupplied || emptyImages)) {
 			return { accepted: false, error: "Empty message" };
 		}
-		const slash = parseSlashCommand(text);
+		// Card buttons request agent work; their words must not become host slash
+		// commands merely because the generated label happens to start with '/'.
+		const slash = interaction !== null ? null : parseSlashCommand(text);
 		if (slash?.command === "abort") {
 			await this.abort();
 			return { accepted: true };
@@ -1437,12 +1425,13 @@ export class AgentService {
 		// The opening prompt is what the session gets named after — by the model,
 		// in the background. Until that lands the row shows a placeholder.
 		const firstPrompt = !session.messages.some((m) => m.role === "user");
-		if (firstPrompt) this.startTitleGeneration(session, displayInitPrompt(typedText) ?? displayGoalPrompt(typedText) ?? typedText);
+		const displayText = interaction ?? displayInitPrompt(typedText) ?? displayGoalPrompt(typedText) ?? typedText;
+		if (firstPrompt) this.startTitleGeneration(session, displayText);
 
 		// Before the agent can touch anything, so everything the turn changes is
 		// recorded after the marker. Steering joins the turn already running, and
 		// that turn has a marker already.
-		if (!session.isStreaming) this.markCheckpoint(session, displayInitPrompt(typedText) ?? displayGoalPrompt(typedText) ?? typedText);
+		if (!session.isStreaming) this.markCheckpoint(session, displayText);
 
 		try {
 			if (session.isStreaming) {
@@ -1700,7 +1689,7 @@ export class AgentService {
 	async generateCommitMessage(request: GitGenerateCommitMessageRequest) {
 		assertDirectory(request.cwd);
 		const runtime = await this.getModelRuntime();
-		const { SettingsManager } = await pi();
+		const { SettingsManager } = await piModels();
 		const model = this.resolveNewSessionModel(runtime, SettingsManager.create(request.cwd));
 		if (!model) throw new Error(request.language === "zh-CN" ? "请先在设置中配置可用模型" : "Configure a model in Settings first");
 		return generateCommitMessage(request, runtime as unknown as ModelCallRuntime, modelKeyOf(model));
@@ -1715,7 +1704,7 @@ export class AgentService {
 		assertDirectory(cwd);
 		this.cwd = cwd;
 		const runtime = await this.getModelRuntime();
-		const { SettingsManager } = await pi();
+		const { SettingsManager } = await piModels();
 		const { clampThinkingLevel, getSupportedThinkingLevels } = await piAi();
 		const settings = SettingsManager.create(cwd);
 		const model = this.resolveNewSessionModel(runtime, settings);
@@ -1781,7 +1770,7 @@ export class AgentService {
 	 */
 	private async settingsForDefaults(): Promise<SettingsManager> {
 		if (this.session) return this.session.settingsManager;
-		const { SettingsManager } = await pi();
+		const { SettingsManager } = await piModels();
 		return SettingsManager.create(this.cwd ?? app.getPath("home"));
 	}
 
@@ -1966,7 +1955,7 @@ export class AgentService {
 		await retiring;
 		await previousWorkflow?.whenSettled();
 		if (generation !== this.generation) throw new Error("Session superseded");
-		const { SettingsManager } = await pi();
+		const { SettingsManager } = await piModels();
 		const modelRuntime = await this.getModelRuntime();
 		const cloneTools = createWebsiteCloneTools({
 			cwd: sessionManager.getCwd(),
