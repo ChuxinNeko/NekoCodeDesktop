@@ -12,20 +12,16 @@ const _green = Color(0xFF2FBF71);
 const _orange = Color(0xFFFF9A2E);
 const _purple = Color(0xFF8B6CF0);
 
-/// 设置页：连接信息、传输方式、外观与断开。
+/// 设置页（首页右上角进入）：连接信息、传输方式、外观与断开。
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
     super.key,
     required this.controller,
-    required this.dark,
     required this.toggleTheme,
-    required this.bottomBar,
   });
 
   final MobileController controller;
-  final bool dark;
   final VoidCallback toggleTheme;
-  final Widget Function(BuildContext, MiuixLayerBackdrop) bottomBar;
 
   MobileController get c => controller;
 
@@ -37,11 +33,17 @@ class SettingsPage extends StatelessWidget {
       confirm: '断开连接',
       danger: true,
     );
-    if (ok) await c.disconnect();
+    if (!ok) return;
+    await c.disconnect();
+    if (context.mounted && !c.paired) Navigator.of(context).maybePop();
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: c, builder: (context, _) => _page(context));
+
+  Widget _page(BuildContext context) {
+    final dark = context.isDark;
     final relay = c.desktop.mode == 'relay';
     final tone = c.online
         ? NekoTone.success(context.isDark)
@@ -51,7 +53,11 @@ class SettingsPage extends StatelessWidget {
     return GlassPage(
       title: '设置',
       largeTitle: '设置',
-      bottomBar: bottomBar,
+      navigationIcon: GlassAction(
+        icon: MiuixIcons.os4.chevronBackward,
+        tooltip: '返回',
+        onPressed: () => Navigator.of(context).maybePop(),
+      ),
       body: (context, scope) => ListView(
         controller: scope.controller,
         padding: EdgeInsets.only(

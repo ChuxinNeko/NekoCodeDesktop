@@ -265,11 +265,47 @@ class MobileController extends ChangeNotifier {
       await refresh();
     }
   });
+
+  /// 'tasks' 即首页欢迎页：它本身就是一个「草稿会话」，回到首页时
+  /// 丢弃当前打开的会话，直接在输入框里开始新任务。
   void navigate(String next) {
+    if (next == 'tasks' && view != 'tasks') _resetDraft();
     view = next;
     if (next == 'tasks') histories.clear();
     emit();
     if (next == 'tasks') unawaited(refresh());
+  }
+
+  void _resetDraft() {
+    _opening++;
+    desktop.forgetSync();
+    taskId = null;
+    acpId = null;
+    snapshot = null;
+    error = null;
+  }
+
+  /// 首页切换项目：只更新草稿配置，不离开欢迎页。
+  Future<void> selectProject(String id) async {
+    if (id == projectId) return;
+    projectId = id;
+    if (isAcp) {
+      emit();
+      return;
+    }
+    defaults = null;
+    emit();
+    await action(loadDefaults);
+  }
+
+  /// 首页切换代理：NekoCode（nekolocal）或已启用的外部代理。
+  Future<void> selectWorkspace(String id) async {
+    if (id == workspace) return;
+    workspace = id;
+    snapshot = null;
+    acpId = null;
+    emit();
+    if (!isAcp && defaults == null) await action(loadDefaults);
   }
 
   Future<void> newTask({String? project, String? agent}) async {
@@ -326,9 +362,9 @@ class MobileController extends ChangeNotifier {
           .where((s) => s['agentId'] == id && s['pristine'] != true)
           .toList();
       for (final session in live) {
-        final listed = records(histories[id]?['entries'])
-            .where((e) => e['sessionId'] == session['agentSessionId'])
-            .firstOrNull;
+        final listed = records(
+          histories[id]?['entries'],
+        ).where((e) => e['sessionId'] == session['agentSessionId']).firstOrNull;
         rows.add({
           ...session,
           if (listed != null) 'updatedAt': listed['updatedAt'],
@@ -418,9 +454,9 @@ class MobileController extends ChangeNotifier {
       }
       if (options.containsKey('modelKey')) {
         defaults!['fusion'] = null;
-        final model = records(defaults!['models'])
-            .where((m) => m['key'] == options['modelKey'])
-            .firstOrNull;
+        final model = records(
+          defaults!['models'],
+        ).where((m) => m['key'] == options['modelKey']).firstOrNull;
         defaults!['thinkingLevels'] = model?['thinkingLevels'] ?? ['off'];
         if (!(defaults!['thinkingLevels'] as List).contains(
           defaults!['thinkingLevel'],
@@ -513,6 +549,8 @@ class MobileController extends ChangeNotifier {
         }
       }
       accepted = true;
+      // 从首页发出的第一条消息创建了会话：进入聊天视图继续跟随输出。
+      if (view == 'tasks' && (taskId != null || acpId != null)) view = 'chat';
       unawaited(refresh());
     });
     return accepted;

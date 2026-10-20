@@ -7,6 +7,7 @@ import '../../core/protocol.dart';
 import '../../ui/glass_page.dart';
 import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
+import '../home/welcome_view.dart';
 import '../mobile_controller.dart';
 import 'configuration.dart';
 import 'run_details.dart';
@@ -19,10 +20,16 @@ class ChatPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onPickProject,
-    required this.onBack,
+    required this.onPickAgent,
+    required this.onSessions,
+    required this.onSettings,
+    this.home = false,
   });
   final MobileController controller;
-  final VoidCallback onPickProject, onBack;
+
+  /// 首页模式：欢迎页即「草稿会话」，右上角为设置。
+  final bool home;
+  final VoidCallback onPickProject, onPickAgent, onSessions, onSettings;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -144,6 +151,22 @@ class _ChatPageState extends State<ChatPage> {
     return name ?? string(c.project?['name'], '未选择项目');
   }
 
+  /// 草稿：尚未创建任务 / 外部代理会话。
+  bool get draft => c.taskId == null && c.acpId == null;
+
+  void suggest(String prompt) {
+    text.text = prompt;
+    text.selection = TextSelection.collapsed(offset: prompt.length);
+    inputFocus.requestFocus();
+    setState(() {});
+  }
+
+  String get homeSubtitle {
+    final device = c.desktop.name.isEmpty ? '电脑' : c.desktop.name;
+    final link = c.desktop.mode == 'relay' ? '公网' : '局域网';
+    return '$device · $link · ${c.online ? '在线' : '离线'}';
+  }
+
   String get subtitle {
     final device = c.desktop.name.isNotEmpty ? c.desktop.name : '电脑';
     final usage = object(c.snapshot?['context']);
@@ -213,27 +236,40 @@ class _ChatPageState extends State<ChatPage> {
       c.taskId != null || c.acpId != null ? '当前任务' : '新会话',
     );
 
+    final welcome = draft && cells.isEmpty && c.snapshot?['streaming'] != true;
     return GlassPage(
-      title: title,
-      subtitle: subtitle,
+      title: widget.home ? 'NekoCode' : title,
+      subtitle: widget.home ? homeSubtitle : subtitle,
       pinnedSmallTitle: true,
       scrollController: scroll,
       navigationIcon: GlassAction(
-        icon: MiuixIcons.os4.chevronBackward,
-        tooltip: '返回会话列表',
-        onPressed: widget.onBack,
+        icon: MiuixIcons.os4.sidebar,
+        tooltip: '会话列表',
+        onPressed: widget.onSessions,
       ),
       actions: [
-        GlassAction(
-          icon: MiuixIcons.os4.add,
-          tooltip: '新建会话',
-          onPressed: c.busy || !c.online ? null : widget.onPickProject,
-        ),
+        if (widget.home)
+          GlassAction(
+            icon: MiuixIcons.os4.settings,
+            tooltip: '设置',
+            onPressed: widget.onSettings,
+          )
+        else
+          GlassAction(
+            icon: MiuixIcons.os4.add,
+            tooltip: '新建会话',
+            onPressed: () => c.navigate('tasks'),
+          ),
       ],
-      body: (context, scope) => Column(
+      body: (context, scope) => Stack(
         children: [
-          Expanded(child: _messages(context, scope, cells)),
-          _bottom(context, extension, running, blocked),
+          if (welcome) const Positioned.fill(child: WelcomeBackdrop()),
+          Column(
+            children: [
+              Expanded(child: _messages(context, scope, cells)),
+              _bottom(context, extension, running, blocked),
+            ],
+          ),
         ],
       ),
     );
@@ -254,6 +290,17 @@ class _ChatPageState extends State<ChatPage> {
       );
     }
     final streaming = c.snapshot?['streaming'] == true;
+    if (cells.isEmpty && !streaming && draft) {
+      return Padding(
+        padding: EdgeInsets.only(top: top),
+        child: WelcomeView(
+          controller: c,
+          onPickProject: widget.onPickProject,
+          onPickAgent: widget.onPickAgent,
+          onSuggestion: suggest,
+        ),
+      );
+    }
     if (cells.isEmpty && !streaming) {
       return Padding(
         padding: EdgeInsets.only(top: top),
@@ -421,7 +468,7 @@ class _ChatPageState extends State<ChatPage> {
                 child: MiuixTextField(
                   controller: text,
                   focusNode: inputFocus,
-                  label: '发消息，或输入 / 使用命令',
+                  label: draft ? '描述任务，开始新会话' : '发消息，或输入 / 使用命令',
                   useLabelAsPlaceholder: true,
                   cornerRadius: 20,
                   insideMargin: const EdgeInsets.symmetric(

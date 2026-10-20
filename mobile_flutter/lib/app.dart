@@ -94,7 +94,6 @@ class _NekoCodeAppState extends State<NekoCodeApp> {
         home: MobileShell(
           controller: controller,
           initialize: widget.initialize,
-          dark: isDark,
           toggleTheme: toggleTheme,
         ),
       ),

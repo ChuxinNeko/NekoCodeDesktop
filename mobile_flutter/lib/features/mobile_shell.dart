@@ -9,7 +9,7 @@ import '../ui/widgets.dart';
 import 'chat/chat_page.dart';
 import 'connection/pairing_view.dart';
 import 'mobile_controller.dart';
-import 'sessions/sessions_page.dart';
+import 'sessions/sessions_drawer.dart';
 import 'settings/settings_page.dart';
 
 class MobileShell extends StatefulWidget {
@@ -17,13 +17,12 @@ class MobileShell extends StatefulWidget {
     super.key,
     required this.controller,
     required this.toggleTheme,
-    required this.dark,
     this.initialize = true,
   });
 
   final MobileController controller;
   final VoidCallback toggleTheme;
-  final bool dark, initialize;
+  final bool initialize;
 
   @override
   State<MobileShell> createState() => _MobileShellState();
@@ -51,11 +50,12 @@ class _MobileShellState extends State<MobileShell> with WidgetsBindingObserver {
     if (c.foreground) unawaited(c.refresh());
   }
 
+  /// 首页项目选择：只切换草稿的项目，不离开欢迎页。
   Future<void> pickProject() async {
     final project = await showNekoSheet<String>(
       context,
       title: '选择项目',
-      subtitle: '在所选项目中创建独立运行的会话',
+      subtitle: '新会话将在所选项目中独立运行',
       builder: (ctx) {
         final mx = ctx.mx;
         if (c.projects.isEmpty) {
@@ -83,6 +83,7 @@ class _MobileShellState extends State<MobileShell> with WidgetsBindingObserver {
                   child: IconTile(
                     icon: MiuixIcons.os4.folderFill,
                     color: mx.primary,
+                    soft: p['id'] != c.projectId,
                     size: 40,
                   ),
                 ),
@@ -101,11 +102,12 @@ class _MobileShellState extends State<MobileShell> with WidgetsBindingObserver {
                   ),
                 ],
                 endActions: [
-                  MiuixIcon(
-                    vector: MiuixIcons.os4.chevronForward,
-                    size: 18,
-                    tint: mx.onSurfaceVariantActions,
-                  ),
+                  if (p['id'] == c.projectId)
+                    MiuixIcon(
+                      vector: MiuixIcons.os4.ok,
+                      size: 20,
+                      tint: mx.primary,
+                    ),
                 ],
                 onClick: () => Navigator.pop(ctx, p['id'] as String),
               ),
@@ -113,50 +115,36 @@ class _MobileShellState extends State<MobileShell> with WidgetsBindingObserver {
         );
       },
     );
-    if (project != null) await c.newTask(project: project);
+    if (project != null) await c.selectProject(project);
   }
 
-  Future<void> create() async {
-    if (c.projects.length != 1) {
-      await pickProject();
-    } else {
-      await c.newTask(project: c.projects.first['id'] as String);
-    }
-  }
-
-  /// 悬浮玻璃底部导航：会话 / 设置。
-  Widget navBar(BuildContext context, MiuixLayerBackdrop backdrop) {
-    return MiuixGlassNavigationBar(
-      backdrop: backdrop,
-      selectedIndex: c.view == 'settings' ? 1 : 0,
-      onSelect: (i) => c.navigate(i == 0 ? 'tasks' : 'settings'),
-      items: [
-        MiuixGlassNavigationItem(
-          icon: MiuixIcon(vector: MiuixIcons.os4.messages, size: 26),
-          label: '会话',
-        ),
-        MiuixGlassNavigationItem(
-          icon: MiuixIcon(vector: MiuixIcons.os4.settings, size: 26),
-          label: '设置',
-        ),
+  /// 首页代理选择：NekoCode 或已启用的外部代理。
+  Future<void> pickAgent() async {
+    final agent = await showNekoPicker<String>(
+      context,
+      title: '选择代理',
+      selected: c.workspace,
+      choices: [
+        const NekoChoice('nekolocal', 'NekoCode'),
+        for (final a in c.enabledAgents)
+          NekoChoice(string(a['id']), string(a['name'], string(a['id']))),
       ],
     );
+    if (agent != null) await c.selectWorkspace(agent);
   }
 
-  Widget home() => c.view == 'settings'
-      ? SettingsPage(
-          key: const ValueKey('settings'),
-          controller: c,
-          dark: widget.dark,
-          toggleTheme: widget.toggleTheme,
-          bottomBar: navBar,
-        )
-      : SessionsPage(
-          key: const ValueKey('sessions'),
-          controller: c,
-          onCreate: create,
-          bottomBar: navBar,
-        );
+  void openSessions() => unawaited(
+    showSessionsDrawer(context, controller: c, onSettings: openSettings),
+  );
+
+  void openSettings() => unawaited(
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            SettingsPage(controller: c, toggleTheme: widget.toggleTheme),
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -173,18 +161,21 @@ class _MobileShellState extends State<MobileShell> with WidgetsBindingObserver {
         );
       } else if (!c.paired) {
         body = PairingView(controller: c);
-      } else if (c.view == 'chat') {
+      } else {
+        // 首页（欢迎页）与聊天页共用同一个 ChatPage：首页发送第一条消息后
+        // 原地切换为聊天视图，输入框和消息流不会重建。
         body = ChatPage(
           key: ValueKey('chat:${c.chatVersion}'),
           controller: c,
+          home: c.view != 'chat',
           onPickProject: pickProject,
-          onBack: () => c.navigate('tasks'),
+          onPickAgent: pickAgent,
+          onSessions: openSessions,
+          onSettings: openSettings,
         );
-      } else {
-        body = home();
       }
       return PopScope(
-        canPop: !c.paired || c.view == 'tasks',
+        canPop: !c.paired || c.view != 'chat',
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) c.navigate('tasks');
         },

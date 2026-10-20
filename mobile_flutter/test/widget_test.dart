@@ -65,7 +65,21 @@ void main() {
     ];
     await tester.pumpWidget(NekoCodeApp(controller: c, initialize: false));
     await settle(tester);
+    // 首页是欢迎页，会话列表收在左上角抽屉里。
+    expect(find.text('NekoCode'), findsWidgets);
+    expect(find.text('真实任务'), findsNothing);
+    await tester.tap(find.byTooltip('会话列表'));
+    await settle(tester);
     expect(find.text('真实任务'), findsOneWidget);
+    expect(find.text('新建会话'), findsOneWidget);
+    await tester.tapAt(const Offset(780, 400));
+    await settle(tester);
+    expect(find.text('真实任务'), findsNothing);
+    await tester.tap(find.byTooltip('设置'));
+    await settle(tester);
+    expect(find.text('深色模式'), findsOneWidget);
+    await tester.tap(find.byTooltip('返回'));
+    await settle(tester);
     c.view = 'chat';
     c.taskId = 'task-1';
     c.snapshot = {
