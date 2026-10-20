@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:nekocode_mobile/core/attachments.dart';
 import 'package:nekocode_mobile/core/desktop_client.dart';
 import 'package:nekocode_mobile/features/mobile_controller.dart';
 
@@ -139,6 +141,86 @@ void main() {
     await c.refresh();
     expect(c.paired, isFalse);
     expect(desktop.lan, isNull);
+    c.dispose();
+  });
+
+  test('附件分片上传、失败重试，并随消息发送 uploadId', () async {
+    final bodies = <String, List<Map<String, dynamic>>>{};
+    var failedOnce = false;
+    final desktop =
+        DesktopClient(
+            MemoryStore(),
+            httpClient: MockClient((request) async {
+              final path = request.url.path;
+              final body = request.body.isEmpty
+                  ? <String, dynamic>{}
+                  : jsonDecode(request.body) as Map<String, dynamic>;
+              bodies.putIfAbsent(path, () => []).add(body);
+              dynamic value;
+              switch (path) {
+                case '/api/state':
+                  value = {
+                    'projects': [
+                      {'id': 'p1', 'name': 'demo', 'path': '/project'},
+                    ],
+                    'tasks': [],
+                  };
+                case '/api/acp/state':
+                  value = {'agents': [], 'sessions': []};
+                case '/api/uploads':
+                  value = {'id': 'u1', 'chunkSize': 4, 'chunks': 3};
+                case '/api/uploads/u1/chunk':
+                  if (body['index'] == 1 && !failedOnce) {
+                    failedOnce = true;
+                    return http.Response('{"error":"busy"}', 502);
+                  }
+                  value = {'received': true};
+                case '/api/tasks':
+                  value = {'id': 'task-1', 'accepted': true};
+                default:
+                  value = {
+                    'session': {'id': 'task-1', 'cwd': '/project'},
+                    'cells': [],
+                    'models': [],
+                    'checkpoints': [],
+                    'workflow': {'request': null, 'todos': [], 'tasks': []},
+                    'streaming': false,
+                  };
+              }
+              return http.Response(
+                jsonEncode(value),
+                200,
+                headers: {'content-type': 'application/json; charset=utf-8'},
+              );
+            }),
+          )
+          ..mode = 'lan'
+          ..lan = {'endpoint': 'http://127.0.0.1:47832', 'token': 'test'};
+    final c = MobileController(desktop);
+    await c.refresh();
+    final file = PendingAttachment(
+      name: 'shot.png',
+      bytes: Uint8List.fromList(List.generate(10, (i) => i)),
+    );
+    expect(file.isImage, isTrue);
+    final progress = <double>[];
+    expect(await c.upload(file, onProgress: progress.add), 'u1');
+    expect(bodies['/api/uploads']!.single, {
+      'name': 'shot.png',
+      'mimeType': 'image/png',
+      'size': 10,
+    });
+    final chunks = bodies['/api/uploads/u1/chunk']!;
+    expect(chunks.map((b) => b['index']), [0, 1, 1, 2]);
+    final joined = chunks
+        .where((b) => b != chunks[1])
+        .expand((b) => base64Decode(b['data'] as String))
+        .toList();
+    expect(joined, file.bytes);
+    expect(progress.last, 1);
+    await c.newTask(project: 'p1');
+    expect(await c.send('', attachments: ['u1']), isTrue);
+    expect(bodies['/api/tasks']!.last['attachments'], ['u1']);
     c.dispose();
   });
 }

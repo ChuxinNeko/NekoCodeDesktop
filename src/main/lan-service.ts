@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileS
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import { basename, join } from "node:path";
-import type { SessionSummary } from "../shared/agent";
+import type { PromptImageAttachment, SendPromptRequest, SessionSummary } from "../shared/agent";
 import type { LanDevice, LanProject, LanStatus } from "../shared/lan";
 import type { LanTaskOptions } from "../shared/lan";
 import type { RelayRequest, RelayResponse } from "../shared/relay";
@@ -12,9 +12,13 @@ import { isWorkMode } from "../shared/workflow";
 import { isFusionConfig } from "../shared/fusion";
 import type { TaskManager } from "./task-manager";
 import type { AcpService } from "./acp/service";
+import { MobileUploads, UploadError, withAttachedFiles } from "./mobile-uploads";
 
 type Device = LanDevice & { tokenHash: string };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+const UPLOAD_CHUNK_PATH = /^\/api\/uploads\/([a-f0-9-]{36})\/chunk$/;
+/** Message routes accept attachments in place of text. */
+const hasAttachments = (input: Record<string, unknown>) => Array.isArray(input.attachments) && input.attachments.length > 0;
 class HttpError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 
 /** Explicitly enabled LAN gateway. No Electron IPC or arbitrary filesystem API is exposed.
@@ -34,6 +38,8 @@ export class LanService {
 	/** The user's choice, persisted; `server` is only whether it is listening right now. */
 	private enabled = false;
 	private readonly file: string;
+	/** Phone attachments in flight, shared by LAN and relay requests. */
+	readonly uploads = new MobileUploads();
 
 	constructor(userData: string, private tasks: TaskManager) {
 		mkdirSync(userData, { recursive: true });
@@ -151,13 +157,13 @@ export class LanService {
 		res.end(JSON.stringify(value));
 	}
 
-	private async body(req: IncomingMessage): Promise<Record<string, unknown>> {
+	private async body(req: IncomingMessage, limit = 64 * 1024): Promise<Record<string, unknown>> {
 		if (req.headers["content-type"]?.split(";")[0] !== "application/json") throw new HttpError(415, "Expected JSON");
 		let size = 0;
 		const chunks: Buffer[] = [];
 		for await (const chunk of req) {
 			size += chunk.length;
-			if (size > 64 * 1024) throw new HttpError(413, "请求过大");
+			if (size > limit) throw new HttpError(413, "请求过大");
 			chunks.push(Buffer.from(chunk));
 		}
 		try {
@@ -208,6 +214,9 @@ export class LanService {
 		if (this.submissions.size >= 2000) throw new HttpError(429, "本次连接的请求数已达上限，请重启应用");
 		const result = action();
 		this.submissions.set(key, { digest, result });
+		// A refused request (expired attachment, unknown task…) ran nothing; let the
+		// phone's retry of the same request run again instead of replaying the error.
+		result.catch(() => { if (this.submissions.get(key)?.result === result) this.submissions.delete(key); });
 		return result;
 	}
 
@@ -238,11 +247,20 @@ export class LanService {
 				this.json(res, 200, { token }); return;
 			}
 			const device = this.authenticate(req);
-			const payload = req.method === "POST" ? await this.body(req) : undefined;
+			// Attachment chunks are the one body allowed to be large (≈700 KiB of base64).
+			const payload = req.method === "POST" ? await this.body(req, UPLOAD_CHUNK_PATH.test(path) ? 1024 * 1024 : undefined) : undefined;
 			this.json(res, 200, await this.dispatch(device, req.method ?? "", path, payload)); return;
 		} catch (error) {
 			if (!res.headersSent && !res.destroyed) this.json(res, error instanceof HttpError ? error.status : 500, { error: error instanceof Error ? error.message : "Request failed" });
 		}
+	}
+
+	private prompt(text: string, attached: { images: PromptImageAttachment[]; files: string[] }): SendPromptRequest {
+		const fallback = attached.images.length ? "请检查所附图片。" : "请查看附件。";
+		return {
+			text: withAttachedFiles(text, attached.files, fallback),
+			...(attached.images.length ? { images: attached.images } : {}),
+		};
 	}
 
 	/** The session file is a path on this machine; remote clients never see it. */
@@ -256,7 +274,23 @@ export class LanService {
 		path: string,
 		body?: Record<string, unknown>,
 	): Promise<unknown> {
+		try { return await this.route(principal, method, path, body); }
+		catch (error) { throw error instanceof UploadError ? new HttpError(error.status, error.message) : error; }
+	}
+
+	private async route(
+		principal: { id: string },
+		method: string,
+		path: string,
+		body?: Record<string, unknown>,
+	): Promise<unknown> {
 		if (path.startsWith("/api/acp/")) return this.dispatchAcp(principal, method, path, body);
+		if (method === "POST" && path === "/api/uploads") return this.uploads.start(principal.id, body!);
+		const upload = /^\/api\/uploads\/([a-f0-9-]{36})\/(chunk|cancel)$/.exec(path);
+		if (method === "POST" && upload) {
+			if (upload[2] === "cancel") { this.uploads.cancel(principal.id, upload[1]); return { cancelled: true }; }
+			return this.uploads.chunk(principal.id, upload[1], body!);
+		}
 		const defaults = /^\/api\/projects\/([a-zA-Z0-9-]+)\/defaults$/.exec(path);
 		if (method === "GET" && defaults) {
 			const project = this.projects.find((p) => p.id === defaults[1]);
@@ -269,15 +303,22 @@ export class LanService {
 		}
 		if (method === "POST" && path === "/api/tasks") {
 			const input = body!;
-			if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 32_000 || input.text.trim().startsWith("/")) throw new HttpError(400, "请输入任务描述（不支持以 / 开头的命令）");
+			if (typeof input.text !== "string" || (!input.text.trim() && !hasAttachments(input)) || input.text.length > 32_000 || input.text.trim().startsWith("/")) throw new HttpError(400, "请输入任务描述（不支持以 / 开头的命令）");
 			const project = this.projects.find((p) => p.id === input.projectId);
 			if (!project) throw new HttpError(403, "请先在电脑端授权此项目");
 			const options = this.options(input.options);
 			const text = input.text.trim();
 			return this.once(principal, "create", input, async () => {
+				// Before the task exists: an expired upload must not leave an empty session behind.
+				const attached = await this.uploads.resolve(principal.id, input.attachments, project.path, { images: true });
 				const agent = await this.tasks.create(project.path, false);
 				const id = agent.getSnapshot()!.session.id;
-				try { await this.configure(agent, options); return { id, ...await agent.send({ text }) }; }
+				try {
+					await this.configure(agent, options);
+					const result = await agent.send(this.prompt(text, attached));
+					if (result.accepted) this.uploads.release(principal.id, input.attachments);
+					return { id, ...result };
+				}
 				catch (error) { return { id, accepted: false, error: error instanceof Error ? error.message : String(error) }; }
 			});
 		}
@@ -337,9 +378,17 @@ export class LanService {
 			}
 			if (match[2] === "send") {
 				const input = body!;
-				if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 32_000 || /^\/terminal(?:\s|$)/.test(input.text.trim())) throw new HttpError(400, "请输入有效消息");
+				if (typeof input.text !== "string" || (!input.text.trim() && !hasAttachments(input)) || input.text.length > 32_000 || /^\/terminal(?:\s|$)/.test(input.text.trim())) throw new HttpError(400, "请输入有效消息");
 				const text = input.text;
-				return this.once(principal, `send:${match[1]}`, input, () => agent.send({ text }));
+				return this.once(principal, `send:${match[1]}`, input, async () => {
+					if (!hasAttachments(input)) return agent.send({ text });
+					const cwd = agent.getSnapshot()?.session.cwd;
+					if (!cwd) throw new HttpError(409, "无法确定会话所在的项目");
+					const attached = await this.uploads.resolve(principal.id, input.attachments, cwd, { images: true });
+					const result = await agent.send(this.prompt(text, attached));
+					if (result.accepted) this.uploads.release(principal.id, input.attachments);
+					return result;
+				});
 			}
 			if (match[2] === "abort") await agent.abort();
 			if (match[2] === "answer") {
@@ -402,8 +451,14 @@ export class LanService {
 			if (method === "GET" && !session[2]) return current;
 			if (method === "POST" && session[2] === "prompt") {
 				const input = body!;
-				if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 32_000) throw new HttpError(400, "请输入有效消息");
-				return this.once(principal, `acp-prompt:${session[1]}`, input, async () => { await acp.prompt({ sessionId: session[1], text: input.text as string }); return { accepted: true }; });
+				if (typeof input.text !== "string" || (!input.text.trim() && !hasAttachments(input)) || input.text.length > 32_000) throw new HttpError(400, "请输入有效消息");
+				return this.once(principal, `acp-prompt:${session[1]}`, input, async () => {
+					// External agents get every attachment as a file in the project.
+					const attached = await this.uploads.resolve(principal.id, input.attachments, current.cwd, { images: false });
+					await acp.prompt({ sessionId: session[1], text: withAttachedFiles(input.text as string, attached.files, "请查看附件。") });
+					this.uploads.release(principal.id, input.attachments);
+					return { accepted: true };
+				});
 			}
 			if (method === "POST" && session[2] === "cancel") { await acp.cancel(session[1]); return acp.view(session[1]); }
 			if (method === "POST" && session[2] === "config") {

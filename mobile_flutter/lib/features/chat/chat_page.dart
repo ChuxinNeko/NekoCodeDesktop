@@ -1,14 +1,18 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_miuix/miuix.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../../core/attachments.dart';
 import '../../core/protocol.dart';
 import '../../ui/glass_page.dart';
 import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
 import '../home/welcome_view.dart';
 import '../mobile_controller.dart';
+import 'attachments.dart';
 import 'configuration.dart';
 import 'run_details.dart';
 import 'transcript.dart';
@@ -40,6 +44,7 @@ class _ChatPageState extends State<ChatPage> {
   final scroll = ScrollController();
   final FocusNode inputFocus = FocusNode();
   bool sending = false, commandsLoading = false;
+  final attachments = <PendingAttachment>[];
   String? _tail;
   String? _extensionEditor;
 
@@ -53,17 +58,182 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
+  bool get uploading =>
+      attachments.any((a) => a.status != AttachmentStatus.done);
+
   Future<void> send() async {
-    if (sending) return;
+    if (sending || uploading) return;
     final draft = text.text;
+    final sent = [...attachments];
     setState(() => sending = true);
-    final ok = await c.send(draft);
+    final ok = await c.send(
+      draft,
+      attachments: [for (final a in sent) a.uploadId!],
+    );
     if (mounted) {
       setState(() {
         sending = false;
         if (ok && text.text == draft) text.clear();
+        if (ok) attachments.removeWhere(sent.contains);
       });
     }
+  }
+
+  // ---- 附件 ----
+
+  void toast(String message) => showNekoToast(context, message);
+
+  void addFiles(List<PendingAttachment> picked) {
+    final room = maxAttachments - attachments.length;
+    if (picked.length > room) toast('一次最多添加 $maxAttachments 个附件');
+    final accepted = <PendingAttachment>[];
+    for (final file in picked.take(room < 0 ? 0 : room)) {
+      if (file.size == 0) continue;
+      if (file.size > maxAttachmentBytes) {
+        toast('「${file.name}」超过 ${maxAttachmentBytes ~/ 1024 ~/ 1024} MB');
+        continue;
+      }
+      accepted.add(file);
+    }
+    if (accepted.isEmpty) return;
+    setState(() => attachments.addAll(accepted));
+    for (final file in accepted) {
+      unawaited(startUpload(file));
+    }
+  }
+
+  Future<void> startUpload(PendingAttachment file) async {
+    setState(() {
+      file.status = AttachmentStatus.uploading;
+      file.progress = 0;
+      file.error = null;
+    });
+    try {
+      final id = await c.upload(
+        file,
+        onProgress: (p) {
+          if (mounted) setState(() => file.progress = p);
+        },
+      );
+      if (!attachments.contains(file)) {
+        unawaited(c.cancelUpload(id));
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          file.uploadId = id;
+          file.status = AttachmentStatus.done;
+        });
+      }
+    } catch (e) {
+      if (!mounted || !attachments.contains(file)) return;
+      setState(() {
+        file.status = AttachmentStatus.failed;
+        file.error = '$e';
+      });
+      toast('「${file.name}」上传失败：$e');
+    }
+  }
+
+  void removeAttachment(PendingAttachment file) {
+    setState(() => attachments.remove(file));
+    final id = file.uploadId;
+    if (id != null) unawaited(c.cancelUpload(id));
+  }
+
+  Future<void> pickPhotos() async {
+    try {
+      final room = maxAttachments - attachments.length;
+      if (room <= 0) return toast('一次最多添加 $maxAttachments 个附件');
+      final images = await ImagePicker().pickMultiImage(
+        maxWidth: 2560,
+        maxHeight: 2560,
+        imageQuality: 85,
+        limit: room > 1 ? room : null,
+      );
+      addFiles([
+        for (final image in images)
+          PendingAttachment(name: image.name, bytes: await image.readAsBytes()),
+      ]);
+    } catch (e) {
+      toast('无法打开相册：$e');
+    }
+  }
+
+  Future<void> takePhoto() async {
+    try {
+      final photo = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        maxWidth: 2560,
+        maxHeight: 2560,
+        imageQuality: 85,
+      );
+      if (photo == null) return;
+      addFiles([
+        PendingAttachment(name: photo.name, bytes: await photo.readAsBytes()),
+      ]);
+    } catch (e) {
+      toast('无法打开相机：$e');
+    }
+  }
+
+  Future<void> pickFiles() async {
+    try {
+      final files = await FilePicker.pickFiles();
+      addFiles([
+        for (final file in files)
+          PendingAttachment(
+            name: file.name,
+            bytes: await file.xFile.readAsBytes(),
+          ),
+      ]);
+    } catch (e) {
+      toast('无法选择文件：$e');
+    }
+  }
+
+  void openAttachMenu() {
+    final mx = context.mx;
+    unawaited(
+      showAttachSheet(context, [
+        AttachAction(
+          '相册',
+          MiuixIcon(
+            vector: MiuixIcons.os4.photos,
+            size: 28,
+            tint: const Color(0xFF2FBF71),
+          ),
+          const Color(0xFF2FBF71),
+          pickPhotos,
+        ),
+        AttachAction(
+          '拍照',
+          const Icon(Icons.photo_camera_outlined),
+          const Color(0xFFFF9A2E),
+          takePhoto,
+        ),
+        AttachAction(
+          '文件',
+          MiuixIcon(vector: MiuixIcons.os4.file, size: 28, tint: mx.primary),
+          mx.primary,
+          pickFiles,
+        ),
+        if (!draft)
+          AttachAction(
+            '命令',
+            const Text(
+              '/',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const Color(0xFF8B6CF0),
+            commands,
+          ),
+      ]),
+    );
   }
 
   Future<void> commands() async {
@@ -415,8 +585,8 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _composer(BuildContext context, bool running, bool blocked) {
     final mx = context.mx;
-    final empty = text.text.trim().isEmpty;
-    final canSend = !blocked && !empty;
+    final empty = text.text.trim().isEmpty && attachments.isEmpty;
+    final canSend = !blocked && !empty && !uploading;
     final Color fill = running
         ? mx.error
         : canSend
@@ -441,80 +611,92 @@ class _ChatPageState extends State<ChatPage> {
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MiuixPressable(
-                onPressed: commandsLoading ? null : commands,
-                feedbackType: MiuixPressFeedbackType.sink,
-                semanticLabel: '斜杠命令',
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: mx.primary.withValues(alpha: .1),
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: MiuixText(
-                    '/',
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'monospace',
-                    color: mx.primary,
-                  ),
+              if (attachments.isNotEmpty)
+                AttachmentTray(
+                  items: attachments,
+                  onRemove: removeAttachment,
+                  onRetry: (file) => unawaited(startUpload(file)),
                 ),
-              ),
-              Expanded(
-                child: MiuixTextField(
-                  controller: text,
-                  focusNode: inputFocus,
-                  label: draft ? '描述任务，开始新会话' : '发消息，或输入 / 使用命令',
-                  useLabelAsPlaceholder: true,
-                  cornerRadius: 20,
-                  insideMargin: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  MiuixPressable(
+                    onPressed: sending || commandsLoading
+                        ? null
+                        : openAttachMenu,
+                    feedbackType: MiuixPressFeedbackType.sink,
+                    semanticLabel: '添加附件',
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: mx.primary.withValues(alpha: .1),
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: MiuixIcon(
+                        vector: MiuixIcons.os4.add,
+                        size: 22,
+                        tint: mx.primary,
+                      ),
+                    ),
                   ),
-                  enabled: !sending,
-                  maxLines: 6,
-                  minLines: 1,
-                  textStyle: TextStyle(
-                    fontSize: 16,
-                    height: 1.35,
-                    color: mx.onSurface,
+                  Expanded(
+                    child: MiuixTextField(
+                      controller: text,
+                      focusNode: inputFocus,
+                      label: draft ? '描述任务，开始新会话' : '发消息',
+                      useLabelAsPlaceholder: true,
+                      cornerRadius: 20,
+                      insideMargin: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      enabled: !sending,
+                      maxLines: 6,
+                      minLines: 1,
+                      textStyle: TextStyle(
+                        fontSize: 16,
+                        height: 1.35,
+                        color: mx.onSurface,
+                      ),
+                      colors: MiuixTextFieldColors(
+                        backgroundColor: Colors.transparent,
+                        labelColor: mx.onSurfaceVariantActions,
+                        borderColor: Colors.transparent,
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
                   ),
-                  colors: MiuixTextFieldColors(
-                    backgroundColor: Colors.transparent,
-                    labelColor: mx.onSurfaceVariantActions,
-                    borderColor: Colors.transparent,
+                  MiuixPressable(
+                    onPressed: running
+                        ? (c.busy ? null : c.abort)
+                        : (canSend ? send : null),
+                    feedbackType: MiuixPressFeedbackType.sink,
+                    semanticLabel: running ? '停止' : '发送',
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: fill,
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: running
+                          ? Icon(Icons.stop_rounded, size: 22, color: fg)
+                          : MiuixIcon(
+                              vector: MiuixIcons.os4.send,
+                              size: 22,
+                              tint: fg,
+                            ),
+                    ),
                   ),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ),
-              MiuixPressable(
-                onPressed: running
-                    ? (c.busy ? null : c.abort)
-                    : (canSend ? send : null),
-                feedbackType: MiuixPressFeedbackType.sink,
-                semanticLabel: running ? '停止' : '发送',
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: fill,
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: running
-                      ? Icon(Icons.stop_rounded, size: 22, color: fg)
-                      : MiuixIcon(
-                          vector: MiuixIcons.os4.send,
-                          size: 22,
-                          tint: fg,
-                        ),
-                ),
+                ],
               ),
             ],
           ),

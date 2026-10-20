@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../core/attachments.dart';
 import '../core/desktop_client.dart';
 import '../core/protocol.dart';
 
@@ -467,8 +469,67 @@ class MobileController extends ChangeNotifier {
       }
     }
   });
-  Future<bool> send(String text) async {
-    if (busy || !online || text.trim().isEmpty) return false;
+
+  /// 分片上传一个附件到电脑（局域网与公网中继走同一条请求通道），
+  /// 返回电脑端的上传编号，发送消息时随 `attachments` 一起提交。
+  Future<String> upload(
+    PendingAttachment file, {
+    void Function(double progress)? onProgress,
+  }) async {
+    if (file.size > maxAttachmentBytes) {
+      throw ApiError('单个附件不能超过 ${maxAttachmentBytes ~/ 1024 ~/ 1024} MB');
+    }
+    final start = object(
+      await desktop.request('/api/uploads', {
+        'name': file.name,
+        'mimeType': file.mimeType,
+        'size': file.size,
+      }),
+    );
+    final id = start['id'] as String;
+    final chunk = (start['chunkSize'] as num).toInt();
+    final count = (start['chunks'] as num).toInt();
+    for (var index = 0; index < count; index++) {
+      final end = (index + 1) * chunk;
+      final data = base64Encode(
+        file.bytes.sublist(index * chunk, end > file.size ? file.size : end),
+      );
+      for (var attempt = 0; ; attempt++) {
+        try {
+          await desktop.request(
+            '/api/uploads/${Uri.encodeComponent(id)}/chunk',
+            {'index': index, 'data': data},
+          );
+          break;
+        } catch (e) {
+          // 分片按编号幂等：网络抖动时直接重发同一片。
+          if (attempt >= 2 || (e is ApiError && e.status == 404)) rethrow;
+          await Future<void>.delayed(
+            Duration(milliseconds: 400 * (attempt + 1)),
+          );
+        }
+      }
+      onProgress?.call((index + 1) / count);
+    }
+    return id;
+  }
+
+  Future<void> cancelUpload(String id) async {
+    try {
+      await desktop.request(
+        '/api/uploads/${Uri.encodeComponent(id)}/cancel',
+        {},
+      );
+    } catch (_) {
+      /* 电脑端会在 30 分钟后自动清理。 */
+    }
+  }
+
+  Future<bool> send(String text, {List<String> attachments = const []}) async {
+    if (busy || !online || (text.trim().isEmpty && attachments.isEmpty)) {
+      return false;
+    }
+    final files = {if (attachments.isNotEmpty) 'attachments': attachments};
     bool accepted = false;
     await action(() async {
       if (isAcp) {
@@ -486,7 +547,7 @@ class MobileController extends ChangeNotifier {
         final id = acpId!;
         final result = await desktop.submit(
           '/api/acp/sessions/${Uri.encodeComponent(id)}/prompt',
-          {'text': text},
+          {'text': text, ...files},
         );
         if (result['accepted'] != true) {
           throw ApiError(string(result['error'], '消息未被接受'));
@@ -506,7 +567,7 @@ class MobileController extends ChangeNotifier {
       } else if (taskId != null) {
         final result = await desktop.submit(
           '/api/tasks/${Uri.encodeComponent(taskId!)}/send',
-          {'text': text},
+          {'text': text, ...files},
         );
         if (result['accepted'] != true) {
           throw ApiError(string(result['error'], '消息未被接受'));
@@ -536,6 +597,7 @@ class MobileController extends ChangeNotifier {
           'projectId': projectId,
           'text': text,
           'options': options,
+          ...files,
         });
         taskId = result['id'] as String;
         if (result['accepted'] != true) {

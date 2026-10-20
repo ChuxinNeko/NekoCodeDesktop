@@ -72,6 +72,7 @@ void main() {
     await settle(tester);
     expect(find.text('真实任务'), findsOneWidget);
     expect(find.byTooltip('新建会话'), findsOneWidget);
+    expect(find.bySemanticsLabel('添加附件'), findsOneWidget);
     await tester.tapAt(const Offset(780, 400));
     await settle(tester);
     expect(find.text('真实任务'), findsNothing);
