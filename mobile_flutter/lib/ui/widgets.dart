@@ -57,7 +57,7 @@ class ActionButton extends StatelessWidget {
             child: MiuixText(
               label,
               fontSize: compact ? 14 : 16,
-              fontWeight: FontWeight.w600,
+              fontWeight: NekoWeight.button,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -113,7 +113,7 @@ class StepHeader extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            MiuixText(verb, fontSize: 14, fontWeight: FontWeight.w600),
+            MiuixText(verb, fontSize: 14),
             if (object.isNotEmpty) ...[
               const SizedBox(width: 8),
               Expanded(
@@ -278,12 +278,7 @@ class PillBadge extends StatelessWidget {
               Icon(icon, size: 14, color: fg),
               const SizedBox(width: 4),
             ],
-            MiuixText(
-              label,
-              fontSize: 13,
-              color: fg,
-              fontWeight: FontWeight.w500,
-            ),
+            MiuixText(label, fontSize: 13, color: fg),
             if (onTap != null) ...[
               const SizedBox(width: 2),
               RotatedBox(
@@ -475,40 +470,18 @@ class NekoGroup extends StatelessWidget {
   }
 }
 
-/// 彩色圆角图标块（HyperOS 设置页风格）。
+/// 行首线性图标。与正文同色，不加彩色底。
 class IconTile extends StatelessWidget {
-  const IconTile({
-    super.key,
-    required this.icon,
-    this.color,
-    this.size = 36,
-    this.soft = false,
-  });
+  const IconTile({super.key, required this.icon, this.size = 22});
   final MiuixVectorIcon icon;
-  final Color? color;
   final double size;
 
-  /// 柔和样式：淡色底 + 彩色图标；否则为实心底 + 白色图标。
-  final bool soft;
   @override
-  Widget build(BuildContext context) {
-    final tone = color ?? context.mx.primary;
-    final bg = soft ? tone.withValues(alpha: .13) : tone;
-    return Container(
-      width: size,
-      height: size,
-      decoration: ShapeDecoration(
-        color: bg,
-        shape: NekoShape.squircle(size * .32),
-      ),
-      alignment: Alignment.center,
-      child: MiuixIcon(
-        vector: icon,
-        size: size * .62,
-        tint: soft ? tone : Colors.white,
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MiuixIcon(
+    vector: icon,
+    size: size,
+    tint: context.mx.onSurfaceVariantSummary,
+  );
 }
 
 /// 居中空状态。
@@ -533,21 +506,16 @@ class EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: ShapeDecoration(
-                color: c.primary.withValues(alpha: .1),
-                shape: NekoShape.squircle(24),
-              ),
-              alignment: Alignment.center,
-              child: MiuixIcon(vector: icon, size: 38, tint: c.primary),
+            MiuixIcon(
+              vector: icon,
+              size: 32,
+              tint: c.onSurfaceVariantActions,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             MiuixText(
               title,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
+              fontSize: 17,
+              fontWeight: NekoWeight.title,
               textAlign: TextAlign.center,
             ),
             if (summary != null) ...[
@@ -718,7 +686,7 @@ Future<T?> showNekoSheet<T>(
                       MiuixText(
                         title,
                         fontSize: 20,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: NekoWeight.title,
                       ),
                       if (subtitle != null) ...[
                         const SizedBox(height: 4),
@@ -853,7 +821,7 @@ Future<bool> showNekoConfirm(
                       MiuixText(
                         title,
                         fontSize: 20,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: NekoWeight.title,
                         textAlign: TextAlign.center,
                       ),
                       if (message != null) ...[
@@ -940,11 +908,7 @@ class _NekoDisclosureState extends State<NekoDisclosure> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       DefaultTextStyle(
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: c.onSurface,
-                        ),
+                        style: TextStyle(fontSize: 15, color: c.onSurface),
                         child: widget.title,
                       ),
                       if (widget.subtitle != null)

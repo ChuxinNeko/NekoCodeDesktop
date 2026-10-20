@@ -7,10 +7,9 @@ import '../../ui/widgets.dart';
 
 /// 「+」菜单里的一项。
 class AttachAction {
-  const AttachAction(this.label, this.icon, this.color, this.onTap);
+  const AttachAction(this.label, this.icon, this.onTap);
   final String label;
   final Widget icon;
-  final Color color;
   final VoidCallback onTap;
 }
 
@@ -39,25 +38,27 @@ Future<void> showAttachSheet(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 60,
-                    height: 60,
-                    decoration: ShapeDecoration(
-                      color: action.color.withValues(alpha: .13),
-                      shape: NekoShape.squircle(20),
-                    ),
-                    alignment: Alignment.center,
-                    child: IconTheme(
-                      data: IconThemeData(color: action.color, size: 28),
-                      child: action.icon,
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Center(
+                      child: MiuixContentColor(
+                        color: ctx.mx.onSurface,
+                        child: IconTheme(
+                          data: IconThemeData(
+                            color: ctx.mx.onSurface,
+                            size: 26,
+                          ),
+                          child: DefaultTextStyle.merge(
+                            style: TextStyle(color: ctx.mx.onSurface),
+                            child: action.icon,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  MiuixText(
-                    action.label,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  const SizedBox(height: 4),
+                  MiuixText(action.label, fontSize: 13),
                 ],
               ),
             ),
@@ -144,11 +145,10 @@ class _AttachmentChip extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconTile(
-                  icon: MiuixIcons.os4.file,
-                  color: mx.primary,
-                  soft: true,
-                  size: 38,
+                MiuixIcon(
+                  vector: MiuixIcons.os4.file,
+                  size: 20,
+                  tint: mx.onSurfaceVariantSummary,
                 ),
                 const SizedBox(width: 10),
                 Flexible(
@@ -159,7 +159,6 @@ class _AttachmentChip extends StatelessWidget {
                       MiuixText(
                         item.name,
                         fontSize: 13,
-                        fontWeight: FontWeight.w500,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),

@@ -41,22 +41,10 @@ class WorkflowPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    IconTile(
-                      icon: MiuixIcons.os4.help,
-                      color: c.primary,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: MiuixText(
-                        string(request['title'], '需要您的确认'),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
+                MiuixText(
+                  string(request['title'], '需要您的确认'),
+                  fontSize: 16,
+                  fontWeight: NekoWeight.title,
                 ),
                 for (final q in questions) ...[
                   Padding(

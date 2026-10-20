@@ -80,19 +80,10 @@ class _MobileShellState extends State<MobileShell> with WidgetsBindingObserver {
                 ),
                 startAction: Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: IconTile(
-                    icon: MiuixIcons.os4.folderFill,
-                    color: mx.primary,
-                    soft: p['id'] != c.projectId,
-                    size: 40,
-                  ),
+                  child: IconTile(icon: MiuixIcons.os4.folder),
                 ),
                 content: [
-                  MiuixText(
-                    string(p['name']),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  MiuixText(string(p['name']), fontSize: 16),
                   MiuixText(
                     string(p['path']),
                     fontSize: 12.5,

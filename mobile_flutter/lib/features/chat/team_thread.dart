@@ -193,8 +193,7 @@ class TeamThreads extends StatelessWidget {
                               MiuixText(
                                 '${item['member'] ?? ''}${item['model'] == null ? '' : ' · ${item['model']}'}',
                                 fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: c.primary,
+                                color: c.onSurfaceSecondary,
                               ),
                               const SizedBox(height: 6),
                               if (item['kind'] == 'assign')
@@ -244,7 +243,7 @@ class TeamThreads extends StatelessWidget {
                           MiuixText(
                             '最终回复 · ${object(turn['final'])['member']}',
                             fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                            color: c.onSurfaceSecondary,
                           ),
                           const SizedBox(height: 6),
                           MarkdownBody(

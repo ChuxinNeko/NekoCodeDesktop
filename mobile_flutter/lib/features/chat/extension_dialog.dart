@@ -67,7 +67,7 @@ class _ExtensionDialogCardState extends State<ExtensionDialogCard> {
               MiuixText(
                 string(d['title']),
                 fontSize: 17,
-                fontWeight: FontWeight.w700,
+                fontWeight: NekoWeight.title,
               ),
               if (widget.queued > 0)
                 Padding(

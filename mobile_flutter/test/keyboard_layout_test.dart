@@ -5,6 +5,7 @@ import 'package:nekocode_mobile/core/desktop_client.dart';
 import 'package:nekocode_mobile/features/chat/chat_page.dart';
 import 'package:nekocode_mobile/features/home/welcome_view.dart';
 import 'package:nekocode_mobile/features/mobile_controller.dart';
+import 'package:nekocode_mobile/features/sessions/sessions_drawer.dart';
 
 import 'support.dart';
 
@@ -70,4 +71,50 @@ void main() {
       },
     );
   }
+
+  testWidgets('closing the session drawer does not reopen the keyboard', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = MobileController(DesktopClient(MemoryStore()))
+      ..ready = true
+      ..online = true
+      ..defaults = {};
+    await tester.pumpWidget(
+      themed(
+        Builder(
+          builder: (context) => ChatPage(
+            controller: c,
+            home: true,
+            onPickProject: () {},
+            onPickAgent: () {},
+            onSessions: () => showSessionsDrawer(
+              context,
+              controller: c,
+              onSettings: () {},
+            ),
+            onSettings: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(EditableText));
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isTrue);
+
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+    expect(find.text('会话'), findsWidgets);
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    c.dispose();
+  });
 }

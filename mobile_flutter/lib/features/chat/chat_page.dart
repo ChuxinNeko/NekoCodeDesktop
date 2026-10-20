@@ -193,29 +193,21 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void openAttachMenu() {
-    final mx = context.mx;
     unawaited(
       showAttachSheet(context, [
         AttachAction(
           '相册',
-          MiuixIcon(
-            vector: MiuixIcons.os4.photos,
-            size: 28,
-            tint: const Color(0xFF2FBF71),
-          ),
-          const Color(0xFF2FBF71),
+          MiuixIcon(vector: MiuixIcons.os4.photos, size: 26),
           pickPhotos,
         ),
         AttachAction(
           '拍照',
-          const Icon(Icons.photo_camera_outlined),
-          const Color(0xFFFF9A2E),
+          const Icon(Icons.photo_camera_outlined, size: 26),
           takePhoto,
         ),
         AttachAction(
           '文件',
-          MiuixIcon(vector: MiuixIcons.os4.file, size: 28, tint: mx.primary),
-          mx.primary,
+          MiuixIcon(vector: MiuixIcons.os4.file, size: 26),
           pickFiles,
         ),
         if (!draft)
@@ -223,13 +215,8 @@ class _ChatPageState extends State<ChatPage> {
             '命令',
             const Text(
               '/',
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w700,
-                fontFamily: 'monospace',
-              ),
+              style: TextStyle(fontSize: 22, fontFamily: 'monospace'),
             ),
-            const Color(0xFF8B6CF0),
             commands,
           ),
       ]),
@@ -277,8 +264,6 @@ class _ChatPageState extends State<ChatPage> {
                       '/${v['name']}',
                       fontSize: 15.5,
                       fontFamily: 'monospace',
-                      fontWeight: FontWeight.w600,
-                      color: mx.primary,
                     ),
                     if (string(v['description']).isNotEmpty)
                       Padding(
@@ -654,15 +639,11 @@ class _ChatPageState extends State<ChatPage> {
                     child: Container(
                       width: 40,
                       height: 40,
-                      decoration: BoxDecoration(
-                        color: mx.primary.withValues(alpha: .1),
-                        shape: BoxShape.circle,
-                      ),
                       alignment: Alignment.center,
                       child: MiuixIcon(
                         vector: MiuixIcons.os4.add,
                         size: 22,
-                        tint: mx.primary,
+                        tint: mx.onSurfaceVariantSummary,
                       ),
                     ),
                   ),

@@ -20,7 +20,7 @@ MarkdownStyleSheet nekoMarkdown(BuildContext context, {double size = 15.5}) {
   final c = context.mx;
   final dark = context.isDark;
   final base = TextStyle(fontSize: size, height: 1.6, color: c.onSurface);
-  final heading = base.copyWith(fontWeight: FontWeight.w700, height: 1.4);
+  final heading = base.copyWith(fontWeight: NekoWeight.title, height: 1.4);
   return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
     p: base,
     pPadding: EdgeInsets.zero,
@@ -28,7 +28,7 @@ MarkdownStyleSheet nekoMarkdown(BuildContext context, {double size = 15.5}) {
     h2: heading.copyWith(fontSize: size + 3),
     h3: heading.copyWith(fontSize: size + 1),
     h4: heading,
-    strong: base.copyWith(fontWeight: FontWeight.w700),
+    strong: base.copyWith(fontWeight: NekoWeight.title),
     em: base.copyWith(fontStyle: FontStyle.italic),
     a: base.copyWith(color: c.primary),
     listBullet: base,
@@ -55,7 +55,7 @@ MarkdownStyleSheet nekoMarkdown(BuildContext context, {double size = 15.5}) {
       border: Border(top: BorderSide(color: c.dividerLine, width: 1)),
     ),
     tableBorder: TableBorder.all(color: c.dividerLine, width: .6),
-    tableHead: base.copyWith(fontWeight: FontWeight.w700),
+    tableHead: base.copyWith(fontWeight: NekoWeight.title),
     tableBody: base,
     tableCellsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
   );
@@ -89,8 +89,11 @@ class MessageCell extends StatelessWidget {
             ),
             child: DecoratedBox(
               decoration: ShapeDecoration(
-                color: c.primary,
-                shape: NekoShape.squircle(NekoShape.bubble),
+                color: c.surfaceContainerHigh,
+                shape: NekoShape.squircle(
+                  NekoShape.bubble,
+                  side: BorderSide(color: c.dividerLine),
+                ),
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -102,7 +105,7 @@ class MessageCell extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 16,
                     height: 1.45,
-                    color: c.onPrimary,
+                    color: c.onSurface,
                   ),
                 ),
               ),
@@ -706,9 +709,7 @@ class _ToolCallHeader extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 action,
-                style: WorkflowStyle.text(
-                  context,
-                ).copyWith(fontWeight: FontWeight.w500, color: foreground),
+                style: WorkflowStyle.text(context).copyWith(color: foreground),
               ),
               if (presentation.subject.isNotEmpty) ...[
                 const SizedBox(width: 6),

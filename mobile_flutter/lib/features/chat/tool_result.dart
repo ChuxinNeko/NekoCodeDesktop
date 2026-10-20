@@ -41,8 +41,7 @@ class ToolResult extends StatelessWidget {
             child: MiuixText(
               '定位报告',
               fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: c.primary,
+              color: c.onSurfaceVariantSummary,
             ),
           ),
           Padding(

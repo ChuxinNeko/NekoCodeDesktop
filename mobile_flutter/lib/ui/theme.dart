@@ -24,6 +24,12 @@ abstract final class NekoTone {
       dark ? const Color(0xFF161616) : const Color(0xFFF2F3F5);
 }
 
+/// 字重只表达层级：标题一档，按钮一档，正文保持常规。
+abstract final class NekoWeight {
+  static const FontWeight title = FontWeight.w600;
+  static const FontWeight button = FontWeight.w500;
+}
+
 /// 形状常量：HyperOS 使用连续曲率（超椭圆）圆角。
 abstract final class NekoShape {
   static const double card = 20;

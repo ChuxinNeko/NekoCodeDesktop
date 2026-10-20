@@ -7,31 +7,14 @@ import '../../core/protocol.dart';
 import '../../ui/theme.dart';
 import '../mobile_controller.dart';
 
-/// 首页氛围背景：几团柔和的彩色光晕，让玻璃顶栏有内容可以折射。
+/// 首页氛围背景：一团很淡的主色光，让玻璃顶栏有内容可以折射。
 class WelcomeBackdrop extends StatelessWidget {
   const WelcomeBackdrop({super.key});
 
   @override
   Widget build(BuildContext context) {
     final mx = context.mx;
-    final dark = context.isDark;
-    final a = dark ? .24 : .2;
-    Widget glow(Alignment at, double size, Color color) => Align(
-      alignment: at,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [
-              color.withValues(alpha: a),
-              color.withValues(alpha: 0),
-            ],
-          ),
-        ),
-      ),
-    );
+    final a = context.isDark ? .1 : .07;
     return IgnorePointer(
       child: LayoutBuilder(
         builder: (context, box) {
@@ -39,13 +22,22 @@ class WelcomeBackdrop extends StatelessWidget {
           return Stack(
             fit: StackFit.expand,
             children: [
-              glow(const Alignment(-1.1, -.75), s * 1.05, mx.primary),
-              glow(
-                const Alignment(1.2, -.35),
-                s * .95,
-                const Color(0xFFFF7EB3),
+              Align(
+                alignment: const Alignment(0, -.72),
+                child: Container(
+                  width: s * .9,
+                  height: s * .9,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        mx.primary.withValues(alpha: a),
+                        mx.primary.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              glow(const Alignment(.2, .15), s * .8, const Color(0xFF8B6CF0)),
               // 底部渐隐回页面底色，保证输入区干净。
               DecoratedBox(
                 decoration: BoxDecoration(
@@ -131,7 +123,7 @@ class WelcomeView extends StatelessWidget {
                 MiuixText(
                   greeting,
                   fontSize: 24,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: NekoWeight.title,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
@@ -202,14 +194,6 @@ class _Logo extends StatelessWidget {
       decoration: ShapeDecoration(
         color: mx.surfaceContainer,
         shape: NekoShape.squircle(28),
-        shadows: [
-          BoxShadow(
-            color: mx.primary.withValues(alpha: context.isDark ? .28 : .16),
-            blurRadius: 40,
-            spreadRadius: -6,
-            offset: const Offset(0, 14),
-          ),
-        ],
       ),
       padding: const EdgeInsets.all(12),
       child: ClipRRect(
@@ -242,14 +226,17 @@ class _ContextPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            MiuixIcon(vector: icon, size: 15, tint: mx.primary),
+            MiuixIcon(
+              vector: icon,
+              size: 15,
+              tint: mx.onSurfaceVariantSummary,
+            ),
             const SizedBox(width: 6),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 180),
               child: MiuixText(
                 label,
                 fontSize: 13.5,
-                fontWeight: FontWeight.w600,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -303,7 +290,6 @@ class _Suggestion extends StatelessWidget {
             label,
             fontSize: 13.5,
             color: mx.onSurfaceSecondary,
-            fontWeight: FontWeight.w500,
           ),
         ),
       ),

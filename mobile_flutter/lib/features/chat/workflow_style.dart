@@ -276,9 +276,7 @@ class _WorkflowElapsedState extends State<WorkflowElapsed> {
       active: widget.active && !widget.working,
       child: Text(
         label,
-        style: WorkflowStyle.text(context, widget.working ? 13 : 12).copyWith(
-          fontWeight: widget.working ? FontWeight.w500 : FontWeight.w400,
-        ),
+        style: WorkflowStyle.text(context, widget.working ? 13 : 12),
       ),
     );
   }

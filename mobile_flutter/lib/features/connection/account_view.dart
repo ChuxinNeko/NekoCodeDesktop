@@ -153,10 +153,9 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
     enabled: onPressed != null,
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      child: MiuixText(
+        child: MiuixText(
         label,
         fontSize: 15,
-        fontWeight: FontWeight.w500,
         color: onPressed == null
             ? context.mx.onSurfaceVariantActions
             : context.mx.primary,
@@ -187,18 +186,13 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
               insideMargin: const EdgeInsets.all(16),
               startAction: Padding(
                 padding: const EdgeInsets.only(right: 14),
-                child: IconTile(
-                  icon: MiuixIcons.os4.contactsCircle,
-                  color: mx.primary,
-                  size: 44,
-                ),
+                child: IconTile(icon: MiuixIcons.os4.contactsCircle),
               ),
               content: [
                 const MiuixText('已登录', fontSize: 13),
                 MiuixText(
                   c.desktop.account.email ?? '',
                   fontSize: 16,
-                  fontWeight: FontWeight.w600,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -236,19 +230,12 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
                       insideMargin: const EdgeInsets.all(16),
                       startAction: Padding(
                         padding: const EdgeInsets.only(right: 14),
-                        child: IconTile(
-                          icon: MiuixIcons.os4.layers,
-                          color: d['online'] == true
-                              ? NekoTone.success(context.isDark)
-                              : mx.onSurfaceVariantActions,
-                          size: 40,
-                        ),
+                        child: IconTile(icon: MiuixIcons.os4.layers),
                       ),
                       content: [
                         MiuixText(
                           string(d['name']),
                           fontSize: 16,
-                          fontWeight: FontWeight.w500,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -316,7 +303,7 @@ class _PublicConnectionViewState extends State<PublicConnectionView> {
               MiuixText(
                 titles[step]!,
                 fontSize: 22,
-                fontWeight: FontWeight.w700,
+                fontWeight: NekoWeight.title,
               ),
               const SizedBox(height: 4),
               MiuixText(

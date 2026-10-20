@@ -15,8 +15,11 @@ Future<void> showSessionsDrawer(
   required MobileController controller,
   required VoidCallback onSettings,
 }) {
+  // 抽屉会抢走焦点，关掉时路由又把焦点还给输入框，键盘就会弹起来。
+  // 先清掉当前焦点，关掉后再清一次，避免这次交还把键盘带回来。
+  FocusManager.instance.primaryFocus?.unfocus();
   unawaited(controller.refresh());
-  return showGeneralDialog<void>(
+  final opened = showGeneralDialog<void>(
     context: context,
     barrierDismissible: true,
     barrierLabel: '关闭会话列表',
@@ -44,6 +47,11 @@ Future<void> showSessionsDrawer(
       );
     },
   );
+  return opened.whenComplete(() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
+  });
 }
 
 class SessionsDrawer extends StatelessWidget {
@@ -189,8 +197,7 @@ class SessionsDrawer extends StatelessWidget {
                                 MiuixText(
                                   '$running 个任务运行中',
                                   fontSize: 12.5,
-                                  color: mx.primary,
-                                  fontWeight: FontWeight.w500,
+                                  color: mx.onSurfaceVariantSummary,
                                 ),
                               ],
                             ),
@@ -210,7 +217,6 @@ class SessionsDrawer extends StatelessWidget {
                                   child: MiuixText(
                                     projectName(group.key),
                                     fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,
                                     color: mx.onSurfaceVariantSummary,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -259,7 +265,6 @@ class SessionsDrawer extends StatelessWidget {
                         MiuixText(
                           device,
                           fontSize: 14.5,
-                          fontWeight: FontWeight.w600,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -335,7 +340,6 @@ class _SessionRow extends StatelessWidget {
                   MiuixText(
                     title,
                     fontSize: 15,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                     color: selected ? mx.primary : null,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

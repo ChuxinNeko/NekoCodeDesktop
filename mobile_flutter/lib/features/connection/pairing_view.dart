@@ -113,26 +113,21 @@ class _PairingViewState extends State<PairingView> {
   List<Widget> _scanTab(BuildContext context) {
     final mx = context.mx;
     Widget step(int n, String text) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 24,
-            height: 24,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: mx.primary.withValues(alpha: .12),
-              shape: BoxShape.circle,
-            ),
+          SizedBox(
+            width: 22,
             child: MiuixText(
               '$n',
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: mx.primary,
+              fontSize: 14.5,
+              color: mx.onSurfaceVariantSummary,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(child: MiuixText(text, fontSize: 14.5)),
+          Expanded(
+            child: MiuixText(text, fontSize: 14.5, height: 1.4),
+          ),
         ],
       ),
     );
@@ -142,25 +137,16 @@ class _PairingViewState extends State<PairingView> {
           padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
           child: Column(
             children: [
-              Container(
-                width: 88,
-                height: 88,
-                decoration: ShapeDecoration(
-                  color: mx.primary.withValues(alpha: .1),
-                  shape: NekoShape.squircle(28),
-                ),
-                alignment: Alignment.center,
-                child: MiuixIcon(
-                  vector: MiuixIcons.os4.scan,
-                  size: 48,
-                  tint: mx.primary,
-                ),
+              MiuixIcon(
+                vector: MiuixIcons.os4.scan,
+                size: 28,
+                tint: mx.onSurfaceVariantSummary,
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               const MiuixText(
                 '扫描电脑二维码',
-                fontSize: 19,
-                fontWeight: FontWeight.w700,
+                fontSize: 18,
+                fontWeight: NekoWeight.title,
               ),
               const SizedBox(height: 16),
               step(1, '在电脑打开 NekoCode「设置 → 手机连接」'),
@@ -243,7 +229,11 @@ class _Hero extends StatelessWidget {
           child: Image.asset('assets/images/logo.png', width: 88, height: 88),
         ),
         const SizedBox(height: 22),
-        const MiuixText('NekoCode', fontSize: 32, fontWeight: FontWeight.w700),
+        const MiuixText(
+          'NekoCode',
+          fontSize: 32,
+          fontWeight: NekoWeight.title,
+        ),
         const SizedBox(height: 6),
         MiuixText(
           '连接桌面，继续你的任务',

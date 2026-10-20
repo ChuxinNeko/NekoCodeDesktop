@@ -7,11 +7,6 @@ import '../../ui/widgets.dart';
 import '../connection/account_view.dart';
 import '../mobile_controller.dart';
 
-const _blue = Color(0xFF3482FF);
-const _green = Color(0xFF2FBF71);
-const _orange = Color(0xFFFF9A2E);
-const _purple = Color(0xFF8B6CF0);
-
 /// 设置页（首页右上角进入）：连接信息、传输方式、外观与断开。
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -82,17 +77,12 @@ class SettingsPage extends StatelessWidget {
                 insideMargin: const EdgeInsets.all(16),
                 startAction: Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: IconTile(
-                    icon: MiuixIcons.os4.layers,
-                    color: _blue,
-                    size: 44,
-                  ),
+                  child: IconTile(icon: MiuixIcons.os4.layers),
                 ),
                 content: [
                   MiuixText(
                     c.desktop.name.isEmpty ? '未命名设备' : c.desktop.name,
                     fontSize: 17,
-                    fontWeight: FontWeight.w600,
                   ),
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -112,7 +102,6 @@ class SettingsPage extends StatelessWidget {
                     c.online ? '在线' : '离线',
                     fontSize: 13,
                     color: tone,
-                    fontWeight: FontWeight.w500,
                   ),
                 ],
               ),
@@ -152,10 +141,7 @@ class SettingsPage extends StatelessWidget {
                     : '登录后可在外网访问电脑',
                 startAction: Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: IconTile(
-                    icon: MiuixIcons.os4.cloudFill,
-                    color: _purple,
-                  ),
+                  child: IconTile(icon: MiuixIcons.os4.cloudFill),
                 ),
                 onClick: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -175,7 +161,7 @@ class SettingsPage extends StatelessWidget {
                 onChanged: (_) => toggleTheme(),
                 startAction: Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: IconTile(icon: MiuixIcons.os4.theme, color: _orange),
+                  child: IconTile(icon: MiuixIcons.os4.theme),
                 ),
               ),
             ],
@@ -189,7 +175,7 @@ class SettingsPage extends StatelessWidget {
                     '手机与桌面共享任务列表。新任务独立运行，切换会话不会停止后台任务；同一项目的任务共享文件，请避免同时修改相同文件。',
                 startAction: Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: IconTile(icon: MiuixIcons.os4.tasks, color: _green),
+                  child: IconTile(icon: MiuixIcons.os4.tasks),
                 ),
                 insideMargin: const EdgeInsets.all(16),
               ),
