@@ -541,6 +541,58 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe("AcpService", () => {
+	test("two windows in the same directory keep streamed replies and edits in their own sessions", async () => {
+		const transports: FakeTransport[] = [];
+		const pushed: Array<{ id: string; cells: AgentCell[] }> = [];
+		const service = new AcpService({
+			clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {},
+			emitSnapshot: (next) => pushed.push(next), shellChanges: async () => null,
+			createTransport: () => {
+				const transport = new FakeTransport();
+				const agentId = `agent-${transports.length}`;
+				transports.push(transport);
+				transport.responder = (message) => {
+					if (message.method === "initialize") transport.reply(message.id, { protocolVersion: 1, agentCapabilities: {} });
+					if (message.method === "session/new") transport.reply(message.id, { sessionId: agentId });
+				};
+				return transport;
+			},
+		});
+		try {
+			const a = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-a");
+			const b = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-b");
+			expect(a.id).not.toBe(b.id);
+			await until(() => service.state().sessions.every((session) => session.status === "ready"));
+			await service.prompt({ sessionId: a.id, text: "question A" });
+			await service.prompt({ sessionId: b.id, text: "question B" });
+			await until(() => transports.every((transport) => transport.sent.some((message) => message.method === "session/prompt")));
+			for (let i = 0; i < 1000; i++) {
+				transports[0].update("agent-0", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "A" } });
+				transports[1].update("agent-1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "B" } });
+			}
+			for (let i = 0; i < 2; i++) {
+				transports[i].update(`agent-${i}`, {
+					sessionUpdate: "tool_call", toolCallId: "same-tool-id", kind: "edit", status: "completed",
+					content: [{ type: "diff", path: `/project/${i}.txt`, oldText: "old", newText: `window-${i}` }],
+				});
+				const prompt = transports[i].sent.find((message) => message.method === "session/prompt")!;
+				expect(prompt.params).toMatchObject({ sessionId: `agent-${i}` });
+				transports[i].reply(prompt.id, { stopReason: "end_turn" });
+			}
+			await until(() => service.state().sessions.every((session) => session.status === "ready"));
+			await until(() => [a.id, b.id].every((id) => pushed.some((next) => next.id === id && next.cells.some((cell) => cell.type === "tool"))));
+			for (const [index, id] of [a.id, b.id].entries()) {
+				const cells = service.snapshot(id)!.cells;
+				expect(cells.find((cell) => cell.type === "assistant")).toMatchObject({ text: (index === 0 ? "A" : "B").repeat(1000) });
+				expect(cells.find((cell) => cell.type === "tool")).toMatchObject({ args: { path: `/project/${index}.txt` } });
+				expect(pushed.filter((next) => next.id === id).every((next) => next.cells
+					.filter((cell) => cell.type === "assistant").every((cell) => cell.text === (index === 0 ? "A" : "B").repeat(cell.text.length)))).toBe(true);
+			}
+		} finally {
+			service.dispose();
+		}
+	});
+
 	test("refuses a project directory that does not exist", () => {
 		const service = new AcpService({
 			clientVersion: "0",
@@ -680,7 +732,7 @@ describe("AcpService", () => {
 		service.dispose();
 	});
 
-	test("warming twice for the same agent and directory gives one session", async () => {
+	test("warming is deduplicated only within the requesting window", async () => {
 		const transports: FakeTransport[] = [];
 		const service = new AcpService({
 			clientVersion: "0",
@@ -689,14 +741,21 @@ describe("AcpService", () => {
 			emitSnapshot: () => {},
 			createTransport: historyAgent(transports),
 		});
-		const first = service.create({ agentId: "fake", cwd: tmpdir(), warm: true });
-		const second = service.create({ agentId: "fake", cwd: tmpdir(), warm: true });
+		const first = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-a");
+		const second = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-a");
 		expect(second.id).toBe(first.id);
+		const otherWindow = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-b");
+		expect(otherWindow.id).not.toBe(first.id);
+		expect(service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-b").id).toBe(otherWindow.id);
 		// A session that has had a message is a conversation, never handed out as warm.
 		await service.prompt({ sessionId: first.id, text: "hi" });
-		expect(service.create({ agentId: "fake", cwd: tmpdir(), warm: true }).id).not.toBe(first.id);
+		expect(service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-a").id).not.toBe(first.id);
 		// Without `warm`, create always starts a new one.
 		expect(service.create({ agentId: "fake", cwd: tmpdir() }).id).not.toBe(first.id);
+		// Anonymous clients (e.g. LAN callers) must never borrow a window's session.
+		const anonymous = service.create({ agentId: "fake", cwd: tmpdir(), warm: true });
+		expect(anonymous.id).not.toBe(otherWindow.id);
+		expect(service.create({ agentId: "fake", cwd: tmpdir(), warm: true }).id).not.toBe(anonymous.id);
 		service.dispose();
 	});
 

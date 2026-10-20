@@ -36,11 +36,18 @@ class GlassPage extends StatefulWidget {
     this.scrollController,
     this.pinnedSmallTitle = false,
     this.floatingActions = false,
+    this.captureBackdrop = true,
+    this.contentWindowInsets,
   });
 
   /// 顶栏按钮始终以 HyperOS 4 玻璃圆钮悬浮显示（首页 / 聊天页），
   /// 不必等内容滚动后才浮起。
   final bool floatingActions;
+
+  /// Disable image snapshots on pages with frequent input/keyboard repaints.
+  /// The top bar then uses the library's native BackdropFilter fallback.
+  final bool captureBackdrop;
+  final EdgeInsets? contentWindowInsets;
 
   final String title, subtitle;
 
@@ -116,26 +123,27 @@ class _GlassPageState extends State<GlassPage> {
     final surface = context.mx.surface;
     Widget content(EdgeInsets padding) {
       final body = widget.body(context, GlassScope(padding, scroll, behavior));
-      return MiuixLayerBackdropCapture(
-        backdrop: backdrop,
-        child: ColoredBox(
-          color: surface,
-          child: behavior == null || widget.pinnedSmallTitle
-              ? body
-              : MiuixScrollBehaviorListener(behavior: behavior!, child: body),
-        ),
+      final content = ColoredBox(
+        color: surface,
+        child: behavior == null || widget.pinnedSmallTitle
+            ? body
+            : MiuixScrollBehaviorListener(behavior: behavior!, child: body),
       );
+      return widget.captureBackdrop
+          ? MiuixLayerBackdropCapture(backdrop: backdrop, child: content)
+          : content;
     }
 
     return Material(
       color: surface,
       child: MiuixScaffold(
         containerColor: surface,
+        contentWindowInsets: widget.contentWindowInsets,
         topBar: MiuixGlassTopAppBar(
           title: widget.title,
           largeTitle: widget.largeTitle,
           subtitle: widget.subtitle,
-          backdrop: backdrop,
+          backdrop: widget.captureBackdrop ? backdrop : null,
           scrollBehavior: behavior,
           isContentScrolled: widget.floatingActions || scrolled,
           navigationIcon: widget.navigationIcon,

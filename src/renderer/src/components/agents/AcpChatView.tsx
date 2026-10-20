@@ -293,7 +293,7 @@ export function AcpChatView(props: AcpChatViewProps) {
 									{t("acp.startingHint", { agent: agent.name })}
 								</div>
 							) : null}
-							<Transcript cells={snapshot.cells} streaming={snapshot.streaming} />
+							<Transcript key={snapshot.id} sessionId={snapshot.id} cells={snapshot.cells} streaming={snapshot.streaming} />
 						</div>
 					</div>
 					{!props.mobile ? <ConversationTimeline cells={snapshot.cells} scrollRef={scroll.ref} onJump={scroll.jumpToPrompt} /> : null}

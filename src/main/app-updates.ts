@@ -101,6 +101,7 @@ export class AppUpdateService {
 export interface InstallUpdater {
 	autoDownload: boolean;
 	autoInstallOnAppQuit: boolean;
+	autoRunAppAfterInstall: boolean;
 	setFeedURL(options: { provider: "generic"; url: string; useMultipleRangeRequest: boolean }): void;
 	checkForUpdates(): Promise<{ updateInfo: { version: string } } | null>;
 	downloadUpdate(): Promise<unknown>;
@@ -120,6 +121,7 @@ export class AppInstallService {
 	private pending: Promise<UpdateInstallState> | null = null;
 	constructor(private readonly options: {
 		supported: boolean;
+		platform?: NodeJS.Platform;
 		currentVersion: () => string;
 		loadUpdater: () => Promise<InstallUpdater>;
 		publish: (state: UpdateInstallState) => void;
@@ -133,6 +135,7 @@ export class AppInstallService {
 
 	download(tag: unknown): Promise<UpdateInstallState> {
 		if (this.current.phase === "unsupported") return Promise.resolve(this.current);
+		if (this.current.phase === "installing") return Promise.resolve(this.current);
 		const parsed = typeof tag === "string" ? parseVersion(tag) : null;
 		if (typeof tag !== "string" || !parsed || parsed.prerelease.length || !(compareVersions(tag, this.options.currentVersion())! > 0))
 			return Promise.reject(new Error("Invalid update version"));
@@ -144,10 +147,21 @@ export class AppInstallService {
 		return this.pending;
 	}
 
-	install(): void {
+	async install(): Promise<void> {
+		if (this.current.phase === "installing") return;
 		if (this.current.phase !== "downloaded" || !this.updater) throw new Error("No downloaded update to install");
-		// Silent: the assisted installer would otherwise ask for the directory again.
-		void this.updater.then((updater) => updater.quitAndInstall(true, true));
+		const version = this.current.version;
+		this.set({ phase: "installing", version });
+		try {
+			const updater = await this.updater;
+			// Windows hands feedback to the NSIS progress window, which outlives
+			// Electron. Our update-only NSIS hooks skip setup choices and restart.
+			updater.quitAndInstall((this.options.platform ?? process.platform) !== "win32", true);
+		} catch (error) {
+			// Keep the downloaded installer available for another attempt.
+			this.set({ phase: "downloaded", version });
+			throw error;
+		}
 	}
 
 	private async run(tag: string, version: string): Promise<UpdateInstallState> {
@@ -178,6 +192,7 @@ export class AppInstallService {
 	private async prepare(): Promise<InstallUpdater> {
 		const updater = await this.options.loadUpdater();
 		updater.autoDownload = false;
+		updater.autoRunAppAfterInstall = true;
 		// A download the user did not restart for is installed when the app quits.
 		updater.autoInstallOnAppQuit = true;
 		updater.on("download-progress", ({ transferred, total }) => {

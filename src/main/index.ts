@@ -1491,7 +1491,7 @@ function registerIpc(): void {
 	lanService?.setAcpProvider(acp);
 	ipcMain.handle("acp:state", () => acp().state());
 	ipcMain.handle("acp:snapshot", (_e, sessionId: string) => acp().view(sessionId));
-	ipcMain.handle("acp:create", (_e, req: AcpCreateSessionRequest) => acp().create(req));
+	ipcMain.handle("acp:create", (event, req: AcpCreateSessionRequest) => acp().create(req, `window:${event.sender.id}`));
 	ipcMain.handle("acp:open", (_e, req: AcpOpenSessionRequest) => acp().openHistory(req));
 	ipcMain.handle("acp:history", (_e, agentId: string) => acp().history(agentId));
 	ipcMain.handle("acp:saveAgent", (_e, req: AcpSaveAgentRequest) => acp().saveAgent(req));

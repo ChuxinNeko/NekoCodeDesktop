@@ -11,6 +11,21 @@ val newBuildDir: Directory =
         .get()
 rootProject.layout.buildDirectory.value(newBuildDir)
 
+// Flutter plugins can declare their own older buildscript toolchains. Keep
+// them aligned with settings.gradle.kts rather than resolving mixed AGP/KGPs.
+subprojects {
+    buildscript.configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "com.android.tools.build" && requested.name == "gradle") {
+                useVersion("8.11.1")
+            }
+            if (requested.group == "org.jetbrains.kotlin" && requested.name == "kotlin-gradle-plugin") {
+                useVersion("2.2.20")
+            }
+        }
+    }
+}
+
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
@@ -19,8 +34,7 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Keep AndroidX versions compatible with AGP 8.7.3 / Gradle 8.9, matching the
-// toolchain used by cyrene_music_reborn.
+// Keep these AndroidX versions stable across Flutter plugin dependency updates.
 subprojects {
     configurations.all {
         resolutionStrategy {

@@ -113,6 +113,8 @@ export function parseHistoryPage(result: unknown): { entries: AcpHistoryEntry[];
 
 export class AcpService {
 	private readonly sessions = new Map<string, AcpSession>();
+	/** Unsent sessions belong to the client that opened their composer. */
+	private readonly warmOwners = new Map<string, string>();
 	private readonly dirty = new Set<string>();
 	private readonly listers = new Map<string, Lister>();
 	/** When each session was last opened, prompted or looked at. */
@@ -231,11 +233,13 @@ export class AcpService {
 	}
 
 	/** Starts the agent in the background; the returned snapshot is still `starting`. */
-	create(request: AcpCreateSessionRequest): AcpSessionSnapshot {
+	create(request: AcpCreateSessionRequest, owner?: string): AcpSessionSnapshot {
 		const agent = this.requireAgent(request.agentId);
 		if (!request.cwd) throw new Error("请先选择项目目录");
-		if (request.warm) {
+		// No client identity means no safe basis for reusing a new conversation.
+		if (request.warm && owner) {
 			for (const session of this.sessions.values()) {
+				if (this.warmOwners.get(session.id) !== owner) continue;
 				const summary = session.summary();
 				if (summary.agentId === agent.id && summary.cwd === request.cwd && summary.pristine && summary.status !== "error") {
 					return this.view(session.id)!;
@@ -245,7 +249,9 @@ export class AcpService {
 		requireDirectory(request.cwd);
 		// Fail here, where the window shows the reason, not in a dead session.
 		if (!this.options.createTransport) this.launch(agent);
-		return this.start(agent, request.cwd).snapshot();
+		const session = this.start(agent, request.cwd);
+		if (request.warm && owner) this.warmOwners.set(session.id, owner);
+		return session.snapshot();
 	}
 
 	/**
@@ -415,6 +421,7 @@ export class AcpService {
 		const session = this.sessions.get(sessionId);
 		if (!session) return;
 		this.sessions.delete(sessionId);
+		this.warmOwners.delete(sessionId);
 		this.dirty.delete(sessionId);
 		this.touched.delete(sessionId);
 		session.dispose();
@@ -426,6 +433,7 @@ export class AcpService {
 		this.timer = null;
 		for (const session of this.sessions.values()) session.dispose();
 		this.sessions.clear();
+		this.warmOwners.clear();
 		this.dirty.clear();
 		for (const agentId of [...this.listers.keys()]) this.dropLister(agentId);
 	}

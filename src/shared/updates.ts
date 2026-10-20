@@ -33,6 +33,7 @@ export type UpdateInstallState =
 	| { phase: "idle" }
 	| { phase: "downloading"; version: string; transferred: number; total: number }
 	| { phase: "downloaded"; version: string }
+	| { phase: "installing"; version: string }
 	| { phase: "error"; version: string; message: string };
 
 /** SemVer precedence; build metadata does not change precedence. Accept GitHub's v prefix. */

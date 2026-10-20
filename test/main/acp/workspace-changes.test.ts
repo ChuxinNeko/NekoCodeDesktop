@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { openShellChanges, parsePatch, pathKey, WorkspaceSnapshots } from "../../../src/main/acp/workspace-changes";
+import { openShellChanges, parsePatch, pathKey, ShellChangeTracker, WorkspaceSnapshots } from "../../../src/main/acp/workspace-changes";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -93,6 +93,76 @@ describe("WorkspaceSnapshots", () => {
 });
 
 describe("ShellChangeTracker", () => {
+	test("overlap detected while a diff is in flight invalidates its result", async () => {
+		let finishDiff!: (changes: Array<{ path: string; kind: "add"; diff: string }>) => void;
+		let startedDiff!: () => void;
+		const started = new Promise<void>((resolve) => { startedDiff = resolve; });
+		let sequence = 0;
+		const a = new ShellChangeTracker({
+			snapshot: async () => String(++sequence),
+			changes: () => {
+				startedDiff();
+				return new Promise((resolve) => { finishDiff = resolve; });
+			},
+			dispose: () => {},
+		}, "in-flight-worktree");
+		const b = new ShellChangeTracker({ snapshot: async () => "base", changes: async () => [], dispose: () => {} }, "in-flight-worktree");
+		try {
+			await a.begin();
+			const settling = a.settle();
+			await started;
+			await b.begin();
+			finishDiff([{ path: "/other-session.txt", kind: "add", diff: "+1 other" }]);
+			expect(await settling).toEqual([]);
+		} finally {
+			a.dispose();
+			b.dispose();
+		}
+	});
+
+	test("different directories inside one worktree share the attribution guard", async () => {
+		const root = repo();
+		const subdir = join(root, "nested");
+		mkdirSync(subdir);
+		const a = (await openShellChanges(root))!;
+		const b = (await openShellChanges(subdir))!;
+		try {
+			await a.begin();
+			await b.begin();
+			writeFileSync(join(subdir, "other-session.txt"), "other\n");
+			expect(await a.settle()).toEqual([]);
+			expect(await b.settle()).toEqual([]);
+		} finally {
+			a.dispose();
+			b.dispose();
+		}
+	});
+
+	test("overlapping sessions in one worktree never claim each other's file changes", async () => {
+		const root = repo();
+		const a = (await openShellChanges(root))!;
+		const b = (await openShellChanges(root))!;
+		try {
+			await a.begin();
+			await b.begin();
+			writeFileSync(join(root, "session-a.txt"), "A's output\n");
+			writeFileSync(join(root, "session-b.txt"), "B's output\n");
+			// Directory diffs cannot establish who wrote either file.
+			expect(await a.settle()).toEqual([]);
+			await a.end();
+			// B's baseline still includes the overlap even after A finishes.
+			expect(await b.settle()).toEqual([]);
+			await b.end();
+			await b.begin();
+			writeFileSync(join(root, "session-b.txt"), "B's next turn\n");
+			expect((await b.settle()).map((change) => change.path)).toEqual([join(root, "session-b.txt")]);
+			await b.end();
+		} finally {
+			a.dispose();
+			b.dispose();
+		}
+	});
+
 	test("each command gets what changed since the last, minus files its edit tools showed", async () => {
 		const root = repo();
 		const tracker = (await openShellChanges(root))!;

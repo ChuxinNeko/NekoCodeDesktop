@@ -8,6 +8,7 @@ function fakeUpdater(metadataVersion = "0.1.0", failDownload = false) {
 	const updater: InstallUpdater = {
 		autoDownload: true,
 		autoInstallOnAppQuit: false,
+		autoRunAppAfterInstall: false,
 		setFeedURL: (options) => { calls.push(`feed ${options.url} multi=${options.useMultipleRangeRequest}`); },
 		checkForUpdates: async () => ({ updateInfo: { version: metadataVersion } }),
 		downloadUpdate: async () => {
@@ -21,11 +22,12 @@ function fakeUpdater(metadataVersion = "0.1.0", failDownload = false) {
 	return { updater, calls };
 }
 
-function service(updater: InstallUpdater, supported = true) {
+function service(updater: InstallUpdater, supported = true, platform: NodeJS.Platform = "win32") {
 	const published: UpdateInstallState[] = [];
 	let loads = 0;
 	const install = new AppInstallService({
 		supported,
+		platform,
 		currentVersion: () => "0.0.9",
 		loadUpdater: async () => { loads++; return updater; },
 		publish: (state) => published.push(state),
@@ -33,7 +35,7 @@ function service(updater: InstallUpdater, supported = true) {
 	return { install, published, loads: () => loads };
 }
 
-test("downloads the checked release from its own tag and installs silently on request", async () => {
+test("downloads the checked release and hands Windows installation to a visible progress window", async () => {
 	const { updater, calls } = fakeUpdater();
 	const { install, published } = service(updater);
 	expect(install.state()).toEqual({ phase: "idle" });
@@ -48,16 +50,20 @@ test("downloads the checked release from its own tag and installs silently on re
 	// Already downloaded: no second fetch.
 	await install.download("v0.1.0");
 	expect(calls).toHaveLength(1);
-	install.install();
-	await Promise.resolve();
-	expect(calls.at(-1)).toBe("install silent=true run=true");
+	await install.install();
+	expect(calls.at(-1)).toBe("install silent=false run=true");
+	expect(updater.autoRunAppAfterInstall).toBe(true);
+	expect(install.state()).toEqual({ phase: "installing", version: "0.1.0" });
+	expect(published.at(-1)).toEqual({ phase: "installing", version: "0.1.0" });
+	await install.install();
+	expect(calls.filter((call) => call.startsWith("install "))).toHaveLength(1);
 });
 
 test("rejects versions that are not a newer stable release", async () => {
 	const { install } = service(fakeUpdater().updater);
 	for (const tag of ["v0.0.9", "v0.0.8", "v0.2.0-beta.1", "latest", 42])
 		await expect(install.download(tag)).rejects.toThrow("Invalid update version");
-	expect(() => install.install()).toThrow("No downloaded update");
+	await expect(install.install()).rejects.toThrow("No downloaded update");
 });
 
 test("a failed or mismatched download becomes a retryable error state", async () => {
@@ -74,4 +80,21 @@ test("unsupported builds never load the updater", async () => {
 	const { install, loads } = service(fakeUpdater().updater, false);
 	expect(await install.download("v0.1.0")).toEqual({ phase: "unsupported" });
 	expect(loads()).toBe(0);
+});
+
+test("Linux keeps its existing silent install and restart behavior", async () => {
+	const { updater, calls } = fakeUpdater();
+	const { install } = service(updater, true, "linux");
+	await install.download("v0.1.0");
+	await install.install();
+	expect(calls.at(-1)).toBe("install silent=true run=true");
+});
+
+test("installer launch failures propagate and keep the downloaded update retryable", async () => {
+	const { updater } = fakeUpdater();
+	const { install } = service(updater);
+	await install.download("v0.1.0");
+	updater.quitAndInstall = () => { throw new Error("Cannot launch installer"); };
+	await expect(install.install()).rejects.toThrow("Cannot launch installer");
+	expect(install.state()).toEqual({ phase: "downloaded", version: "0.1.0" });
 });

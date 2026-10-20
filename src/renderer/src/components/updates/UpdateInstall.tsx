@@ -52,6 +52,13 @@ export function UpdateInstallActions({ release, state, onOpen }: {
 		? <p role="alert" className="basis-full break-words text-xs text-destructive">{t("updates.install.failed", { message: failure })}</p>
 		: null;
 
+	if (state.phase === "installing") {
+		return <div role="status" aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground">
+			<RefreshCwIcon className="size-3.5 animate-spin" />
+			<span>{t("updates.install.installing")}</span>
+		</div>;
+	}
+
 	if (state.phase === "downloading") {
 		const percent = state.total > 0 ? Math.min(100, Math.round((state.transferred / state.total) * 100)) : 0;
 		return (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AcpSessionSnapshot } from "../../../shared/acp";
 import { api, errorMessage } from "../api";
+import { subscribeAcpSnapshot } from "../lib/acpSnapshotSubscription";
 
 export interface AcpPanes {
 	snapshot: (sessionId: string) => AcpSessionSnapshot | null;
@@ -30,21 +31,13 @@ export function useAcpPanes(sessionIds: readonly string[]): AcpPanes {
 				: new Map([...current].filter(([id]) => ids.has(id))),
 		);
 		if (ids.size === 0) return;
-		let cancelled = false;
 		// Asking for the snapshot also marks the session as on screen, so main
 		// closes it last when it trims idle sessions.
-		for (const id of ids) {
-			void api.acpSnapshot(id).then((next) => {
-				if (cancelled || !next) return;
-				setSnapshots((current) => (current.has(id) ? current : new Map(current).set(id, next)));
-			});
-		}
-		const unsubscribe = api.onAcpSnapshot((next) => {
-			if (ids.has(next.id)) setSnapshots((current) => new Map(current).set(next.id, next));
-		});
+		const unsubscribes = [...ids].map((id) => subscribeAcpSnapshot(api, id, (next) => {
+			if (next) setSnapshots((current) => new Map(current).set(id, next));
+		}));
 		return () => {
-			cancelled = true;
-			unsubscribe();
+			for (const unsubscribe of unsubscribes) unsubscribe();
 		};
 	}, [key]);
 

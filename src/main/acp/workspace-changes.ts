@@ -13,7 +13,7 @@
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, rm } from "node:fs/promises";
+import { copyFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -125,17 +125,20 @@ export class WorkspaceSnapshots {
 	private constructor(
 		private readonly cwd: string,
 		private readonly indexFile: string,
+		readonly workspaceKey: string,
 	) {}
 
 	/** Null outside a git work tree, or where git cannot run. */
 	static async open(cwd: string): Promise<WorkspaceSnapshots | null> {
 		try {
 			if ((await run(cwd, ["rev-parse", "--is-inside-work-tree"])).trim() !== "true") return null;
+			const root = (await run(cwd, ["rev-parse", "--show-toplevel"])).trim();
+			const workspaceKey = pathKey(await realpath(root));
 			const realIndex = resolve(cwd, (await run(cwd, ["rev-parse", "--git-path", "index"])).trim());
 			const indexFile = join(tmpdir(), `nekocode-acp-${randomUUID()}.index`);
 			// A repository without commits has no index yet; one is built from nothing.
 			await copyFile(realIndex, indexFile).catch(() => undefined);
-			return new WorkspaceSnapshots(cwd, indexFile);
+			return new WorkspaceSnapshots(cwd, indexFile, workspaceKey);
 		} catch {
 			return null;
 		}
@@ -192,17 +195,33 @@ export class WorkspaceSnapshots {
  * Within one turn, the files each command changed. The turn starts from a
  * snapshot; each command that finishes takes the next one, and owns what
  * changed in between — minus the files the agent's own edit tools reported,
- * which already have their card. Commands running side by side cannot be told
- * apart: the first to finish gets what both did.
+ * which already have their card. Directory diffs cannot identify the writer
+ * when sessions overlap in one worktree: those turns publish no inferred cards.
  */
+interface TrackedTurn { ambiguous: boolean }
+const activeTurns = new Map<string, Set<TrackedTurn>>();
+
 export class ShellChangeTracker {
 	private base: string | null = null;
 	/** Settling one command at a time: each starts from where the last left off. */
 	private queue: Promise<unknown> = Promise.resolve();
 	/** Edit tool calls this turn, by tool call: the files they report, and whether they are over. */
 	private readonly edits = new Map<string, { paths: string[]; done: boolean }>();
+	private turn: TrackedTurn | null = null;
+	private readonly ownedTurns = new Set<TrackedTurn>();
 
-	constructor(private readonly snapshots: Pick<WorkspaceSnapshots, "snapshot" | "changes" | "dispose">) {}
+	constructor(
+		private readonly snapshots: Pick<WorkspaceSnapshots, "snapshot" | "changes" | "dispose">,
+		private readonly workspaceKey?: string,
+	) {}
+
+	private release(turn: TrackedTurn): void {
+		this.ownedTurns.delete(turn);
+		if (!this.workspaceKey) return;
+		const turns = activeTurns.get(this.workspaceKey);
+		turns?.delete(turn);
+		if (turns?.size === 0) activeTurns.delete(this.workspaceKey);
+	}
 
 	private serial<T>(task: () => Promise<T>): Promise<T> {
 		const next = this.queue.then(task, task);
@@ -212,6 +231,18 @@ export class ShellChangeTracker {
 
 	/** A turn is starting: what is on disk now is not the agent's doing. */
 	begin(): Promise<void> {
+		const turn: TrackedTurn = { ambiguous: false };
+		this.turn = turn;
+		this.ownedTurns.add(turn);
+		if (this.workspaceKey) {
+			const turns = activeTurns.get(this.workspaceKey) ?? new Set<TrackedTurn>();
+			if (turns.size > 0) {
+				turn.ambiguous = true;
+				for (const other of turns) other.ambiguous = true;
+			}
+			turns.add(turn);
+			activeTurns.set(this.workspaceKey, turns);
+		}
 		this.edits.clear();
 		return this.serial(async () => {
 			this.base = await this.snapshots.snapshot().catch(() => null);
@@ -220,8 +251,11 @@ export class ShellChangeTracker {
 
 	/** The turn is over; nothing is attributed until the next one begins. */
 	end(): Promise<void> {
+		const turn = this.turn;
+		this.turn = null;
 		return this.serial(async () => {
 			this.base = null;
+			if (turn) this.release(turn);
 		});
 	}
 
@@ -233,9 +267,10 @@ export class ShellChangeTracker {
 
 	/** A command finished: what it changed that no edit tool already showed. */
 	settle(): Promise<ShellFileChange[]> {
+		const turn = this.turn;
 		return this.serial(async () => {
 			const from = this.base;
-			if (!from) return [];
+			if (!from || !turn || turn.ambiguous) return [];
 			const to = await this.snapshots.snapshot().catch(() => null);
 			if (!to) return [];
 			this.base = to;
@@ -247,12 +282,15 @@ export class ShellChangeTracker {
 				if (edit.done) this.edits.delete(id);
 			}
 			const changes = await this.snapshots.changes(from, to).catch(() => []);
-			return changes.filter((change) => !shown.has(pathKey(change.path)));
+			// A second session may have started while git was taking the snapshot.
+			return turn.ambiguous ? [] : changes.filter((change) => !shown.has(pathKey(change.path)));
 		});
 	}
 
 	dispose(): void {
 		this.base = null;
+		this.turn = null;
+		for (const turn of this.ownedTurns) this.release(turn);
 		this.snapshots.dispose();
 	}
 }
@@ -260,5 +298,5 @@ export class ShellChangeTracker {
 /** A tracker for a project, or null where it is not a git work tree. */
 export async function openShellChanges(cwd: string): Promise<ShellChangeTracker | null> {
 	const snapshots = await WorkspaceSnapshots.open(cwd);
-	return snapshots ? new ShellChangeTracker(snapshots) : null;
+	return snapshots ? new ShellChangeTracker(snapshots, snapshots.workspaceKey) : null;
 }

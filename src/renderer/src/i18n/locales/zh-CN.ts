@@ -1137,6 +1137,7 @@ export const zhCN: Record<TranslationKey, string> = {
 	"updates.install.downloading": "正在下载 v{version}：{transferred} / {total}",
 	"updates.install.ready": "已下载完成，退出应用时也会自动安装。",
 	"updates.install.restart": "重启并安装",
+	"updates.install.installing": "正在启动更新安装程序，应用即将关闭。请在安装进度窗口中等待，完成后会自动重新打开。",
 	"updates.install.failed": "自动更新失败：{message}",
 	"updates.notes": "更新说明",
 	"updates.noNotes": "该版本未提供更新说明。",

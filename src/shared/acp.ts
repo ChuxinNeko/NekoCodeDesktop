@@ -161,7 +161,8 @@ export interface AcpCreateSessionRequest {
 	cwd: string;
 	/**
 	 * Opening a session ahead of the first message: an unsent one already open
-	 * for this agent and directory is handed back instead of starting another.
+	 * for this agent and directory may be reused within the same client window.
+	 * The main process determines the client identity, never this request.
 	 */
 	warm?: boolean;
 }

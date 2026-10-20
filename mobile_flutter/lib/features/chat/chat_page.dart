@@ -412,6 +412,10 @@ class _ChatPageState extends State<ChatPage> {
       subtitle: widget.home ? homeSubtitle : subtitle,
       pinnedSmallTitle: true,
       floatingActions: true,
+      captureBackdrop: false,
+      // The composer handles IME/safe-area padding itself. Keep scaffold
+      // insets stable when the keyboard consumes the bottom system padding.
+      contentWindowInsets: MediaQuery.viewPaddingOf(context),
       scrollController: scroll,
       navigationIcon: GlassAction(
         icon: MiuixIcons.os4.sidebar,
@@ -434,10 +438,15 @@ class _ChatPageState extends State<ChatPage> {
       ],
       body: (context, scope) => Stack(
         children: [
-          if (welcome) const Positioned.fill(child: WelcomeBackdrop()),
+          if (welcome)
+            const Positioned.fill(
+              child: RepaintBoundary(child: WelcomeBackdrop()),
+            ),
           Column(
             children: [
-              Expanded(child: _messages(context, scope, cells)),
+              Expanded(
+                child: RepaintBoundary(child: _messages(context, scope, cells)),
+              ),
               _bottom(context, extension, running, blocked),
             ],
           ),
@@ -550,12 +559,9 @@ class _ChatPageState extends State<ChatPage> {
     bool running,
     bool blocked,
   ) {
-    final media = MediaQuery.of(context);
-    final bottomInset = media.viewInsets.bottom > 0
-        ? media.viewInsets.bottom
-        : media.padding.bottom;
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
+    // Keep the inset dependency out of ChatPage/GlassPage: IME animation
+    // should update only this padding, without rebuilding the transcript.
+    final content = RepaintBoundary(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -576,10 +582,25 @@ class _ChatPageState extends State<ChatPage> {
             streaming: c.snapshot?['streaming'] == true,
           ),
           ConfigurationBar(controller: c),
-          _composer(context, running, blocked),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: text,
+            builder: (context, _, _) => _composer(context, running, blocked),
+          ),
           ExtensionWidgets(ui: extension, below: true),
         ],
       ),
+    );
+    return Builder(
+      builder: (context) {
+        final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+        final safeBottom = MediaQuery.paddingOf(context).bottom;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: keyboard > 0 ? keyboard : safeBottom,
+          ),
+          child: content,
+        );
+      },
     );
   }
 
@@ -669,7 +690,6 @@ class _ChatPageState extends State<ChatPage> {
                         labelColor: mx.onSurfaceVariantActions,
                         borderColor: Colors.transparent,
                       ),
-                      onChanged: (_) => setState(() {}),
                     ),
                   ),
                   MiuixPressable(

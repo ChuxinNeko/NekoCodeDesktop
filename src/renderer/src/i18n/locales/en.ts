@@ -1144,6 +1144,7 @@ export const en = {
 	"updates.install.downloading": "Downloading v{version}: {transferred} / {total}",
 	"updates.install.ready": "Downloaded. It also installs when you quit the app.",
 	"updates.install.restart": "Restart and install",
+	"updates.install.installing": "Starting the update installer. The app will close; follow the installation progress window. It will reopen automatically when finished.",
 	"updates.install.failed": "Automatic update failed: {message}",
 	"updates.notes": "Release notes",
 	"updates.noNotes": "No release notes provided.",

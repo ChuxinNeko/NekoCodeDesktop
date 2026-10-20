@@ -9,6 +9,7 @@ import {
 } from "../../../shared/acp";
 import { acpAgentsRows, acpRowKey, type AcpAgentRowTarget } from "../../../shared/acp-sessions";
 import { api, errorMessage } from "../api";
+import { subscribeAcpSnapshot } from "../lib/acpSnapshotSubscription";
 
 const HISTORY_CHANGED_DEBOUNCE_MS = 400;
 
@@ -60,22 +61,30 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 	const [histories, setHistories] = useState<Record<string, AcpHistory>>({});
 	const [pendingLoads, setPendingLoads] = useState(0);
 	const [activeByAgent, setActiveByAgent] = useState<Record<string, string | null>>({});
-	const [snapshot, setSnapshot] = useState<AcpSessionSnapshot | null>(null);
+	// Async opens and warmups can finish after the user selects another session.
+	// Keep their results under their own identity, never in a shared active slot.
+	const [snapshots, setSnapshots] = useState<ReadonlyMap<string, AcpSessionSnapshot>>(new Map());
+	const setSnapshot = useCallback((next: AcpSessionSnapshot) => {
+		setSnapshots((current) => new Map(current).set(next.id, next));
+	}, []);
 	const [error, setError] = useState<string | null>(null);
 	/** Per agent, the latest listing asked for; an older reply is not applied over it. */
 	const historyRequests = useRef(new Map<string, number>());
 	/** The session being opened ahead of a first message, while it is being created. */
-	const warming = useRef<Promise<string | null> | null>(null);
+	const warming = useRef(new Map<string, Promise<string | null>>());
 	/** Where warming last failed; not retried in a loop, but on the next explicit attempt. */
 	const warmFailed = useRef<string | null>(null);
 	/** A history row is being opened; warming now would only leave a spare session. */
 	const opening = useRef(false);
+	/** A delayed open or warmup cannot undo a later explicit selection. */
+	const selectionVersion = useRef(0);
 	/** History rows being opened, so a drop and its pane do not open one twice. */
 	const ensuring = useRef(new Map<string, Promise<AcpSessionSnapshot>>());
 
 	const agentId = workspace === NEKO_LOCAL_WORKSPACE ? null : workspace;
 	const agent = state.agents.find((entry) => entry.id === agentId && entry.enabled) ?? null;
 	const activeId = agent ? (activeByAgent[agent.id] ?? null) : null;
+	const snapshot = activeId ? snapshots.get(activeId) ?? null : null;
 	const enabledIds = useMemo(
 		() => state.agents.filter((entry) => entry.enabled).map((entry) => entry.id),
 		[state.agents],
@@ -85,7 +94,12 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 	useEffect(() => {
 		if (!available) return;
 		void api.acpState().then(setState).catch(() => undefined);
-		return api.onAcpChanged(setState);
+		return api.onAcpChanged((next) => {
+			setState(next);
+			const ids = new Set(next.sessions.map((session) => session.id));
+			setSnapshots((current) => [...current.keys()].every((id) => ids.has(id))
+				? current : new Map([...current].filter(([id]) => ids.has(id))));
+		});
 	}, [available]);
 
 	const loadHistory = useCallback(async (id: string) => {
@@ -140,26 +154,14 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 	}, [available, loadHistory]);
 
 	useEffect(() => {
-		if (!activeId) {
-			setSnapshot(null);
-			return;
-		}
-		let cancelled = false;
-		void api.acpSnapshot(activeId).then((next) => {
-			if (cancelled) return;
-			setSnapshot(next);
+		if (!activeId) return;
+		return subscribeAcpSnapshot(api, activeId, (next) => {
+			if (next) setSnapshot(next);
 			// Closed while away (idle sessions are closed past a limit): the
 			// sidebar row still reopens it from history.
 			if (!next && agent) setActiveByAgent((current) => ({ ...current, [agent.id]: null }));
 		});
-		const unsubscribe = api.onAcpSnapshot((next) => {
-			if (next.id === activeId) setSnapshot(next);
-		});
-		return () => {
-			cancelled = true;
-			unsubscribe();
-		};
-	}, [activeId, agent?.id]);
+	}, [activeId, agent?.id, setSnapshot]);
 
 	const liveActive = activeId ? state.sessions.find((session) => session.id === activeId) : undefined;
 
@@ -171,10 +173,16 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 	 */
 	const warm = useCallback(
 		(target: AcpAgentInfo, directory: string): Promise<string | null> => {
+			const key = warmKey(target.id, directory);
+			const existing = warming.current.get(key);
+			if (existing) return existing;
+			const version = selectionVersion.current;
 			const pending = api.acpCreate({ agentId: target.id, cwd: directory, warm: true }).then(
 				(created) => {
 					setSnapshot(created);
-					setActiveByAgent((current) => ({ ...current, [target.id]: created.id }));
+					if (selectionVersion.current === version) {
+						setActiveByAgent((current) => ({ ...current, [target.id]: created.id }));
+					}
 					return created.id;
 				},
 				(cause: unknown) => {
@@ -183,9 +191,9 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 					return null;
 				},
 			);
-			warming.current = pending;
+			warming.current.set(key, pending);
 			void pending.finally(() => {
-				if (warming.current === pending) warming.current = null;
+				if (warming.current.get(key) === pending) warming.current.delete(key);
 			});
 			return pending;
 		},
@@ -200,7 +208,7 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 			setActiveByAgent((current) => ({ ...current, [agent.id]: null }));
 			return;
 		}
-		if (activeId || warming.current || opening.current) return;
+		if (activeId || warming.current.has(warmKey(agent.id, cwd)) || opening.current) return;
 		if (warmFailed.current === warmKey(agent.id, cwd)) return;
 		void warm(agent, cwd);
 	}, [available, agent, cwd, activeId, liveActive?.pristine, liveActive?.cwd, liveActive?.id, warm]);
@@ -249,6 +257,8 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 		async (row: Pick<SessionSummary, "id">): Promise<string | null> => {
 			const target = targets.get(row.id);
 			if (!target) return null;
+			const version = ++selectionVersion.current;
+			opening.current = false;
 			setError(null);
 			// The unsent conversation this replaces as that agent's open one has
 			// nothing in it to keep. Another agent's stays, for going back to it.
@@ -264,13 +274,14 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 			try {
 				const opened = await openEntry(row.id, target);
 				setSnapshot(opened);
+				if (selectionVersion.current !== version) return null;
 				setActive(target.agentId, opened.id);
 				return target.agentId;
 			} catch (cause) {
-				setError(errorMessage(cause));
+				if (selectionVersion.current === version) setError(errorMessage(cause));
 				return null;
 			} finally {
-				opening.current = false;
+				if (selectionVersion.current === version) opening.current = false;
 			}
 		},
 		[targets, setActive, state.sessions, activeByAgent, openEntry],
@@ -297,6 +308,8 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 	const startNew = useCallback(() => {
 		// Already an unsent conversation on screen: that is the new one.
 		if (liveActive?.pristine) return;
+		selectionVersion.current++;
+		opening.current = false;
 		warmFailed.current = null;
 		if (agent) setActive(agent.id, null);
 		setError(null);
@@ -307,7 +320,7 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 			if (!agent) return;
 			setError(null);
 			try {
-				let sessionId = activeId ?? (warming.current ? await warming.current : null);
+				let sessionId = activeId ?? (await warming.current.get(warmKey(agent.id, cwd))) ?? null;
 				// A session that failed before its first message is replaced, not reused.
 				if (sessionId && liveActive?.id === sessionId && liveActive.pristine && liveActive.status === "error") {
 					void api.acpClose(sessionId);
