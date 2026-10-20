@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/utils";
 import { MarkdownLink } from "./WebSources";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { OpenUIBlock } from "./OpenUIBlock";
 
 // Stable links use the application's safe opener instead of navigating Electron.
 
@@ -12,6 +13,9 @@ export const Markdown = memo(function Markdown({ text, user, streaming = false }
 	const components = useMemo<Components>(() => ({
 		a: MarkdownLink,
 		pre: ({ children, node: _node, ...props }) => {
+			if (!user && isValidElement<{ className?: string; children?: ReactNode }>(children) && /(?:^|\s)language-openui(?:\s|$)/i.test(children.props.className ?? "")) {
+				return <OpenUIBlock source={String(children.props.children ?? "").replace(/\n$/, "")} streaming={streaming} />;
+			}
 			if (!user && isValidElement<{ className?: string; children?: ReactNode }>(children) && /(?:^|\s)language-mermaid(?:\s|$)/i.test(children.props.className ?? "")) {
 				return <MermaidDiagram source={String(children.props.children ?? "").replace(/\n$/, "")} streaming={streaming} />;
 			}

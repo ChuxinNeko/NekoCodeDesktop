@@ -20,6 +20,7 @@
     "package:dir": "electron-builder --dir --publish never",
     "start": "bunx --bun --no-install electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "openui:prompt": "bun scripts/generate-openui-prompt.ts",
     "pi:build": "bun scripts/pi-toolchain.ts build",
     "pi:setup": "bun install && bun scripts/pi-toolchain.ts build",
     "mobile:dev": "vite --config mobile/vite.config.ts",
@@ -82,6 +83,8 @@
     "@capacitor/core": "8.5.2",
     "@capacitor/ios": "8.5.2",
     "@capacitor/preferences": "8",
+    "@openuidev/react-lang": "1.0.1",
+    "@openuidev/react-ui": "0.18.1",
     "@tabler/icons-react": "^3.44.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^24.10.13",
@@ -113,6 +116,7 @@
     "thinking-orbs": "^0.3.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
-    "vscode-textmate": "^9.3.2"
+    "vscode-textmate": "^9.3.2",
+    "zod": "4.4.3"
   }
 }

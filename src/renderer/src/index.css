@@ -3008,6 +3008,21 @@ label:has(> select#reasoning-effort) select {
   border-collapse: collapse;
 }
 
+/* Generated cards own their spacing inside the surrounding Markdown reply. */
+.chat-markdown .openui-content :is(p, table) {
+  margin: 0;
+}
+
+.openui-response {
+  color: var(--foreground);
+  font-family: var(--font-ui-family);
+}
+
+.openui-response .openui-content {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
 .chat-markdown th,
 .chat-markdown td {
   border: 1px solid var(--border);

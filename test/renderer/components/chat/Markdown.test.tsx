@@ -39,3 +39,20 @@ test("diagrams fit both axes without enlarging short graphs", () => {
 	expect(diagramDisplayWidth('<svg viewBox="0 0 1200 300">', 400)).toBe(368);
 	expect(diagramDisplayWidth('<svg viewBox="0 0 200 100">', 800)).toBe(200);
 });
+
+test("assistant OpenUI fences become separate interface blocks while user examples remain code", () => {
+	const text = 'Before\n\n```openui\nroot = Card([heading])\nheading = CardHeader("Choose")\n```\n\nAfter';
+	const html = render(text);
+	expect(html).toContain('data-slot="openui-response"');
+	expect(html).toContain("Before");
+	expect(html).toContain("After");
+	expect(html).not.toContain("<pre><figure");
+	expect(render(text, { user: true })).toContain('class="language-openui"');
+	expect(render(text, { user: true })).not.toContain('data-slot="openui-response"');
+	expect(render('`openui` and ordinary code')).not.toContain('data-slot="openui-response"');
+});
+
+test("unfinished OpenUI fences are recognized during streaming", () => {
+	const html = render('```openui\nroot = Card([heading])\nheading = CardHeader("Cho', { streaming: true });
+	expect(html).toContain('data-slot="openui-response"');
+});

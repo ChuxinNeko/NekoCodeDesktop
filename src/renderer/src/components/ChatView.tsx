@@ -481,6 +481,7 @@ export function ChatView(props: ChatViewProps) {
 							) : null}
 							<Transcript
 							onSend={props.onSend}
+							interactionsDisabled={busy || !!snapshot.workflow.request}
 							modelKey={snapshot.modelKey}
 							sessionId={snapshot.session.id}
 							cells={snapshot.cells}

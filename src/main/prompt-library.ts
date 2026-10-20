@@ -1,6 +1,7 @@
 import { WORK_STAGE_PROMPT } from "./work-stage-prompt";
 import { PROJECT_OVERVIEW_PROMPT } from "./project-overview-prompt";
 import { DIAGRAM_PROMPT } from "./diagram-prompt";
+import { OPENUI_PROMPT } from "./openui-prompt";
 import common from "../../pi/packages/prompt/common_prefix.md?raw";
 import agent from "../../pi/packages/prompt/agent/prompt.md?raw";
 import ask from "../../pi/packages/prompt/ask/prompt.md?raw";
@@ -472,6 +473,7 @@ export function buildModePrompt(context: PromptContext): string {
 		!context.child && !context.headless && !context.fastContext && context.interactive !== false ? WORK_STAGE_PROMPT : "",
 		!context.child && !context.headless && !context.fastContext && context.interactive !== false ? PROJECT_OVERVIEW_PROMPT : "",
 		!context.child && !context.headless && !context.fastContext && context.interactive !== false ? DIAGRAM_PROMPT : "",
+		!context.child && !context.headless && !context.fastContext && context.interactive !== false ? OPENUI_PROMPT : "",
 		context.workflowContext
 			? "## 当前会话工作流状态（不是额外授权）\n" + context.workflowContext
 			: "",

@@ -4,6 +4,13 @@ This project contains code derived from upstream projects licensed under MIT and
 Apache-2.0, and bundles unmodified MPL-2.0 runtime components. The full license
 texts are in this directory.
 
+## OpenUI — interactive assistant replies
+
+`@openuidev/react-lang` 1.0.1 and `@openuidev/react-ui` 0.18.1 are bundled as
+npm dependencies under MIT, Copyright (c) 2011-2024 Thesys Inc. See
+[OpenUI-LICENSE.txt](./OpenUI-LICENSE.txt).
+Upstream: <https://github.com/thesysdev/openui>.
+
 ## pi — the agent core (`pi/`)
 
 Copyright (c) 2025 Mario Zechner — see [pi-LICENSE.txt](./pi-LICENSE.txt).

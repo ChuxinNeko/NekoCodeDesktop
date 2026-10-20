@@ -43,6 +43,7 @@ import {
 import { ThinkingBlock, ThinkingStream } from "./chat/Thinking";
 import { SourceList } from "./chat/WebSources";
 import { Markdown } from "./chat/Markdown";
+import { OpenUIActionsContext } from "../lib/openuiActions";
 import { collectWebTitles, WebTitlesContext } from "../lib/webSources";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../surfaceStyles";
 import { CommandStopContext, type StopCommand } from "./chat/CommandStopButton";
@@ -606,11 +607,13 @@ const TranscriptView = function Transcript({
 	onStopCommand,
 	teamTurns,
 	onSend,
+	interactionsDisabled = false,
 	modelKey,
 	sessionId,
 }: {
 	cells: AgentCell[];
 	onSend?: SelectionSend;
+	interactionsDisabled?: boolean;
 	modelKey?: string | null;
 	sessionId?: string;
 	models?: readonly ModelOption[];
@@ -643,8 +646,13 @@ const TranscriptView = function Transcript({
 	// The handlers come from parents that recreate them every render. Reached
 	// through a ref, they stop being a reason for every row to re-render: the
 	// context value and the memoized rows only change with what they show.
-	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand });
-	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand };
+	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend });
+	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend };
+	const sendInteractive = useCallback<SelectionSend>(request => handlers.current.onSend?.(request), []);
+	const openuiActions = useMemo(() => ({
+		send: onSend ? sendInteractive : undefined,
+		disabled: streaming === true || settling || interactionsDisabled,
+	}), [!!onSend, sendInteractive, streaming, settling, interactionsDisabled]);
 	const stopCommand = useCallback((id: string) => handlers.current.onStopCommand?.(id) ?? Promise.resolve(false), []);
 	const forkMessage = useCallback((cellId: string) => handlers.current.onForkMessage?.(cellId), []);
 	const openTask = useCallback((taskId: string) => handlers.current.onOpenTask?.(taskId), []);
@@ -755,6 +763,7 @@ const TranscriptView = function Transcript({
 	const waitingInWork = waiting && rows[rows.length - 1]?.kind === "work";
 	return (
 		<AssistantSelection onSend={onSend} modelKey={modelKey} sessionId={sessionId}>
+		<OpenUIActionsContext.Provider key={sessionId} value={openuiActions}>
 		<TaskLookupContext.Provider value={taskLookup}>
 			<UsageModelsContext.Provider value={models ?? EMPTY_MODELS}>
 			<CommandStopContext.Provider value={onStopCommand ? stopCommand : undefined}>
@@ -817,6 +826,7 @@ const TranscriptView = function Transcript({
 			</CommandStopContext.Provider>
 			</UsageModelsContext.Provider>
 		</TaskLookupContext.Provider>
+		</OpenUIActionsContext.Provider>
 		</AssistantSelection>
 	);
 }

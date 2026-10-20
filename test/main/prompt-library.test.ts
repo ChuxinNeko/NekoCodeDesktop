@@ -12,6 +12,16 @@ import { buildModePrompt, configureCustomPrompt, FAST_CONTEXT_PROMPT, toolsForMo
 
 const base = { permission: "auto", interactive: true } as const;
 
+test("OpenUI is advertised only to interactive sessions with the actual component specification", () => {
+	const prompt = buildModePrompt({ ...base, mode: "agent" });
+	expect(prompt).toContain("## 交互式回复");
+	expect(prompt).toContain("Form(name: string, buttons: Buttons");
+	expect(prompt).toContain("Never invent metrics");
+	for (const flags of [{ child: true }, { headless: true }, { fastContext: true }, { interactive: false }]) {
+		expect(buildModePrompt({ ...base, mode: "agent", ...flags })).not.toContain("## 交互式回复");
+	}
+});
+
 test("interactive explanations can end in Mermaid without expanding investigation scope", () => {
 	const prompt = buildModePrompt({ ...base, mode: "agent" });
 	expect(prompt).toContain("## 正文流程图");
