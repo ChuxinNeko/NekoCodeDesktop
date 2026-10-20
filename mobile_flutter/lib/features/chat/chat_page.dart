@@ -241,6 +241,7 @@ class _ChatPageState extends State<ChatPage> {
       title: widget.home ? 'NekoCode' : title,
       subtitle: widget.home ? homeSubtitle : subtitle,
       pinnedSmallTitle: true,
+      floatingActions: true,
       scrollController: scroll,
       navigationIcon: GlassAction(
         icon: MiuixIcons.os4.sidebar,

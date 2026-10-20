@@ -35,7 +35,12 @@ class GlassPage extends StatefulWidget {
     this.floatingActionButton,
     this.scrollController,
     this.pinnedSmallTitle = false,
+    this.floatingActions = false,
   });
+
+  /// 顶栏按钮始终以 HyperOS 4 玻璃圆钮悬浮显示（首页 / 聊天页），
+  /// 不必等内容滚动后才浮起。
+  final bool floatingActions;
 
   final String title, subtitle;
 
@@ -132,7 +137,7 @@ class _GlassPageState extends State<GlassPage> {
           subtitle: widget.subtitle,
           backdrop: backdrop,
           scrollBehavior: behavior,
-          isContentScrolled: scrolled,
+          isContentScrolled: widget.floatingActions || scrolled,
           navigationIcon: widget.navigationIcon,
           actions: widget.actions,
           bottomContent: widget.bottomContent,

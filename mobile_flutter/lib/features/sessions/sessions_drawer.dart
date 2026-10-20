@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_miuix/miuix.dart';
 
 import '../../core/protocol.dart';
+import '../../ui/glass_page.dart';
 import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
 import '../mobile_controller.dart';
@@ -129,160 +130,121 @@ class SessionsDrawer extends StatelessWidget {
     final device = c.desktop.name.isEmpty ? '电脑' : c.desktop.name;
     final link = c.desktop.mode == 'relay' ? '公网' : '局域网';
 
-    return SafeArea(
-      right: false,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 头部：品牌 + 刷新
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 12, 4),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    width: 32,
-                    height: 32,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: MiuixText(
-                    '会话',
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                _RoundButton(
-                  icon: MiuixIcons.os4.refresh,
-                  tooltip: '刷新',
-                  onPressed: c.refreshing
-                      ? null
-                      : () {
-                          c.histories.clear();
-                          unawaited(c.refresh());
-                        },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeBottom: true,
+            child: GlassPage(
+              title: '会话',
+              pinnedSmallTitle: true,
+              floatingActions: true,
+              navigationIcon: GlassAction(
+                icon: MiuixIcons.os4.close,
+                tooltip: '关闭',
+                onPressed: () => _close(context),
+              ),
+              actions: [
+                GlassAction(
+                  icon: MiuixIcons.os4.add,
+                  tooltip: '新建会话',
+                  onPressed: () => _create(context),
                 ),
               ],
-            ),
-          ),
-          // 新建会话 = 回到首页欢迎页
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: MiuixPressable(
-              onPressed: () => _create(context),
-              feedbackType: MiuixPressFeedbackType.sink,
-              semanticLabel: '新建会话',
-              child: DecoratedBox(
-                decoration: ShapeDecoration(
-                  color: mx.primary.withValues(alpha: .1),
-                  shape: NekoShape.squircle(18),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  child: Row(
-                    children: [
-                      MiuixIcon(
-                        vector: MiuixIcons.os4.add,
-                        size: 20,
-                        tint: mx.primary,
+              body: (context, scope) => rows.isEmpty
+                  ? Padding(
+                      padding: EdgeInsets.only(top: scope.padding.top),
+                      child: EmptyState(
+                        icon: MiuixIcons.os4.messages,
+                        title: c.online ? '还没有会话' : '等待电脑连接',
+                        summary: c.online
+                            ? '在首页输入框描述任务，会话就会出现在这里。'
+                            : '连接成功后，电脑上的会话会同步显示在这里。',
                       ),
-                      const SizedBox(width: 10),
-                      MiuixText(
-                        '新建会话',
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w600,
-                        color: mx.primary,
+                    )
+                  : ListView(
+                      controller: scope.controller,
+                      padding: EdgeInsets.fromLTRB(
+                        8,
+                        scope.padding.top + 4,
+                        8,
+                        16,
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (running > 0)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 6, 24, 2),
-              child: Row(
-                children: [
-                  MiuixInfiniteProgressIndicator(
-                    color: mx.primary,
-                    size: 13,
-                    strokeWidth: 1.8,
-                  ),
-                  const SizedBox(width: 8),
-                  MiuixText(
-                    '$running 个任务运行中',
-                    fontSize: 12.5,
-                    color: mx.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ],
-              ),
-            ),
-          Expanded(
-            child: rows.isEmpty
-                ? EmptyState(
-                    icon: MiuixIcons.os4.messages,
-                    title: c.online ? '还没有会话' : '等待电脑连接',
-                    summary: c.online
-                        ? '在首页输入框描述任务，会话就会出现在这里。'
-                        : '连接成功后，电脑上的会话会同步显示在这里。',
-                  )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
-                    children: [
-                      if (c.acpError != null)
-                        ErrorNotice('外部代理暂不可用：${c.acpError}'),
-                      for (final group in groups.entries) ...[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-                          child: Row(
-                            children: [
-                              MiuixIcon(
-                                vector: MiuixIcons.os4.folder,
-                                size: 14,
-                                tint: mx.onSurfaceVariantSummary,
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: MiuixText(
-                                  projectName(group.key),
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w600,
-                                  color: mx.onSurfaceVariantSummary,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                      children: [
+                        if (c.acpError != null)
+                          ErrorNotice('外部代理暂不可用：${c.acpError}'),
+                        if (running > 0)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+                            child: Row(
+                              children: [
+                                MiuixInfiniteProgressIndicator(
+                                  color: mx.primary,
+                                  size: 13,
+                                  strokeWidth: 1.8,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 8),
+                                MiuixText(
+                                  '$running 个任务运行中',
+                                  fontSize: 12.5,
+                                  color: mx.primary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        for (final task in group.value)
-                          _SessionRow(
-                            key: ValueKey('task:${task['id']}'),
-                            task: task,
-                            enabled: !c.busy && c.online,
-                            selected:
-                                c.view == 'chat' &&
-                                (c.taskId == task['id'] ||
-                                    c.acpId == task['id']),
-                            onTap: () => _open(context, task),
+                        for (final group in groups.entries) ...[
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                            child: Row(
+                              children: [
+                                MiuixIcon(
+                                  vector: MiuixIcons.os4.folder,
+                                  size: 14,
+                                  tint: mx.onSurfaceVariantSummary,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: MiuixText(
+                                    projectName(group.key),
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: mx.onSurfaceVariantSummary,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          for (final task in group.value)
+                            _SessionRow(
+                              key: ValueKey('task:${task['id']}'),
+                              task: task,
+                              enabled: !c.busy && c.online,
+                              selected:
+                                  c.view == 'chat' &&
+                                  (c.taskId == task['id'] ||
+                                      c.acpId == task['id']),
+                              onTap: () => _open(context, task),
+                            ),
+                        ],
                       ],
-                    ],
-                  ),
-          ),
-          // 底部：设备状态 + 设置
-          DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: mx.dividerLine)),
+                    ),
             ),
+          ),
+        ),
+        // 底部：设备状态 + 设置
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: mx.surface,
+            border: Border(top: BorderSide(color: mx.dividerLine)),
+          ),
+          child: SafeArea(
+            top: false,
+            right: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 12, 10),
               child: Row(
@@ -309,52 +271,18 @@ class SessionsDrawer extends StatelessWidget {
                       ],
                     ),
                   ),
-                  _RoundButton(
-                    icon: MiuixIcons.os4.settings,
-                    tooltip: '设置',
+                  MiuixGlassIconButton(
                     onPressed: onSettings,
+                    tooltip: '设置',
+                    semanticLabel: '设置',
+                    child: MiuixIcon(vector: MiuixIcons.os4.settings, size: 22),
                   ),
                 ],
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RoundButton extends StatelessWidget {
-  const _RoundButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-  final MiuixVectorIcon icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final mx = context.mx;
-    return MiuixPressable(
-      onPressed: onPressed,
-      feedbackType: MiuixPressFeedbackType.sink,
-      semanticLabel: tooltip,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: mx.surfaceContainerHigh,
-          shape: BoxShape.circle,
         ),
-        alignment: Alignment.center,
-        child: MiuixIcon(
-          vector: icon,
-          size: 20,
-          tint: onPressed == null ? mx.onSurfaceVariantActions : mx.onSurface,
-        ),
-      ),
+      ],
     );
   }
 }
