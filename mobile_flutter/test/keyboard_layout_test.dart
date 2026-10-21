@@ -44,8 +44,19 @@ void main() {
           (widget) => widget is MiuixPressable && widget.semanticLabel == '发送',
         );
         expect(tester.widget<MiuixPressable>(send).onPressed, isNull);
-        // No full-page image capture, including when the caret starts blinking.
-        expect(find.byType(MiuixLayerBackdropCapture), findsNothing);
+        // Only the static wallpaper is sampled, never the composer or messages.
+        final capture = tester.widget<MiuixLayerBackdropCapture>(
+          find.byType(MiuixLayerBackdropCapture),
+        );
+        expect(capture.child, isA<WelcomeBackdrop>());
+        expect(
+          find.descendant(
+            of: find.byType(MiuixLayerBackdropCapture),
+            matching: find.byType(EditableText),
+          ),
+          findsNothing,
+        );
+        expect(capture.backdrop.snapshot, isNotNull);
         await tester.tap(input);
         for (final inset in [60.0, 140.0, 240.0, 320.0, 160.0, 0.0]) {
           tester.view.viewInsets = FakeViewPadding(bottom: inset);
@@ -63,6 +74,10 @@ void main() {
         await tester.pump();
         expect(tester.widget(find.byType(WelcomeView)), same(welcome));
         expect(tester.widget<MiuixPressable>(send).onPressed, isNotNull);
+        final currentCapture = tester.widget<MiuixLayerBackdropCapture>(
+          find.byType(MiuixLayerBackdropCapture),
+        );
+        expect(currentCapture.backdrop, same(capture.backdrop));
         await tester.enterText(input, '');
         await tester.pump();
         expect(tester.widget<MiuixPressable>(send).onPressed, isNull);
@@ -90,11 +105,8 @@ void main() {
             home: true,
             onPickProject: () {},
             onPickAgent: () {},
-            onSessions: () => showSessionsDrawer(
-              context,
-              controller: c,
-              onSettings: () {},
-            ),
+            onSessions: () =>
+                showSessionsDrawer(context, controller: c, onSettings: () {}),
             onSettings: () {},
           ),
         ),

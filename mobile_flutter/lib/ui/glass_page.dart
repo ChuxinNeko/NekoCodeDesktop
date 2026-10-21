@@ -37,6 +37,7 @@ class GlassPage extends StatefulWidget {
     this.pinnedSmallTitle = false,
     this.floatingActions = false,
     this.captureBackdrop = true,
+    this.topBarBackdrop,
     this.contentWindowInsets,
   });
 
@@ -45,8 +46,11 @@ class GlassPage extends StatefulWidget {
   final bool floatingActions;
 
   /// Disable image snapshots on pages with frequent input/keyboard repaints.
-  /// The top bar then uses the library's native BackdropFilter fallback.
+  /// Supply [topBarBackdrop] for real glass without capturing the live page.
   final bool captureBackdrop;
+
+  /// Optional decorative-only sample; avoids capturing the live composer.
+  final MiuixBackdrop? topBarBackdrop;
   final EdgeInsets? contentWindowInsets;
 
   final String title, subtitle;
@@ -143,9 +147,18 @@ class _GlassPageState extends State<GlassPage> {
           title: widget.title,
           largeTitle: widget.largeTitle,
           subtitle: widget.subtitle,
-          backdrop: widget.captureBackdrop ? backdrop : null,
+          backdrop:
+              widget.topBarBackdrop ??
+              (widget.captureBackdrop ? backdrop : null),
           scrollBehavior: behavior,
           isContentScrolled: widget.floatingActions || scrolled,
+          // The wallpaper home uses individual liquid lenses, not a frosted band.
+          bandBlurRadius: widget.topBarBackdrop == null ? 24 : 0,
+          bandBrush: widget.topBarBackdrop == null
+              ? null
+              : const LinearGradient(
+                  colors: [Colors.transparent, Colors.transparent],
+                ),
           navigationIcon: widget.navigationIcon,
           actions: widget.actions,
           bottomContent: widget.bottomContent,
@@ -174,16 +187,56 @@ class GlassAction extends StatelessWidget {
     required this.onPressed,
     this.tooltip,
     this.size = 24,
+    this.liquidBackdrop,
   });
   final MiuixVectorIcon icon;
   final VoidCallback? onPressed;
   final String? tooltip;
   final double size;
+  final MiuixBackdrop? liquidBackdrop;
+
   @override
-  Widget build(BuildContext context) => MiuixGlassIconButton(
-    onPressed: onPressed ?? () {},
-    tooltip: tooltip,
-    semanticLabel: tooltip,
-    child: MiuixIcon(vector: icon, size: size),
+  Widget build(BuildContext context) {
+    final sample = liquidBackdrop;
+    final button = MiuixGlassIconButton(
+      onPressed: onPressed,
+      tooltip: tooltip,
+      semanticLabel: tooltip,
+      // The outer native panel supplies refraction. Keep the built-in button's
+      // focus/press/keyboard semantics but do not paint a second frosted disk.
+      surfaceAlpha: sample == null ? 1 : 0,
+      shadow: sample == null ? MiuixGlassShadows.regular : null,
+      child: MiuixIcon(vector: icon, size: size),
+    );
+    if (sample == null) return button;
+    final dark = context.isDark;
+    return MiuixGlassPanel(
+      backdrop: sample,
+      style: MiuixGlassStyles.commonSmallThin,
+      shape: const MiuixGlassShape(cornerRadius: 22),
+      // Thin native glass: preserve background colour rather than combining
+      // the top bar's opaque-looking mask and its 45/63dp nested blur.
+      material: dark ? _liquidDark : _liquidLight,
+      tint: (dark ? Colors.black : Colors.white).withValues(alpha: .08),
+      fill: context.mx.surface.withValues(alpha: .12),
+      stroke: MiuixGlassStrokes.small(dark),
+      shading: true,
+      child: button,
+    );
+  }
+
+  static const _liquidLight = MiuixGlassMaterial(
+    blurRadius: 6,
+    first: MiuixGlassColorLayer(
+      Color(0x10FFFFFF),
+      MiuixGlassColorBlendMode.srcOver,
+    ),
+  );
+  static const _liquidDark = MiuixGlassMaterial(
+    blurRadius: 6,
+    first: MiuixGlassColorLayer(
+      Color(0x10000000),
+      MiuixGlassColorBlendMode.srcOver,
+    ),
   );
 }

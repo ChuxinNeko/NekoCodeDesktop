@@ -139,3 +139,15 @@ bun mobile_flutter/scripts/test-desktop-integration.ts
 需要重新构建并重启桌面端，以启用 `/api/tasks/:id/checkpoint-diff`。旧桌面端仍可
 显示本地统计，查看详情时会提示升级。LAN 与公网连接共用桌面服务接口；`server/`
 仅转发端到端加密数据，不需要新增明文 diff API，也无需为此变更公网后端。
+
+## 首页背景与玻璃按钮
+
+首页内置生成的樱花电车 WebP 背景与向下渐隐的静态点阵。明暗主题分别调整图片和
+点阵亮度；开始会话后隐藏。图片不可用时回退主题底色，不依赖网络、定时器或动画。
+
+左右按钮使用 `MiuixGlassPanel` 的 `commonSmallThin` 折射材质（`shading: true`），
+内部保留 `MiuixGlassIconButton` 的按压、焦点与无障碍行为，关闭其重复背景层。
+独立 `MiuixLayerBackdropCapture` 只采样 `WelcomeBackdrop`，首页关闭整条顶栏雾化。
+未提供背景采样时库会降级，单纯修改按钮透明度并不能启用真正的玻璃材质。若设备
+不支持 shader，库保留采样背景的模糊/混色降级；首帧使用轻透底色而非实色圆片。
+输入框、光标及消息不进入捕获子树，保留原有键盘和输入优化。其他页面沿用原策略。

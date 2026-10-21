@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_miuix/miuix.dart';
 
@@ -7,55 +5,7 @@ import '../../core/protocol.dart';
 import '../../ui/theme.dart';
 import '../mobile_controller.dart';
 
-/// 首页氛围背景：一团很淡的主色光，让玻璃顶栏有内容可以折射。
-class WelcomeBackdrop extends StatelessWidget {
-  const WelcomeBackdrop({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final mx = context.mx;
-    final a = context.isDark ? .1 : .07;
-    return IgnorePointer(
-      child: LayoutBuilder(
-        builder: (context, box) {
-          final s = math.max(box.maxWidth, 320.0);
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              Align(
-                alignment: const Alignment(0, -.72),
-                child: Container(
-                  width: s * .9,
-                  height: s * .9,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        mx.primary.withValues(alpha: a),
-                        mx.primary.withValues(alpha: 0),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              // 底部渐隐回页面底色，保证输入区干净。
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    stops: const [.45, 1],
-                    colors: [mx.surface.withValues(alpha: 0), mx.surface],
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
+export 'welcome_backdrop.dart' show WelcomeBackdrop;
 
 /// 首页欢迎内容：品牌、问候、项目 / 代理选择与快捷建议。
 class WelcomeView extends StatelessWidget {
@@ -226,11 +176,7 @@ class _ContextPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            MiuixIcon(
-              vector: icon,
-              size: 15,
-              tint: mx.onSurfaceVariantSummary,
-            ),
+            MiuixIcon(vector: icon, size: 15, tint: mx.onSurfaceVariantSummary),
             const SizedBox(width: 6),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 180),
@@ -286,11 +232,7 @@ class _Suggestion extends StatelessWidget {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: MiuixText(
-            label,
-            fontSize: 13.5,
-            color: mx.onSurfaceSecondary,
-          ),
+          child: MiuixText(label, fontSize: 13.5, color: mx.onSurfaceSecondary),
         ),
       ),
     );

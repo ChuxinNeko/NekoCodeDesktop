@@ -43,6 +43,7 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final text = TextEditingController();
+  final homeBackdrop = MiuixLayerBackdrop();
   final scroll = ScrollController();
   final FocusNode inputFocus = FocusNode();
   bool sending = false, commandsLoading = false;
@@ -54,6 +55,7 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    homeBackdrop.dispose();
     text.dispose();
     scroll.dispose();
     inputFocus.dispose();
@@ -400,6 +402,7 @@ class _ChatPageState extends State<ChatPage> {
       pinnedSmallTitle: true,
       floatingActions: true,
       captureBackdrop: false,
+      topBarBackdrop: welcome ? homeBackdrop : null,
       // The composer handles IME/safe-area padding itself. Keep scaffold
       // insets stable when the keyboard consumes the bottom system padding.
       contentWindowInsets: MediaQuery.viewPaddingOf(context),
@@ -407,6 +410,7 @@ class _ChatPageState extends State<ChatPage> {
       navigationIcon: GlassAction(
         icon: MiuixIcons.os4.sidebar,
         tooltip: '会话列表',
+        liquidBackdrop: welcome ? homeBackdrop : null,
         onPressed: widget.onSessions,
       ),
       actions: [
@@ -414,20 +418,25 @@ class _ChatPageState extends State<ChatPage> {
           GlassAction(
             icon: MiuixIcons.os4.settings,
             tooltip: '设置',
+            liquidBackdrop: welcome ? homeBackdrop : null,
             onPressed: widget.onSettings,
           )
         else
           GlassAction(
             icon: MiuixIcons.os4.add,
             tooltip: '新建会话',
+            liquidBackdrop: welcome ? homeBackdrop : null,
             onPressed: () => c.navigate('tasks'),
           ),
       ],
       body: (context, scope) => Stack(
         children: [
           if (welcome)
-            const Positioned.fill(
-              child: RepaintBoundary(child: WelcomeBackdrop()),
+            Positioned.fill(
+              child: MiuixLayerBackdropCapture(
+                backdrop: homeBackdrop,
+                child: const WelcomeBackdrop(),
+              ),
             ),
           Column(
             children: [

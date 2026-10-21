@@ -36,4 +36,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/logo.png
+    - assets/images/home-sakura.webp
     - assets/workflow/
