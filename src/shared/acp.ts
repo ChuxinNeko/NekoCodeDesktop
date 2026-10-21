@@ -5,14 +5,27 @@ import type { AgentCell, ContextUsage, PromptImageAttachment } from "./agent";
  *
  * NekoCode is the ACP *client* here: it launches the agent's own CLI, speaks
  * JSON-RPC to it over stdio, and renders what it streams back. The agent owns
- * its model, credentials, tools and billing — NekoCode never sees a token.
+ * its tools and billing; NekoCode can supply process-scoped model and API settings.
  */
 
 /** The workspace backed by NekoCode's own agent core and configured models. */
 export const NEKO_LOCAL_WORKSPACE = "nekolocal";
 
+/** Process-scoped model routing; never rewrites the CLI's global configuration. */
+export interface AcpModelSettings {
+	mode: "inherit" | "official" | "custom";
+	baseUrl: string;
+	apiKey: string;
+	model: string;
+	reasoning?: "" | "low" | "medium" | "high" | "xhigh";
+	haiku?: string;
+	sonnet?: string;
+	opus?: string;
+}
+
 /** How to launch one agent, as stored in settings. */
 export interface AcpAgentConfig {
+	modelSettings?: AcpModelSettings;
 	id: string;
 	name: string;
 	command: string;
@@ -55,6 +68,7 @@ export interface AcpAgentInfo extends AcpAgentConfig {
 }
 
 export interface AcpSaveAgentRequest {
+	modelSettings?: AcpModelSettings;
 	/** Absent for a new custom agent. */
 	id?: string;
 	name: string;

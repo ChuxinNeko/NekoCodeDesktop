@@ -1,3 +1,5 @@
+import type { AcpAgentInfo } from "../../../../shared/acp";
+import { AcpModelSettings } from "./AcpModelSettings";
 import { useEffect, useState } from "react";
 import type {
 	FetchedModel,
@@ -50,7 +52,7 @@ export interface OAuthLoginState {
  *
  * All backend traffic lives here; both tabs render what this hands them.
  */
-export function ProviderModelSettings() {
+function LocalProviderModelSettings() {
 	const { t } = useTranslation();
 	const [tab, setTab] = useState<TabId>("providers");
 	const [profiles, setProfiles] = useState<ModelProfileSummary[]>([]);
@@ -348,4 +350,32 @@ export function ProviderModelSettings() {
 			)}
 		</section>
 	);
+}
+
+/** The same provider page follows each enabled ACP workspace. */
+export function ProviderModelSettings() {
+	const { t } = useTranslation();
+	const [agents, setAgents] = useState<AcpAgentInfo[]>([]);
+	const [selected, setSelected] = useState("nekolocal");
+	const [error, setError] = useState<string | null>(null);
+	useEffect(() => {
+		if (api.runtime === "web") return;
+		const update = (state: { agents: AcpAgentInfo[] }) => {
+			setAgents(state.agents.filter((agent) => agent.enabled));
+			setSelected((previous) => previous === "nekolocal" || state.agents.some((agent) => agent.id === previous && agent.enabled) ? previous : "nekolocal");
+		};
+		void api.acpState().then(update).catch((cause) => setError(errorMessage(cause)));
+		return api.onAcpChanged(update);
+	}, []);
+	const agent = agents.find((entry) => entry.id === selected);
+	return <div className="flex flex-col gap-4">
+		{agents.length ? <div className="flex flex-wrap gap-1 rounded-lg bg-[var(--color-background-elevated-secondary)] p-1" role="group" aria-label={t("acpModels.workspace")}>
+			{[{ id: "nekolocal", name: "NekoLocal" }, ...agents].map((entry) => <button key={entry.id} type="button" aria-pressed={selected === entry.id} onClick={() => setSelected(entry.id)}
+				className={cn("rounded-md px-3 py-1.5 text-xs transition-colors", selected === entry.id ? "bg-[var(--composer-surface)] text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+				{entry.name}{entry.id !== "nekolocal" ? " · ACP" : ""}
+			</button>)}
+		</div> : null}
+		{error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+		{agent ? <AcpModelSettings key={agent.id} agent={agent} /> : <LocalProviderModelSettings />}
+	</div>;
 }

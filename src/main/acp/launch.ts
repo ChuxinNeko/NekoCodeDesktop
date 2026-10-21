@@ -8,6 +8,7 @@
  * and an Electron app launched from there (an editor, `electron-vite dev`)
  * would otherwise come up as Node instead of as itself.
  */
+import { acpModelEnv } from "./model-settings";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -94,6 +95,7 @@ export function nativeLaunch(agent: AcpAgentDefinition & { native: NativeAgentCl
 }
 
 export function agentLaunch(agent: AcpAgentDefinition, context: LaunchContext): AgentLaunch {
+	agent = { ...agent, env: { ...agent.env, ...acpModelEnv(agent.id, agent.modelSettings) } };
 	if (usesNativeCli(agent)) return nativeLaunch(agent, context);
 	if (!usesBundledAdapter(agent)) {
 		return { command: agent.command, args: [...agent.args], env: { ...agent.env }, shell: context.platform === "win32" };

@@ -8,10 +8,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AcpSaveAgentRequest } from "../../shared/acp";
+import type { AcpModelSettings, AcpSaveAgentRequest } from "../../shared/acp";
+import { validateAcpModelSettings } from "./model-settings";
 import { BUILTIN_ACP_AGENTS, type AcpAgentDefinition } from "./agents";
 
 interface StoredOverride {
+	modelSettings?: AcpModelSettings;
 	id: string;
 	name?: string;
 	command?: string;
@@ -21,6 +23,7 @@ interface StoredOverride {
 }
 
 interface StoredCustom {
+	modelSettings?: AcpModelSettings;
 	id: string;
 	name: string;
 	command: string;
@@ -47,6 +50,11 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 	return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 
+function storedModelSettings(id: string, raw: unknown): AcpModelSettings | undefined {
+	if (raw === undefined) return undefined;
+	try { return validateAcpModelSettings(id, raw); } catch { return undefined; }
+}
+
 function parse(raw: unknown): StoredFile {
 	const file: StoredFile = { builtins: [], custom: [] };
 	if (!isObject(raw)) return file;
@@ -54,6 +62,7 @@ function parse(raw: unknown): StoredFile {
 		if (!isObject(entry) || typeof entry.id !== "string") continue;
 		file.builtins.push({
 			id: entry.id,
+			...(storedModelSettings(entry.id, entry.modelSettings) ? { modelSettings: storedModelSettings(entry.id, entry.modelSettings) } : {}),
 			...(typeof entry.name === "string" ? { name: entry.name } : {}),
 			...(typeof entry.command === "string" ? { command: entry.command } : {}),
 			...(stringArray(entry.args) ? { args: stringArray(entry.args) } : {}),
@@ -65,6 +74,7 @@ function parse(raw: unknown): StoredFile {
 		if (!isObject(entry) || typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.command !== "string") continue;
 		file.custom.push({
 			id: entry.id,
+			...(storedModelSettings(entry.id, entry.modelSettings) ? { modelSettings: storedModelSettings(entry.id, entry.modelSettings) } : {}),
 			name: entry.name,
 			command: entry.command,
 			args: stringArray(entry.args) ?? [],
@@ -130,7 +140,8 @@ export class AcpConfigStore {
 		// A built-in agent without a command runs its bundled adapter or its own CLI.
 		if (!command && !builtin?.bundled && !builtin?.native) throw new Error("请填写启动命令");
 		const file = this.load();
-		const fields = { name, command, args: command ? [...request.args] : [], env: { ...request.env }, enabled: request.enabled };
+		const modelSettings = request.modelSettings === undefined ? this.find(request.id ?? "")?.modelSettings : validateAcpModelSettings(request.id ?? "", request.modelSettings);
+		const fields = { ...(modelSettings ? { modelSettings } : {}), name, command, args: command ? [...request.args] : [], env: { ...request.env }, enabled: request.enabled };
 		if (builtin) {
 			this.persist({
 				...file,
