@@ -6,7 +6,7 @@
  * `prompt()` runs one turn; `dispose()` kills the process tree. A process that
  * dies on its own leaves the session in `error` with the agent's last stderr.
  */
-import type { PromptImageAttachment } from "../../shared/agent";
+import type { PromptImageAttachment, TurnUsage } from "../../shared/agent";
 import type {
 	AcpPermissionOptionKind,
 	AcpPermissionRequest,
@@ -19,6 +19,7 @@ import { authenticateAgent } from "./auth";
 import { AcpConnection, AcpRpcError, AUTH_REQUIRED, METHOD_NOT_FOUND, type AcpTransport } from "./connection";
 import { AcpProjection, diffPaths, MODE_CONFIG_ID, MODEL_CONFIG_ID, turnUsageFromAcp, type RawToolCall, type TextDiffer } from "./projection";
 import type { ShellChangeTracker } from "./workspace-changes";
+import { recordDiagnostic, diagnosticError } from "../diagnostic-log";
 
 export const ACP_PROTOCOL_VERSION = 1;
 
@@ -46,6 +47,8 @@ export interface AcpSessionOptions {
 	clientVersion: string;
 	createTransport: (agent: AcpAgentDefinition, cwd: string) => AcpTransport;
 	onChange: () => void;
+	/** Usage from a new prompt response, independent of whether it produced a text cell. */
+	onUsage?: (usage: TurnUsage, timestamp: number) => void;
 	/** Reopen a conversation from the agent's own history instead of starting one. */
 	resume?: { sessionId: string; title?: string };
 	/**
@@ -128,6 +131,11 @@ export class AcpSession {
 	private disposed = false;
 	private readonly projection: AcpProjection;
 	private readonly permissions = new Map<string, PendingPermission>();
+	private promptPending = false;
+	private promptDispatched = false;
+	private queuedPromptCancelled = false;
+	private configTail: Promise<void> = Promise.resolve();
+	private pendingConfig: Promise<void> | null = null;
 	private nextPermission = 1;
 	private readonly now: () => number;
 	/** Settles once the handshake is over, however it went. */
@@ -371,6 +379,7 @@ export class AcpSession {
 	}
 
 	private fail(message: string): void {
+		recordDiagnostic("acp.sessionFailed", { sessionId: this.id, agentId: this.agent.id, message: message.slice(0, 2048) });
 		this.status = "error";
 		this.error = message;
 		// Nothing can call the tools any more; their token should not outlive that.
@@ -488,8 +497,23 @@ export class AcpSession {
 
 	/** Run one turn. Resolves when the agent finishes it, however it ends. */
 	async prompt(text: string, images: PromptImageAttachment[] = []): Promise<void> {
-		if (this.status === "prompting") throw new Error("上一轮还没有结束");
+		// Reserve the turn before startup/configuration awaits. Otherwise two
+		// first messages both resume the handshake and enter session/prompt.
+		if (this.promptPending || this.status === "prompting") throw new Error("上一轮还没有结束");
+		this.promptPending = true;
+		this.promptDispatched = false;
+		this.queuedPromptCancelled = false;
+		try {
+			await this.promptOnce(text, images);
+		} finally {
+			this.promptPending = false;
+			this.promptDispatched = false;
+		}
+	}
+
+	private async promptOnce(text: string, images: PromptImageAttachment[]): Promise<void> {
 		if (!text && images.length === 0) return;
+		recordDiagnostic("acp.promptQueued", { sessionId: this.id, agentId: this.agent.id, starting: this.status === "starting" });
 		this.prompted = true;
 		if (this.status === "starting") {
 			// The first prompt of a new conversation is sent while the agent is
@@ -498,6 +522,11 @@ export class AcpSession {
 			this.changed();
 			await this.started;
 			if (this.gone()) return;
+			if (this.queuedPromptCancelled) {
+				this.projection.finishTurn("cancelled");
+				this.changed();
+				return;
+			}
 			return this.send(text, images);
 		}
 		this.requireReady();
@@ -518,20 +547,42 @@ export class AcpSession {
 		this.status = "prompting";
 		this.changed();
 		const startedAt = this.now();
-		await this.shellOpening;
-		// Not waited on: the agent's first command comes after a model call, by
-		// which time the snapshot is long taken; and every check queues behind it.
-		void this.shell?.begin();
+		const configuring = this.pendingConfig;
 		try {
+			await configuring;
+			await this.shellOpening;
+			if (this.gone()) return;
+			if (this.queuedPromptCancelled) {
+				this.projection.finishTurn("cancelled");
+				this.status = "ready";
+				this.changed();
+				return;
+			}
+			// Commands queue their change checks behind this baseline snapshot.
+			void this.shell?.begin();
+			recordDiagnostic("acp.prompt", { sessionId: this.id, agentId: this.agent.id });
+			this.promptDispatched = true;
 			const result = await connection.request("session/prompt", { sessionId, prompt });
 			const response = isObject(result) ? result : {};
+			recordDiagnostic("acp.promptCompleted", {
+				sessionId: this.id, agentId: this.agent.id, stopReason: str(response.stopReason), durationMs: this.now() - startedAt,
+			});
+			const usage = turnUsageFromAcp(response.usage, this.now() - startedAt);
 			this.projection.finishTurn(
 				str(response.stopReason) ?? "end_turn",
-				turnUsageFromAcp(response.usage, this.now() - startedAt),
+				usage,
 				this.agent.name,
 			);
+			if (usage) {
+				try {
+					this.options.onUsage?.({ ...usage, provider: this.agent.name, model: this.projection.currentModel() }, this.now());
+				} catch (error) {
+					console.error("Failed to record ACP token usage", error);
+				}
+			}
 		} catch (error) {
 			if (this.gone()) return;
+			recordDiagnostic("acp.promptFailed", { sessionId: this.id, agentId: this.agent.id, ...diagnosticError(error) });
 			this.projection.failTurn(errorText(error));
 		}
 		void this.shell?.end();
@@ -543,6 +594,10 @@ export class AcpSession {
 
 	/** Ask the agent to stop the running turn; `prompt()` resolves once it has. */
 	async cancel(): Promise<void> {
+		if (this.promptPending && !this.promptDispatched) {
+			this.queuedPromptCancelled = true;
+			return;
+		}
 		if (this.status !== "prompting" || !this.connection || !this.agentSessionId) return;
 		// The spec requires open permission prompts to be answered as cancelled.
 		this.cancelPermissions();
@@ -550,7 +605,26 @@ export class AcpSession {
 		await this.connection.notify("session/cancel", { sessionId: this.agentSessionId });
 	}
 
-	async setConfig(configId: string, value: string): Promise<void> {
+	setConfig(configId: string, value: string): Promise<void> {
+		if (this.promptPending || this.status === "prompting") return Promise.reject(new Error("请等待当前运行结束后再修改配置"));
+		const change = this.configTail.then(() => this.applyConfig(configId, value));
+		this.pendingConfig = change;
+		this.configTail = change.catch(() => undefined);
+		const clear = () => { if (this.pendingConfig === change) this.pendingConfig = null; };
+		void change.then(
+			() => {
+				clear();
+				recordDiagnostic("acp.configApplied", { sessionId: this.id, agentId: this.agent.id, configId });
+			},
+			(error: unknown) => {
+				clear();
+				recordDiagnostic("acp.configFailed", { sessionId: this.id, agentId: this.agent.id, configId, ...diagnosticError(error) });
+			},
+		);
+		return change;
+	}
+
+	private async applyConfig(configId: string, value: string): Promise<void> {
 		const { connection, sessionId } = this.requireReady();
 		if (configId === MODE_CONFIG_ID) {
 			await connection.request("session/set_mode", { sessionId, modeId: value });

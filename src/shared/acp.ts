@@ -143,6 +143,8 @@ export interface AcpSessionSummary {
 export interface AcpSessionSnapshot extends AcpSessionSummary {
 	error?: string;
 	cells: AgentCell[];
+	/** Records before the desktop's current transcript window. */
+	earlierCells?: number;
 	streaming: boolean;
 	context?: ContextUsage;
 	configOptions: AcpConfigOption[];

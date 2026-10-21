@@ -138,13 +138,22 @@ function useCostFootnote(): (totals: TokenCounts, pricing: TokenPricingStatus) =
 	};
 }
 
+function AcpBadge() {
+	return (
+		<span className="inline-flex shrink-0 items-center rounded px-1 py-px align-middle text-[length:var(--app-font-size-ui-xs,10px)] font-medium leading-none text-violet-600 ring-1 ring-inset ring-violet-500/25 bg-violet-500/10 dark:text-violet-400">
+			ACP
+		</span>
+	);
+}
+
 /** One row of the breakdown table: name, share bar, tokens, calls. */
 function BreakdownRow({ row, detail }: { row: TokenBreakdownRow; detail: string }) {
 	return (
 		<div className="flex flex-col gap-1 py-1.5">
 			<div className="flex items-baseline justify-between gap-3">
-				<span className="min-w-0 truncate text-[length:var(--app-font-size-ui,12px)]" title={row.label}>
-					{row.label}
+				<span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-font-size-ui,12px)]">
+					<span className="truncate" title={row.label}>{row.label}</span>
+					{row.source === "acp" ? <AcpBadge /> : null}
 				</span>
 				<span className="shrink-0 tabular-nums text-[length:var(--app-font-size-ui,12px)]">
 					{formatTokens(row.total)}
@@ -608,6 +617,7 @@ export function TokenUsageDashboard({
 								<div className="flex min-w-0 flex-col">
 									<span className="truncate text-[length:var(--app-font-size-ui,12px)]">
 										{session.title}
+										{session.kind === "acp" ? <span className="ml-1.5"><AcpBadge /></span> : null}
 										{session.kind === "automation" ? (
 											<span className="ml-1.5 rounded px-1 py-px text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground ring-1 ring-[color:var(--app-surface-divider)]">
 												{t("tokens.automation")}
@@ -688,7 +698,12 @@ export function TokenUsageSettings() {
 
 	useEffect(() => {
 		load();
-		return api.onSessionsChanged(() => load());
+		const unsubscribeSessions = api.onSessionsChanged(() => load());
+		const unsubscribeAcp = api.onAcpHistoryChanged(() => load());
+		return () => {
+			unsubscribeSessions();
+			unsubscribeAcp();
+		};
 	}, [load]);
 
 	const actions = (

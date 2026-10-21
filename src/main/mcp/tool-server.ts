@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { recordDiagnostic } from "../diagnostic-log";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18"]);
@@ -30,6 +31,8 @@ const INVALID_PARAMS = -32602;
 export type ToolArgumentValidator = (tool: ToolDefinition, args: Record<string, unknown>) => Promise<unknown> | unknown;
 
 export interface ToolServerRegistration {
+	/** Local conversation identity for diagnostics; never sent to the model. */
+	sessionId?: string;
 	/** Resolved on every request, so a tool switched off mid-session is gone at once. */
 	tools: () => ToolDefinition[];
 }
@@ -243,6 +246,7 @@ export class McpToolServer {
 		signal: AbortSignal,
 	): Promise<{ content: ToolContent[]; isError?: boolean }> {
 		const run = async () => {
+			const startedAt = Date.now();
 			try {
 				const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
 				const args = this.options.validate ? await this.options.validate(tool, prepared as Record<string, unknown>) : prepared;
@@ -250,8 +254,15 @@ export class McpToolServer {
 				// session supplies the real one to the tools that do.
 				const output = await tool.execute(`mcp-${randomBytes(6).toString("hex")}`, args as never, signal, undefined, {} as never);
 				const content = toMcpContent(output.content);
+				recordDiagnostic("mcp.toolCompleted", { sessionId: registration.sessionId, tool: tool.name, durationMs: Date.now() - startedAt });
 				return { content: content.length > 0 ? content : [{ type: "text" as const, text: "(no output)" }] };
 			} catch (error) {
+				// Validation errors include the supplied arguments after this marker.
+				// Keep the error explanation without persisting those arguments.
+				recordDiagnostic("mcp.toolFailed", {
+					sessionId: registration.sessionId, tool: tool.name, durationMs: Date.now() - startedAt,
+					message: errorText(error).split("\n\nReceived arguments:")[0].slice(0, 2048),
+				});
 				return { content: [{ type: "text" as const, text: errorText(error) }], isError: true };
 			}
 		};

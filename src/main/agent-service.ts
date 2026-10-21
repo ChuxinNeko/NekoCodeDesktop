@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { recordDiagnostic } from "./diagnostic-log";
+import { checkpointSummaries } from "./checkpoint-summaries";
 import type { GitGenerateCommitMessageRequest } from "../shared/git";
 import { generateCommitMessage } from "./git-commit-message";
 import type { ModelCallRuntime } from "./model-call";
@@ -52,14 +54,13 @@ import {
 	CHECKPOINT_ENTRY,
 	checkpointEntries,
 	planReversal,
-	turnStats,
 	type CheckpointData,
 	type ReversalPlan,
 } from "./file-journal";
 import { FileJournalRecorder } from "./file-journal-recorder";
 import { attachTruncationRecovery } from "./truncation-recovery";
 import { applyReversal, fileDiffSince, previewReversal } from "./file-restore";
-import { cellIdForMessage, findTurnEntry, replyEntry } from "./checkpoint-anchor";
+import { findTurnEntry, replyEntry } from "./checkpoint-anchor";
 import { normalizeLine, sessionTitle } from "../shared/sessions";
 import { SnapshotDeltaCache, type AgentSnapshotDelta } from "../shared/agent-delta";
 import { remoteToolOutput, remoteView, type RemoteToolOutput, type RemoteViewRequest } from "./agent-remote-view";
@@ -1110,6 +1111,7 @@ export class AgentService {
 	}
 
 	async createSession(cwd: string): Promise<AgentSnapshot> {
+		recordDiagnostic("nekolocal.createSession");
 		assertDirectory(cwd);
 		this.cwd = cwd;
 		const { SessionManager } = await pi();
@@ -1118,6 +1120,7 @@ export class AgentService {
 	}
 
 	async openSession(req: OpenSessionRequest): Promise<AgentSnapshot> {
+		recordDiagnostic("nekolocal.openSession");
 		assertDirectory(req.cwd);
 		this.cwd = req.cwd;
 		const sessionFile = this.resolveSessionFile(req.sessionFile);
@@ -1321,6 +1324,7 @@ export class AgentService {
 	}
 
 	async send(req: SendPromptRequest): Promise<SendPromptResult> {
+		recordDiagnostic("nekolocal.send", { sessionId: this.session?.sessionManager.getSessionId() });
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
 		const interaction = displayInteractiveMessage(req.text);
@@ -1503,33 +1507,13 @@ export class AgentService {
 		const sessionId = session.sessionManager.getSessionId();
 		const branch = this.currentBranch(session.sessionManager);
 		const messages = session.messages;
-		// Every snapshot carries this list, and building it walks the branch once
-		// per checkpoint. It only changes when an entry lands or the conversation
+		// Every snapshot carries this list. It only changes when an entry lands or the conversation
 		// moves (the leaf, hence the branch array) or the messages the cell ids
 		// index into do — not per streamed token.
 		const cached = this.checkpointCache;
 		if (cached && cached.branch === branch && cached.messages === messages && cached.messageCount === messages.length)
 			return cached.list;
-		const summaries = checkpointEntries(branch).map((marker) => {
-			const turn = findTurnEntry(branch, marker.id);
-			const plan = planReversal(branch, marker.id);
-			const stats = turnStats(branch, marker.id);
-			return {
-				id: marker.id,
-				sessionId,
-				createdAt: marker.timestamp,
-				label: marker.label,
-				cellId: cellIdForMessage(messages, turn?.message ?? undefined),
-				conversationRestorable: turn !== null,
-				codeRestorable: plan.steps.length > 0,
-				fileCount: stats.files,
-				files: stats.list,
-				additions: stats.additions,
-				deletions: stats.deletions,
-				shellRuns: plan.opaqueRuns,
-			} satisfies CheckpointSummary;
-		});
-		const list = summaries.reverse();
+		const list = checkpointSummaries(branch, messages, sessionId);
 		this.checkpointCache = { branch, messages, messageCount: messages.length, list };
 		return list;
 	}
@@ -2310,10 +2294,18 @@ export class AgentService {
 	private onSessionEvent(event: AgentSessionEvent): void {
 		const session = this.session;
 		if (!session) return;
+		if (event.type === "agent_start" || event.type === "agent_end" || event.type === "tool_execution_start" || event.type === "tool_execution_end") {
+			recordDiagnostic(`nekolocal.${event.type}`, {
+				sessionId: session.sessionManager.getSessionId(),
+				...("toolName" in event ? { toolName: event.toolName, toolCallId: event.toolCallId } : {}),
+			});
+		}
 		this.preview?.handle(event as ProjectionEvent);
 		this.projector.handleEvent(event as ProjectionEvent);
 		if (event.type === "message_end" && event.message.role === "assistant") this.addGoalUsage(event.message as AssistantMessage);
-		this.projectionDirty = true;
+		// Partial output lives in the projector's overlay. Re-reading persisted
+		// history on each token repeatedly processes a long session while hidden.
+		if (event.type !== "message_update" && event.type !== "tool_execution_update") this.projectionDirty = true;
 		// Token and partial-output updates arrive dozens of times a second, and
 		// every snapshot carries the whole transcript: coalesce those, and send
 		// every other event (a message landing, a tool finishing, the run ending)

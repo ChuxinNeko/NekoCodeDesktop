@@ -398,7 +398,7 @@ const api = {
 	/** Connection states move on their own — a server can drop at any time. */
 	onMcpChanged: (listener: (snapshot: McpSnapshot) => void) => subscribe("mcp:changed", listener),
 	acpState: (): Promise<AcpState> => ipcRenderer.invoke("acp:state"),
-	acpSnapshot: (sessionId: string): Promise<AcpSessionSnapshot | null> => ipcRenderer.invoke("acp:snapshot", sessionId),
+	acpSnapshot: (sessionId: string, loadEarlier?: boolean): Promise<AcpSessionSnapshot | null> => ipcRenderer.invoke("acp:snapshot", sessionId, loadEarlier),
 	acpCreate: (request: AcpCreateSessionRequest): Promise<AcpSessionSnapshot> => ipcRenderer.invoke("acp:create", request),
 	acpOpen: (request: AcpOpenSessionRequest): Promise<AcpSessionSnapshot> => ipcRenderer.invoke("acp:open", request),
 	acpHistory: (agentId: string): Promise<AcpHistory> => ipcRenderer.invoke("acp:history", agentId),

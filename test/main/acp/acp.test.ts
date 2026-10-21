@@ -2,14 +2,16 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentCell } from "../../../src/shared/agent";
+import type { AgentCell, TurnUsage } from "../../../src/shared/agent";
 import { AcpConnection, AcpRpcError, AUTH_REQUIRED, METHOD_NOT_FOUND, type AcpTransport } from "../../../src/main/acp/connection";
 import { AcpProjection, mapToolCall, MODE_CONFIG_ID, turnUsageFromAcp } from "../../../src/main/acp/projection";
 import { AcpSession } from "../../../src/main/acp/session";
+import type { AcpSessionSnapshot } from "../../../src/shared/acp";
 import { AcpService, parseHistoryPage } from "../../../src/main/acp/service";
 import { AcpConfigStore } from "../../../src/main/acp/config-store";
 import { agentProxyEnv, BUILTIN_ACP_AGENTS, type AcpAgentDefinition } from "../../../src/main/acp/agents";
 import type { AcpAuthPlan } from "../../../src/main/acp/auth";
+import { TokenStatsService } from "../../../src/main/token-stats";
 
 type Message = Record<string, unknown>;
 
@@ -311,7 +313,7 @@ const AGENT: AcpAgentDefinition = {
 };
 
 /** A scripted agent: answers the handshake and lets each test drive the turn. */
-function startSession(options: { authRequired?: boolean } = {}) {
+function startSession(options: { authRequired?: boolean; onUsage?: (usage: TurnUsage, timestamp: number) => void } = {}) {
 	const transport = new FakeTransport();
 	let changes = 0;
 	const prompts: Message[] = [];
@@ -338,12 +340,126 @@ function startSession(options: { authRequired?: boolean } = {}) {
 		clientVersion: "0.0.0",
 		createTransport: () => transport,
 		onChange: () => changes++,
+		onUsage: options.onUsage,
 		now: () => 1000,
 	});
 	return { session, transport, prompts, changes: () => changes };
 }
 
 describe("AcpSession", () => {
+	test("a prompt waits for an in-flight config change before reaching the agent", async () => {
+		const { session, transport, prompts } = startSession();
+		await session.start();
+		const responder = transport.responder!;
+		let config: Message | undefined;
+		transport.responder = (message) => {
+			if (message.method === "session/set_mode") config = message;
+			else responder(message);
+		};
+		const setting = session.setConfig(MODE_CONFIG_ID, "agent");
+		const turn = session.prompt("use the selected mode");
+		try {
+			await tick();
+			expect(config).toBeDefined();
+			expect(prompts).toHaveLength(0);
+			transport.reply(config!.id, {});
+			await setting;
+			await tick();
+			expect(prompts).toHaveLength(1);
+			transport.reply(prompts[0].id, { stopReason: "end_turn" });
+			await turn;
+		} finally {
+			session.dispose();
+			await Promise.allSettled([setting, turn]);
+		}
+	});
+
+	test("only one first prompt can wait for session startup", async () => {
+		const { session, transport, prompts } = startSession();
+		const starting = session.start();
+		const first = session.prompt("first");
+		let secondError: unknown;
+		const second = session.prompt("second").catch((error) => { secondError = error; });
+		try {
+			await starting;
+			await tick();
+			expect(secondError).toBeInstanceOf(Error);
+			expect(prompts).toHaveLength(1);
+			transport.reply(prompts[0].id, { stopReason: "end_turn" });
+			await first;
+			expect(session.snapshot().cells.filter((cell) => cell.type === "user")).toHaveLength(1);
+		} finally {
+			session.dispose();
+			await Promise.allSettled([first, second]);
+		}
+	});
+
+	test("a queued prompt can be cancelled while its config change is pending", async () => {
+		const { session, transport, prompts } = startSession();
+		await session.start();
+		const responder = transport.responder!;
+		let config: Message | undefined;
+		transport.responder = (message) => {
+			if (message.method === "session/set_mode") config = message;
+			else responder(message);
+		};
+		const setting = session.setConfig(MODE_CONFIG_ID, "agent");
+		const turn = session.prompt("cancel before dispatch");
+		try {
+			await tick();
+			await session.cancel();
+			transport.reply(config!.id, {});
+			await Promise.all([setting, turn]);
+			expect(prompts).toHaveLength(0);
+			expect(session.snapshot().status).toBe("ready");
+		} finally { session.dispose(); }
+	});
+
+	test("a failed pending configuration does not send a prompt with the old settings", async () => {
+		const { session, transport, prompts } = startSession();
+		await session.start();
+		const responder = transport.responder!;
+		let config: Message | undefined;
+		transport.responder = (message) => {
+			if (message.method === "session/set_mode") config = message;
+			else responder(message);
+		};
+		const setting = session.setConfig(MODE_CONFIG_ID, "agent").catch(() => undefined);
+		const turn = session.prompt("use the chosen settings");
+		try {
+			await tick();
+			transport.deliver({ jsonrpc: "2.0", id: config!.id, error: { code: -32602, message: "mode unavailable" } });
+			await Promise.all([setting, turn]);
+			expect(prompts).toHaveLength(0);
+			expect(session.snapshot().status).toBe("ready");
+			expect(JSON.stringify(session.snapshot().cells)).toContain("mode unavailable");
+		} finally { session.dispose(); }
+	});
+
+	test("reports prompt usage once even without an assistant text cell, including cancelled turns", async () => {
+		const recorded: TurnUsage[] = [];
+		const { session, transport, prompts } = startSession({ onUsage: (usage) => recorded.push(usage) });
+		await session.start();
+		try {
+			const first = session.prompt("first");
+			await tick();
+			transport.update("agent-1", { sessionUpdate: "usage_update", used: 100, size: 1000 });
+			transport.reply(prompts[0].id, { stopReason: "cancelled", usage: {
+				inputTokens: 10, outputTokens: 5, cachedReadTokens: 20, totalTokens: 35,
+			} });
+			await first;
+			expect(recorded).toHaveLength(1);
+			expect(recorded[0]).toMatchObject({ provider: AGENT.name, calls: 1, input: 10, output: 5, cacheRead: 20 });
+			const second = session.prompt("no usage");
+			await tick();
+			transport.reply(prompts[1].id, { stopReason: "end_turn" });
+			await second;
+			expect(recorded).toHaveLength(1);
+		} finally {
+			session.dispose();
+		}
+	});
+
 	test("handshakes, runs a turn, and ends it on the prompt response", async () => {
 		const { session, transport, prompts } = startSession();
 		await session.start();
@@ -541,6 +657,78 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe("AcpService", () => {
+	test("long ACP histories are windowed for reads and pushes, and can be paged without losing messages", async () => {
+		const transport = new FakeTransport();
+		transport.responder = ({ id, method }) => {
+			if (method === "initialize") transport.reply(id, { protocolVersion: 1, agentCapabilities: {} });
+			if (method === "session/new") transport.reply(id, { sessionId: "agent-long" });
+		};
+		const pushed: AcpSessionSnapshot[] = [];
+		const service = new AcpService({ store: memoryStore([AGENT]) as never, clientVersion: "0", emitState: () => {},
+			emitSnapshot: (snapshot) => pushed.push(snapshot), createTransport: () => transport, shellChanges: async () => null });
+		try {
+			const created = service.create({ agentId: AGENT.id, cwd: tmpdir() });
+			await until(() => service.snapshot(created.id)?.status === "ready");
+			const append = (index: number) => {
+				transport.update("agent-long", { sessionUpdate: "user_message_chunk", messageId: `u-${index}`, content: { type: "text", text: `question-${index}` } });
+				transport.update("agent-long", { sessionUpdate: "agent_message_chunk", messageId: `a-${index}`, content: { type: "text", text: `answer-${index}` } });
+			};
+			for (let index = 0; index < 300; index++) append(index);
+			await until(() => pushed.at(-1)?.cells.at(-1)?.type === "assistant");
+			expect(service.snapshot(created.id)?.cells).toHaveLength(600);
+			expect(pushed.at(-1)?.cells).toHaveLength(80);
+			expect(service.view(created.id)?.cells).toHaveLength(600);
+			expect(service.desktopView(created.id)).toMatchObject({ earlierCells: 520 });
+			const earlier = service.desktopView(created.id, true)!;
+			expect(earlier.cells).toHaveLength(160);
+			expect(earlier.earlierCells).toBe(440);
+			append(300);
+			await until(() => pushed.at(-1)?.cells.length === 162);
+			expect(pushed.at(-1)?.cells[0].id).toBe(earlier.cells[0].id);
+			expect(service.desktopView(created.id)?.cells).toHaveLength(80);
+			append(301);
+			await until(() => pushed.at(-1)?.cells.length === 80 && (pushed.at(-1)?.cells.at(-1) as { text?: string })?.text === "answer-301");
+			let all = service.desktopView(created.id, true)!;
+			while (all.earlierCells) all = service.desktopView(created.id, true)!;
+			expect(all.cells).toEqual(service.snapshot(created.id)!.cells);
+			expect(all.cells).toHaveLength(604);
+			service.close(created.id);
+			expect(service.desktopView(created.id, true)).toBeNull();
+		} finally { service.dispose(); }
+	});
+
+	test("persists new prompt usage before notifying the dashboard and never counts history replay", async () => {
+		const root = mkdtempSync(join(tmpdir(), "acp-service-usage-"));
+		const transports: FakeTransport[] = [];
+		const acpUsageDir = join(root, "usage");
+		const stats = new TokenStatsService({ sessionDir: join(root, "sessions"), acpUsageDir });
+		let refreshed: ReturnType<TokenStatsService["report"]> | undefined;
+		const service = new AcpService({
+			clientVersion: "0.0.0", store: memoryStore([AGENT]), usageDir: acpUsageDir,
+			createTransport: historyAgent(transports), emitState: () => {}, emitSnapshot: () => {},
+			emitHistoryChanged: () => { refreshed = stats.report(); }, shellChanges: async () => null,
+		});
+		try {
+			const opened = service.openHistory({ agentId: AGENT.id, sessionId: "new", cwd: tmpdir(), title: "Existing" });
+			await until(() => service.snapshot(opened.id)?.status === "ready");
+			expect((await stats.report()).sessions).toHaveLength(0);
+			await service.prompt({ sessionId: opened.id, text: "next" });
+			await until(() => transports[0].sent.some((message) => message.method === "session/prompt"));
+			const request = transports[0].sent.find((message) => message.method === "session/prompt")!;
+			transports[0].reply(request.id, { stopReason: "end_turn", usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 } });
+			await until(() => refreshed !== undefined);
+			expect((await refreshed!).sessions[0]).toMatchObject({ calls: 1, input: 100, output: 10 });
+			service.close(opened.id);
+			const reopened = service.openHistory({ agentId: AGENT.id, sessionId: "new", cwd: tmpdir(), title: "Existing" });
+			await until(() => service.snapshot(reopened.id)?.status === "ready");
+			expect((await stats.report()).sessions).toHaveLength(1);
+			expect((await stats.report()).sessions[0].calls).toBe(1);
+		} finally {
+			service.dispose();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	test("two windows in the same directory keep streamed replies and edits in their own sessions", async () => {
 		const transports: FakeTransport[] = [];
 		const pushed: Array<{ id: string; cells: AgentCell[] }> = [];

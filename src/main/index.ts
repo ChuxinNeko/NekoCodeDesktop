@@ -1,3 +1,4 @@
+import "./crash-diagnostics";
 import type { ExplainSelectionRequest } from "../shared/selection-explanation";
 import { SelectionExplanationService } from "./selection-explanation";
 import { PromptPredictionService } from "./prompt-prediction";
@@ -9,6 +10,7 @@ import { WorktreeService, type PreparedWorkspace } from "./worktree-service";
 import { McpService } from "./mcp/service";
 import { McpAuthStore } from "./mcp/oauth";
 import { AcpService } from "./acp/service";
+import { createAcpFileTools } from "./acp/file-tools";
 import { AcpConfigStore } from "./acp/config-store";
 import type { AcpToolServers } from "./acp/session";
 import { McpToolServer } from "./mcp/tool-server";
@@ -241,12 +243,6 @@ import {
 	type WebUiRpcMethod,
 } from "../shared/webui";
 
-// Set before anything reads app.getPath("userData"): launched as
-// `electron out/main/index.js` the entry directory has no package.json, so Electron
-// would otherwise name the app "Electron" and share that userData directory with
-// every other unnamed Electron app on the machine.
-app.setName("NekoCode Desktop");
-
 let taskManager: TaskManager | null = null;
 let taskNotifier: TaskNotifier | null = null;
 /** Outlives the window: preferences are read again when one is reopened. */
@@ -441,13 +437,10 @@ async function acpToolServers(session: { sessionId: string; cwd: string }): Prom
 				},
 			})
 		: [];
-	const { createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition, createReadToolDefinition } = await pi();
+	const piModule = await pi();
 	// Each carries its own parameter type; `any` is how pi itself holds a mixed set (its `ToolDef`).
 	const codeTools: ToolDefinition<any, any>[] = [
-		createReadToolDefinition(session.cwd),
-		createGrepToolDefinition(session.cwd),
-		createFindToolDefinition(session.cwd),
-		createLsToolDefinition(session.cwd),
+		...createAcpFileTools(piModule, session.cwd),
 		createStatTool(session.cwd),
 		createAstGrepTool(session.cwd),
 		...(semanticSearchEnabled() ? [createSemanticSearchTool(session.cwd)] : []),
@@ -455,6 +448,7 @@ async function acpToolServers(session: { sessionId: string; cwd: string }): Prom
 	];
 	const webTools = createWebTools();
 	const handle = await toolServer.register({
+		sessionId: session.sessionId,
 		tools: () => [
 			...codeTools,
 			// Read per request, like the rest: switching web access off in
@@ -558,6 +552,7 @@ function tokenStatsService(): TokenStatsService {
 		tokenStats = new TokenStatsService({
 			sessionDir: join(app.getPath("userData"), "sessions"),
 			automationDir: join(app.getPath("userData"), "automation-sessions"),
+			acpUsageDir: join(app.getPath("userData"), "acp-usage"),
 			providerLabels: () =>
 				Object.fromEntries(
 					(modelConfig?.list() ?? []).map((profile) => [`nekocode-${profile.id}`, profile.name]),
@@ -1470,6 +1465,7 @@ function registerIpc(): void {
 		(acpService ??= new AcpService({
 			clientVersion: app.getVersion(),
 			store: new AcpConfigStore(app.getPath("userData")),
+			usageDir: join(app.getPath("userData"), "acp-usage"),
 			appRoot: app.getAppPath(),
 			toolServers: acpToolServers,
 			// The same line diff NekoLocal's edit tool shows.
@@ -1490,9 +1486,15 @@ function registerIpc(): void {
 		}));
 	lanService?.setAcpProvider(acp);
 	ipcMain.handle("acp:state", () => acp().state());
-	ipcMain.handle("acp:snapshot", (_e, sessionId: string) => acp().view(sessionId));
-	ipcMain.handle("acp:create", (event, req: AcpCreateSessionRequest) => acp().create(req, `window:${event.sender.id}`));
-	ipcMain.handle("acp:open", (_e, req: AcpOpenSessionRequest) => acp().openHistory(req));
+	ipcMain.handle("acp:snapshot", (_e, sessionId: string, loadEarlier?: boolean) => acp().desktopView(sessionId, loadEarlier === true));
+	ipcMain.handle("acp:create", (event, req: AcpCreateSessionRequest) => {
+		const service = acp();
+		return service.desktopView(service.create(req, `window:${event.sender.id}`).id);
+	});
+	ipcMain.handle("acp:open", (_e, req: AcpOpenSessionRequest) => {
+		const service = acp();
+		return service.desktopView(service.openHistory(req).id);
+	});
 	ipcMain.handle("acp:history", (_e, agentId: string) => acp().history(agentId));
 	ipcMain.handle("acp:saveAgent", (_e, req: AcpSaveAgentRequest) => acp().saveAgent(req));
 	ipcMain.handle("acp:removeAgent", (_e, id: string) => acp().removeAgent(id));

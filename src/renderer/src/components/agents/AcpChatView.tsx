@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { api } from "../../api";
 import type {
 	AcpAgentInfo,
 	AcpConfigOption,
@@ -229,6 +230,45 @@ export function AcpChatView(props: AcpChatViewProps) {
 	const { t } = useTranslation();
 	const { agent, snapshot } = props;
 	const scroll = useStickToBottom(snapshot?.cells, snapshot?.id);
+	const [loadingEarlier, setLoadingEarlier] = useState(false);
+	const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+	const historyRequest = useRef(false);
+	const prepend = useRef<{ sessionId: string; height: number; top: number; earlier: number } | null>(null);
+	const currentSessionId = useRef(snapshot?.id);
+	currentSessionId.current = snapshot?.id;
+	useLayoutEffect(() => {
+		historyRequest.current = false;
+		prepend.current = null;
+		setLoadingEarlier(false);
+		setHistoryLoadError(null);
+	}, [snapshot?.id]);
+	useLayoutEffect(() => {
+		const saved = prepend.current;
+		const element = scroll.ref.current;
+		if (saved && element && saved.sessionId === snapshot?.id && (snapshot.earlierCells ?? 0) < saved.earlier) {
+			element.scrollTop = saved.top + element.scrollHeight - saved.height;
+			prepend.current = null;
+		}
+	}, [snapshot?.cells, snapshot?.id, scroll.ref]);
+	const loadEarlier = async () => {
+		if (!snapshot || historyRequest.current) return;
+		const id = snapshot.id;
+		historyRequest.current = true;
+		setLoadingEarlier(true);
+		setHistoryLoadError(null);
+		scroll.onUserInteraction();
+		const element = scroll.ref.current;
+		if (element) prepend.current = { sessionId: id, top: element.scrollTop, height: element.scrollHeight, earlier: snapshot.earlierCells ?? 0 };
+		try { await api.acpSnapshot(id, true); }
+		catch (error) {
+			if (currentSessionId.current === id) {
+				prepend.current = null;
+				setHistoryLoadError(error instanceof Error ? error.message : String(error));
+			}
+		} finally {
+			if (currentSessionId.current === id) { historyRequest.current = false; setLoadingEarlier(false); }
+		}
+	};
 	// A session opened for a message not yet sent still reads as a new
 	// conversation — its only visible part is the pickers it brought along.
 	const fresh = !snapshot || (snapshot.pristine && snapshot.cells.length === 0);
@@ -245,7 +285,7 @@ export function AcpChatView(props: AcpChatViewProps) {
 			),
 		[snapshot?.commands],
 	);
-	const error = snapshot?.error ?? props.error;
+	const error = snapshot?.error ?? props.error ?? historyLoadError;
 	const compact = props.compactHeader === true;
 
 	return (
@@ -274,7 +314,7 @@ export function AcpChatView(props: AcpChatViewProps) {
 				<div className="flex items-start gap-2 border-b border-[color:var(--app-surface-divider)] bg-destructive/6 px-3 py-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
 					<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{error}</span>
 					{snapshot?.error ? null : (
-						<Button onClick={props.onDismissError} size="icon-chip" variant="ghost">
+						<Button onClick={() => { setHistoryLoadError(null); props.onDismissError(); }} size="icon-chip" variant="ghost">
 							<XIcon className="size-3" />
 						</Button>
 					)}
@@ -287,6 +327,11 @@ export function AcpChatView(props: AcpChatViewProps) {
 						onWheel={scroll.onUserInteraction} onTouchStart={scroll.onUserInteraction}
 						onPointerDown={scroll.onUserInteraction} onKeyDown={scroll.onUserInteraction}>
 						<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+							{(snapshot.earlierCells ?? 0) > 0 ? (
+								<Button size="sm" variant="ghost" disabled={loadingEarlier} onClick={() => void loadEarlier()}>
+									{t(loadingEarlier ? "chat.loadingEarlier" : "chat.loadEarlier")}
+								</Button>
+							) : null}
 							{busy ? (
 								<div className={cn("flex items-center justify-center gap-2 py-10 text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
 									<Spinner className="size-3.5" />

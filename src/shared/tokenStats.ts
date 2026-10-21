@@ -35,6 +35,8 @@ export interface TokenCounts {
 }
 
 export interface TokenBucket extends TokenCounts {
+	/** External agent usage, kept distinct from direct API calls. */
+	source?: "acp";
 	/** Local calendar day, `YYYY-MM-DD`. */
 	date: string;
 	/** The provider id as the transcript recorded it (`nekocode-…` for endpoints). */
@@ -59,7 +61,7 @@ export interface TokenSessionRollup extends TokenCounts {
 	title: string;
 	cwd: string;
 	/** Scheduled runs spend tokens too, and are worth telling apart from chats. */
-	kind: "session" | "automation";
+	kind: "session" | "automation" | "acp";
 	startedAt: number;
 	updatedAt: number;
 }
@@ -437,6 +439,7 @@ export function tokenStreaks(days: readonly TokenDay[], today: string): TokenStr
 // Breakdowns ------------------------------------------------------------------
 
 export interface TokenBreakdownRow extends TokenCounts {
+	source?: "acp";
 	key: string;
 	label: string;
 	total: number;
@@ -455,10 +458,13 @@ export function breakdown(
 	const rows = new Map<string, TokenBreakdownRow>();
 	let grand = 0;
 	for (const bucket of buckets) {
-		const { key, label } = select(bucket);
+		const selected = select(bucket);
+		const { label } = selected;
+		const key = bucket.source === "acp" ? JSON.stringify(["acp", selected.key]) : selected.key;
 		let row = rows.get(key);
 		if (!row) {
 			row = { key, label, total: 0, share: 0, ...EMPTY_COUNTS };
+			if (bucket.source) row.source = bucket.source;
 			rows.set(key, row);
 		}
 		addCounts(row, bucket);

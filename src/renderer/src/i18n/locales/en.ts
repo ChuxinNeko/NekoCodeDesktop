@@ -603,6 +603,7 @@ export const en = {
 	// Chat ----------------------------------------------------------------------
 	"chat.cells": "{count} cells",
 	"chat.loadingEarlier": "Loading earlier messages…",
+	"chat.loadEarlier": "Load earlier messages",
 	"chat.openingSession": "Loading session…",
 	"transcript.outputRemaining": "Show the remaining {size}",
 	"transcript.outputTruncated": "{size} more — open on the desktop to see it all",

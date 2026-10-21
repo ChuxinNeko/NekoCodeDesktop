@@ -599,6 +599,7 @@ export const zhCN: Record<TranslationKey, string> = {
 	// Chat ----------------------------------------------------------------------
 	"chat.cells": "{count} 条记录",
 	"chat.loadingEarlier": "正在加载更早的消息…",
+	"chat.loadEarlier": "加载更早的消息",
 	"chat.openingSession": "正在加载会话…",
 	"transcript.outputRemaining": "显示剩余的 {size}",
 	"transcript.outputTruncated": "还有 {size}，请在电脑端查看完整内容",

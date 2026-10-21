@@ -3,8 +3,8 @@
  * plus the push channel to the window.
  *
  * Open sessions live as long as the app does. History is the agent's own —
- * `session/list` reads it, `session/load` reopens it — so nothing about a
- * conversation is stored here, and one started in the agent's own CLI shows up
+ * `session/list` reads it, `session/load` reopens it — only prompt usage is
+ * stored locally, and one started in the agent's own CLI shows up
  * next to the ones NekoCode started. Snapshots are coalesced: an agent can
  * stream hundreds of tiny updates a second and the window only needs to see
  * the latest one per frame or so.
@@ -35,6 +35,7 @@ import { AcpConnection, type AcpTransport } from "./connection";
 import { ACP_PROTOCOL_VERSION, AcpSession, type AcpToolServers } from "./session";
 import type { TextDiffer } from "./projection";
 import { openShellChanges, type ShellChangeTracker } from "./workspace-changes";
+import { AcpUsageStore } from "./usage-store";
 
 const PUSH_INTERVAL_MS = 50;
 /** A history listing keeps its agent process this long for the next one. */
@@ -50,6 +51,8 @@ const MAX_HISTORY_PAGES = 8;
 const MAX_IDLE_SESSIONS = 4;
 
 export interface AcpServiceOptions {
+	/** Durable prompt usage, read by the settings token dashboard. */
+	usageDir?: string;
 	clientVersion: string;
 	store: Pick<AcpConfigStore, "list" | "find" | "save" | "remove">;
 	emitState: (state: AcpState) => void;
@@ -111,7 +114,11 @@ export function parseHistoryPage(result: unknown): { entries: AcpHistoryEntry[];
 	return { entries, ...(typeof page.nextCursor === "string" && page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
 }
 
+const TRANSCRIPT_WINDOW_CELLS = 80;
+
 export class AcpService {
+	private readonly historyFrom = new Map<string, number>();
+	private readonly usageStore?: AcpUsageStore;
 	private readonly sessions = new Map<string, AcpSession>();
 	/** Unsent sessions belong to the client that opened their composer. */
 	private readonly warmOwners = new Map<string, string>();
@@ -121,7 +128,9 @@ export class AcpService {
 	private readonly touched = new Map<string, number>();
 	private timer: ReturnType<typeof setTimeout> | null = null;
 
-	constructor(private readonly options: AcpServiceOptions) {}
+	constructor(private readonly options: AcpServiceOptions) {
+		if (options.usageDir) this.usageStore = new AcpUsageStore(options.usageDir);
+	}
 
 	agents(): AcpAgentInfo[] {
 		const findCli = this.options.findCli ?? ((binary: AgentBinary) => resolveAgentBinary(binary));
@@ -159,6 +168,27 @@ export class AcpService {
 	view(sessionId: string): AcpSessionSnapshot | null {
 		if (this.sessions.has(sessionId)) this.touched.set(sessionId, Date.now());
 		return this.snapshot(sessionId);
+	}
+
+	/** Desktop IPC uses a paged window; mobile callers retain their existing full view. */
+	desktopView(sessionId: string, loadEarlier = false): AcpSessionSnapshot | null {
+		if (!this.sessions.has(sessionId)) return null;
+		this.touched.set(sessionId, Date.now());
+		if (loadEarlier) {
+			const total = this.snapshot(sessionId)?.cells.length ?? 0;
+			this.historyFrom.set(sessionId, Math.max(0, (this.historyFrom.get(sessionId) ?? Math.max(0, total - TRANSCRIPT_WINDOW_CELLS)) - TRANSCRIPT_WINDOW_CELLS));
+		} else this.historyFrom.delete(sessionId);
+		const snapshot = this.windowSnapshot(sessionId);
+		if (loadEarlier && snapshot) this.options.emitSnapshot(snapshot);
+		return snapshot;
+	}
+
+	/** Background streams and initial reads stay bounded until history is requested. */
+	private windowSnapshot(sessionId: string): AcpSessionSnapshot | null {
+		const snapshot = this.snapshot(sessionId);
+		if (!snapshot) return null;
+		const offset = Math.min(this.historyFrom.get(sessionId) ?? Math.max(0, snapshot.cells.length - TRANSCRIPT_WINDOW_CELLS), snapshot.cells.length);
+		return { ...snapshot, cells: snapshot.cells.slice(offset), ...(offset ? { earlierCells: offset } : {}) };
 	}
 
 	/** Close the least recently used idle sessions past the limit. */
@@ -215,6 +245,7 @@ export class AcpService {
 			clientVersion: this.options.clientVersion,
 			createTransport: (target, dir) => this.transport(target, dir),
 			onChange: () => this.markDirty(id),
+			onUsage: (usage, timestamp) => this.usageStore?.record(session.summary(), usage, timestamp),
 			...(resume ? { resume } : {}),
 			...(processCwd ? { processCwd } : {}),
 			...(this.options.toolServers
@@ -418,6 +449,7 @@ export class AcpService {
 	}
 
 	close(sessionId: string): void {
+		this.historyFrom.delete(sessionId);
 		const session = this.sessions.get(sessionId);
 		if (!session) return;
 		this.sessions.delete(sessionId);
@@ -429,6 +461,7 @@ export class AcpService {
 	}
 
 	dispose(): void {
+		this.historyFrom.clear();
 		if (this.timer) clearTimeout(this.timer);
 		this.timer = null;
 		for (const session of this.sessions.values()) session.dispose();
@@ -448,7 +481,7 @@ export class AcpService {
 		const ids = [...this.dirty];
 		this.dirty.clear();
 		for (const id of ids) {
-			const snapshot = this.snapshot(id);
+			const snapshot = this.windowSnapshot(id);
 			if (snapshot) this.options.emitSnapshot(snapshot);
 		}
 		if (ids.length > 0) this.options.emitState(this.state());

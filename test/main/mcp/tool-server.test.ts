@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DiagnosticLog, setDiagnosticLog } from "../../../src/main/diagnostic-log";
 import { McpToolServer, toMcpContent, toolDescription, type ToolServerHandle } from "../../../src/main/mcp/tool-server";
 
 function tool(overrides: Partial<ToolDefinition> & Pick<ToolDefinition, "name" | "execute">): ToolDefinition {
@@ -28,6 +32,23 @@ async function rpc(handle: ToolServerHandle, method: string, params?: unknown, i
 }
 
 describe("McpToolServer", () => {
+	test("failure diagnostics identify the session and tool without recording received arguments", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "neko-mcp-diagnostics-"));
+		const log = new DiagnosticLog(directory);
+		setDiagnosticLog(log);
+		try {
+			server = new McpToolServer({ version: "test", validate: () => { throw new Error('Invalid path\n\nReceived arguments:\n{"secret":"do-not-record"}'); } });
+			const handle = await server.register({ sessionId: "session-test", tools: () => [tool({ name: "read", execute: async () => ({ content: [], details: {} }) })] });
+			expect((await rpc(handle, "tools/call", { name: "read", arguments: { secret: "do-not-record" } })).body?.result.isError).toBe(true);
+			const text = readFileSync(log.path, "utf8");
+			expect(JSON.parse(text)).toMatchObject({ event: "mcp.toolFailed", details: { sessionId: "session-test", tool: "read", message: "Invalid path" } });
+			expect(text).not.toContain("do-not-record");
+		} finally {
+			setDiagnosticLog(undefined);
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	test("answers the MCP handshake and lists the registered tools", async () => {
 		server = new McpToolServer({ version: "1.2.3" });
 		const handle = await server.register({

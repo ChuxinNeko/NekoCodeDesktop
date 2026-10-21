@@ -363,7 +363,7 @@ export interface AgentApi {
 	onMcpChanged(listener: (snapshot: McpSnapshot) => void): () => void;
 	/** External ACP agents. Desktop only: the WebUI has no bridge for these. */
 	acpState(): Promise<AcpState>;
-	acpSnapshot(sessionId: string): Promise<AcpSessionSnapshot | null>;
+	acpSnapshot(sessionId: string, loadEarlier?: boolean): Promise<AcpSessionSnapshot | null>;
 	acpCreate(request: AcpCreateSessionRequest): Promise<AcpSessionSnapshot>;
 	acpOpen(request: AcpOpenSessionRequest): Promise<AcpSessionSnapshot>;
 	acpHistory(agentId: string): Promise<AcpHistory>;
