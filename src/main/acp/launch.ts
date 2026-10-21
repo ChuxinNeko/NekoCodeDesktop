@@ -1,3 +1,4 @@
+import { acpProviderEnv } from "./providers";
 /**
  * Turning an agent definition into a process to start.
  *
@@ -95,7 +96,7 @@ export function nativeLaunch(agent: AcpAgentDefinition & { native: NativeAgentCl
 }
 
 export function agentLaunch(agent: AcpAgentDefinition, context: LaunchContext): AgentLaunch {
-	agent = { ...agent, env: { ...agent.env, ...acpModelEnv(agent.id, agent.modelSettings) } };
+	agent = { ...agent, env: { ...agent.env, ...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)) } };
 	if (usesNativeCli(agent)) return nativeLaunch(agent, context);
 	if (!usesBundledAdapter(agent)) {
 		return { command: agent.command, args: [...agent.args], env: { ...agent.env }, shell: context.platform === "win32" };

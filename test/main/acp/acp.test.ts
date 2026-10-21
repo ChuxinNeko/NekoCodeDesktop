@@ -920,6 +920,29 @@ describe("AcpService", () => {
 		service.dispose();
 	});
 
+	test("switching providers reconnects unsent composers and preserves existing conversations", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "acp-provider-warm-"));
+		const store = new AcpConfigStore(dir);
+		const transports: FakeTransport[] = [];
+		const official = { id: "official", name: "Official", category: "official", websiteUrl: "", notes: "", config: "", apiKey: "", env: {} };
+		const custom = { ...official, id: "custom", name: "Custom", category: "custom", config: 'model_provider = "custom"\nmodel = "example"\n[model_providers.custom]\nbase_url = "https://example.test/v1"\nwire_api = "responses"', apiKey: "test-key" };
+		const providerState = { activeId: official.id, profiles: [official, custom] };
+		store.save({ ...store.find("codex")!, providerState });
+		const service = new AcpService({ clientVersion: "0", store, emitState: () => {}, emitSnapshot: () => {}, createTransport: historyAgent(transports) });
+		try {
+			const warm = service.create({ agentId: "codex", cwd: tmpdir(), warm: true }, "a");
+			const conversation = service.create({ agentId: "codex", cwd: tmpdir(), warm: true }, "b");
+			await service.prompt({ sessionId: conversation.id, text: "hello" });
+			service.saveAgent({ ...store.find("codex")!, providerState: { ...providerState, profiles: [official, { ...custom, notes: "updated inactive provider" }] } });
+			expect(service.snapshot(warm.id)).not.toBeNull();
+			service.saveAgent({ ...store.find("codex")!, providerState: { ...providerState, activeId: custom.id } });
+			expect(service.snapshot(warm.id)).toBeNull();
+			expect(service.snapshot(conversation.id)).not.toBeNull();
+			const next = service.create({ agentId: "codex", cwd: tmpdir(), warm: true }, "a");
+			expect(next.id).not.toBe(warm.id);
+		} finally { service.dispose(); rmSync(dir, { recursive: true, force: true }); }
+	});
+
 	test("warming is deduplicated only within the requesting window", async () => {
 		const transports: FakeTransport[] = [];
 		const service = new AcpService({

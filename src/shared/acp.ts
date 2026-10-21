@@ -23,9 +23,29 @@ export interface AcpModelSettings {
 	opus?: string;
 }
 
+/** A saved provider card, using the agent's native configuration format. */
+export interface AcpProviderProfile {
+	id: string;
+	name: string;
+	category: string;
+	presetId?: string;
+	websiteUrl: string;
+	notes: string;
+	/** Codex config.toml, or Claude settings.json. */
+	config: string;
+	apiKey: string;
+	env: Record<string, string>;
+}
+
+export interface AcpProviderState {
+	activeId: string;
+	profiles: AcpProviderProfile[];
+}
+
 /** How to launch one agent, as stored in settings. */
 export interface AcpAgentConfig {
 	modelSettings?: AcpModelSettings;
+	providerState?: AcpProviderState;
 	id: string;
 	name: string;
 	command: string;
@@ -69,6 +89,7 @@ export interface AcpAgentInfo extends AcpAgentConfig {
 
 export interface AcpSaveAgentRequest {
 	modelSettings?: AcpModelSettings;
+	providerState?: AcpProviderState;
 	/** Absent for a new custom agent. */
 	id?: string;
 	name: string;

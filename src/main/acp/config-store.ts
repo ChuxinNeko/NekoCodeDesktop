@@ -8,12 +8,14 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AcpModelSettings, AcpSaveAgentRequest } from "../../shared/acp";
+import type { AcpModelSettings, AcpProviderState, AcpSaveAgentRequest } from "../../shared/acp";
+import { validateAcpProviderState } from "./providers";
 import { validateAcpModelSettings } from "./model-settings";
 import { BUILTIN_ACP_AGENTS, type AcpAgentDefinition } from "./agents";
 
 interface StoredOverride {
 	modelSettings?: AcpModelSettings;
+	providerState?: AcpProviderState;
 	id: string;
 	name?: string;
 	command?: string;
@@ -24,6 +26,7 @@ interface StoredOverride {
 
 interface StoredCustom {
 	modelSettings?: AcpModelSettings;
+	providerState?: AcpProviderState;
 	id: string;
 	name: string;
 	command: string;
@@ -55,6 +58,11 @@ function storedModelSettings(id: string, raw: unknown): AcpModelSettings | undef
 	try { return validateAcpModelSettings(id, raw); } catch { return undefined; }
 }
 
+function storedProviderState(id: string, raw: unknown): AcpProviderState | undefined {
+	if (raw === undefined) return undefined;
+	try { return validateAcpProviderState(id, raw); } catch { return undefined; }
+}
+
 function parse(raw: unknown): StoredFile {
 	const file: StoredFile = { builtins: [], custom: [] };
 	if (!isObject(raw)) return file;
@@ -62,6 +70,7 @@ function parse(raw: unknown): StoredFile {
 		if (!isObject(entry) || typeof entry.id !== "string") continue;
 		file.builtins.push({
 			id: entry.id,
+			...(storedProviderState(entry.id, entry.providerState) ? { providerState: storedProviderState(entry.id, entry.providerState) } : {}),
 			...(storedModelSettings(entry.id, entry.modelSettings) ? { modelSettings: storedModelSettings(entry.id, entry.modelSettings) } : {}),
 			...(typeof entry.name === "string" ? { name: entry.name } : {}),
 			...(typeof entry.command === "string" ? { command: entry.command } : {}),
@@ -74,6 +83,7 @@ function parse(raw: unknown): StoredFile {
 		if (!isObject(entry) || typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.command !== "string") continue;
 		file.custom.push({
 			id: entry.id,
+			...(storedProviderState(entry.id, entry.providerState) ? { providerState: storedProviderState(entry.id, entry.providerState) } : {}),
 			...(storedModelSettings(entry.id, entry.modelSettings) ? { modelSettings: storedModelSettings(entry.id, entry.modelSettings) } : {}),
 			name: entry.name,
 			command: entry.command,
@@ -141,7 +151,8 @@ export class AcpConfigStore {
 		if (!command && !builtin?.bundled && !builtin?.native) throw new Error("请填写启动命令");
 		const file = this.load();
 		const modelSettings = request.modelSettings === undefined ? this.find(request.id ?? "")?.modelSettings : validateAcpModelSettings(request.id ?? "", request.modelSettings);
-		const fields = { ...(modelSettings ? { modelSettings } : {}), name, command, args: command ? [...request.args] : [], env: { ...request.env }, enabled: request.enabled };
+		const providerState = request.providerState === undefined ? this.find(request.id ?? "")?.providerState : validateAcpProviderState(request.id ?? "", request.providerState);
+		const fields = { ...(providerState ? { providerState } : {}), ...(modelSettings ? { modelSettings } : {}), name, command, args: command ? [...request.args] : [], env: { ...request.env }, enabled: request.enabled };
 		if (builtin) {
 			this.persist({
 				...file,

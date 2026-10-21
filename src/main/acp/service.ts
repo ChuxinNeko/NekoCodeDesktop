@@ -1,3 +1,5 @@
+import { acpProviderEnv, acpProviderSessionMeta } from "./providers";
+import { acpModelEnv } from "./model-settings";
 /**
  * The external agents a user has set up and the conversations open with them,
  * plus the push channel to the window.
@@ -203,7 +205,22 @@ export class AcpService {
 	}
 
 	saveAgent(request: AcpSaveAgentRequest): AcpAgentInfo[] {
+		const previous = request.id ? this.options.store.find(request.id) : undefined;
 		const saved = this.options.store.save(request);
+		const routing = (agent: AcpAgentDefinition) => JSON.stringify({
+			env: {
+				...agent.env,
+				...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)),
+			},
+			meta: acpProviderSessionMeta(agent.id, agent.providerState, agent.bundled?.sessionMeta),
+		});
+		// An unsent composer must reconnect with the newly selected provider.
+		if (previous && (!saved.enabled || routing(previous) !== routing(saved))) {
+			for (const session of this.sessions.values()) {
+				const summary = session.summary();
+				if (summary.agentId === saved.id && summary.pristine && summary.status !== "prompting") this.close(session.id);
+			}
+		}
 		// A changed command or environment has to reach the next listing.
 		this.dropLister(saved.id);
 		this.options.emitState(this.state());
@@ -221,7 +238,10 @@ export class AcpService {
 		const agent = this.options.store.find(agentId);
 		if (!agent) throw new Error(`未知的代理：${agentId}`);
 		if (!agent.enabled) throw new Error(`${agent.name} 已在设置中停用`);
-		return agent;
+		return { ...agent, ...(agent.bundled ? { bundled: { ...agent.bundled, sessionMeta: acpProviderSessionMeta(agent.id, agent.providerState, agent.bundled.sessionMeta) } } : {}), env: {
+			...agent.env,
+			...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)),
+		} };
 	}
 
 	private transport(agent: AcpAgentDefinition, cwd: string): AcpTransport {

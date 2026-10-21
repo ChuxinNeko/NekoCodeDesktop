@@ -97,6 +97,8 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 		return api.onAcpChanged((next) => {
 			setState(next);
 			const ids = new Set(next.sessions.map((session) => session.id));
+			setActiveByAgent((current) => Object.values(current).every((id) => !id || ids.has(id))
+				? current : Object.fromEntries(Object.entries(current).map(([id, sessionId]) => [id, sessionId && ids.has(sessionId) ? sessionId : null])));
 			setSnapshots((current) => [...current.keys()].every((id) => ids.has(id))
 				? current : new Map([...current].filter(([id]) => ids.has(id))));
 		});
