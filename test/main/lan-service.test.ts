@@ -392,3 +392,45 @@ test("mobile ACP routes share LAN and relay authorization, hide credentials, and
 	f.service.removeProject(project.id);
 	expect((await f.request("/api/acp/sessions/acp-session-123", undefined, token)).status).toBe(404);
 });
+
+describe("checkpoint-scoped mobile file diffs", () => {
+	test("LAN and relay share authenticated, paged, read-only diffs", async () => {
+		const f = await setup(); const token = await f.pair();
+		let patch = "新增内容\n".repeat(20000), reads = 0;
+		f.tasks.byId = async () => ({
+			listCheckpoints: () => [{ id: "checkpoint-1", files: [{ path: "src/chat.dart" }] }],
+			checkpointFileDiff: async (id: string, path: string) => {
+				expect(id).toBe("checkpoint-1"); expect(path).toBe("src/chat.dart"); reads++;
+				return { path, patch, additions: 20000, deletions: 1, binary: false };
+			},
+		}) as never;
+		const path = "/api/tasks/desktop-task/checkpoint-diff";
+		const input = { checkpointId: "checkpoint-1", path: "src/chat.dart" };
+		expect((await f.request(path, input)).status).toBe(401);
+		expect(reads).toBe(0);
+		const response = await f.request(path, input, token);
+		expect(response.status).toBe(200);
+		const first = await response.json();
+		expect(first.offset).toBe(0); expect(first.patch.length).toBe(64 * 1024);
+		expect(first.total).toBe(patch.length);
+		const second = await f.service.handleRelay("flutter-test-peer-123", { id: "relay-request-12345", method: "POST", path,
+			body: { ...input, offset: first.patch.length, version: first.version } });
+		expect(second.status).toBe(200);
+		const next = second.body as typeof first;
+		expect(first.patch + next.patch).toBe(patch);
+		patch = "changed while viewing";
+		const changed = await f.request(path, { ...input, offset: first.patch.length, version: first.version }, token);
+		const restart = await changed.json(); expect(restart.offset).toBe(0); expect(restart.patch).toBe(patch);
+		for (const bad of [
+			{ ...input, path: "../secret" }, { ...input, path: "/etc/passwd" },
+			{ ...input, path: "C:\\secret" }, { ...input, path: "src/\0chat.dart" },
+			{ ...input, offset: -1 }, { ...input, offset: 1.5 },
+			{ ...input, version: "bad-version" }, { ...input, checkpointId: "" },
+		]) expect((await f.request(path, bad, token)).status).toBe(400);
+		const before = reads;
+		for (const bad of [{ ...input, checkpointId: "another-task-checkpoint" }, { ...input, path: "not-recorded.dart" }]) {
+			expect((await f.request(path, bad, token)).status).toBe(404);
+		}
+		expect(reads).toBe(before);
+	});
+});

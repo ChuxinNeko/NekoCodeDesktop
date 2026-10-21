@@ -30,7 +30,7 @@ class ToolResult extends StatelessWidget {
         diff.isNotEmpty ||
         result.contains('@@ ') ||
         result.startsWith('diff --git');
-    if (showDiffOnly && isDiff) return _DiffView(text: result);
+    if (showDiffOnly && isDiff) return DiffView(text: result);
     final exit = details['exitCode'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -68,7 +68,7 @@ class ToolResult extends StatelessWidget {
             ),
           const SizedBox(height: 8),
         ],
-        if (isDiff) _DiffView(text: result),
+        if (isDiff) DiffView(text: result),
         if (exit != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -84,8 +84,8 @@ class ToolResult extends StatelessWidget {
   }
 }
 
-class _DiffView extends StatelessWidget {
-  const _DiffView({required this.text});
+class DiffView extends StatelessWidget {
+  const DiffView({super.key, required this.text});
   final String text;
 
   @override

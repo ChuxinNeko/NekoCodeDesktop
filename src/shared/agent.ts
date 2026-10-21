@@ -146,6 +146,8 @@ export type AgentCell =
 			 * where the transcript always carries the whole thing.
 			 */
 			outputTotal?: number;
+			/** Remote-only counts computed before args/details are truncated. */
+			changeStats?: { insertions: number; deletions: number };
 			details?: unknown;
 			status: "pending" | "running" | "done" | "error";
 			/** Tool arguments are still being generated; no file has been written yet. */
@@ -235,6 +237,8 @@ export interface AgentSnapshot {
 	 * offer the rewind on the prompt it would undo.
 	 */
 	checkpoints: CheckpointSummary[];
+	/** Remote-only latest-turn summary, computed before history/payload trimming. */
+	currentTurnChanges?: CheckpointSummary;
 	workflow: WorkflowSnapshot;
 	streaming: boolean;
 	modelKey: string | null;

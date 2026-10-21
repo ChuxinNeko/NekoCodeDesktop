@@ -322,10 +322,32 @@ export class LanService {
 				catch (error) { return { id, accepted: false, error: error instanceof Error ? error.message : String(error) }; }
 			});
 		}
-		const match = /^\/api\/tasks\/([a-zA-Z0-9-]+)(?:\/(abort|answer|send|configure|commands|cancel-worker|delta|tool-output|extension-answer))?$/.exec(path);
+		const match = /^\/api\/tasks\/([a-zA-Z0-9-]+)(?:\/(abort|answer|send|configure|commands|cancel-worker|delta|tool-output|extension-answer|checkpoint-diff))?$/.exec(path);
 		if (match && ((method === "GET" && (!match[2] || match[2] === "commands")) || (method === "POST" && match[2] && match[2] !== "commands"))) {
 			const agent = await this.tasks.byId(match[1]);
 			if (match[2] === "commands") return (await agent.slashCommands()).filter((c) => c.name !== "terminal");
+			if (match[2] === "checkpoint-diff") {
+				const input = body!;
+				if (typeof input.checkpointId !== "string" || !input.checkpointId || input.checkpointId.length > 200 ||
+					typeof input.path !== "string" || !input.path || input.path.length > 4096 || input.path.includes("\0") ||
+					/^(?:[/\\]|[a-z]:)/i.test(input.path) || input.path.split(/[/\\]/).includes("..")) {
+					throw new HttpError(400, "无效的文件差异请求");
+				}
+				if (input.offset !== undefined && (typeof input.offset !== "number" || !Number.isSafeInteger(input.offset) || input.offset < 0)) {
+					throw new HttpError(400, "无效的差异分页位置");
+				}
+				if (input.version !== undefined && (typeof input.version !== "string" || !/^[a-f0-9]{64}$/.test(input.version))) {
+					throw new HttpError(400, "无效的差异版本");
+				}
+				// Never expose an arbitrary filesystem path or a checkpoint from another task.
+				const checkpoint = agent.listCheckpoints().find((entry) => entry.id === input.checkpointId);
+				if (!checkpoint?.files.some((file) => file.path === input.path)) throw new HttpError(404, "该检查点没有记录这个文件的改动");
+				const diff = await agent.checkpointFileDiff(input.checkpointId, input.path);
+				const version = hash(diff.patch);
+				// A live file may change between pages. Restart instead of joining two revisions.
+				const offset = input.version === version ? Math.min((input.offset as number | undefined) ?? 0, diff.patch.length) : 0;
+				return { ...diff, patch: diff.patch.slice(offset, offset + 64 * 1024), offset, total: diff.patch.length, version };
+			}
 			if (match[2] === "tool-output") {
 				const input = body!;
 				if (typeof input.toolCallId !== "string" || !input.toolCallId || input.toolCallId.length > 200) {

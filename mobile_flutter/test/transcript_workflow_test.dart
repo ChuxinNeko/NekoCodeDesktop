@@ -1,15 +1,19 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:nekocode_mobile/core/desktop_client.dart';
 import 'package:nekocode_mobile/core/protocol.dart';
 import 'package:nekocode_mobile/features/mobile_controller.dart';
 import 'package:nekocode_mobile/features/chat/transcript.dart';
 import 'package:nekocode_mobile/features/chat/transcript_rows.dart';
+import 'package:nekocode_mobile/features/chat/work_stages.dart';
 import 'package:nekocode_mobile/ui/widgets.dart';
 
 import 'support.dart';
@@ -38,6 +42,53 @@ Json message(String id, String text) => {
 };
 
 void main() {
+  testWidgets('tool output pages use the authenticated desktop endpoint', (
+    tester,
+  ) async {
+    final calls = <Json>[];
+    final desktop =
+        DesktopClient(
+            MemoryStore(),
+            httpClient: MockClient((request) async {
+              expect(request.method, 'POST');
+              expect(request.url.path, '/api/tasks/task-1/tool-output');
+              final body = object(jsonDecode(request.body));
+              calls.add(body);
+              return http.Response(
+                jsonEncode({'text': 'tail', 'offset': 4, 'total': 8}),
+                200,
+              );
+            }),
+          )
+          ..mode = 'lan'
+          ..lan = {'endpoint': 'http://127.0.0.1:47832', 'token': 'test'};
+    final c = MobileController(desktop)..taskId = 'task-1';
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      themed(
+        Scaffold(
+          body: ToolCell(
+            cell: {
+              ...tool('t'),
+              'toolCallId': 'call-1',
+              'output': 'head',
+              'outputTotal': 8,
+            },
+            controller: c,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('读取文件'));
+    await tester.pump();
+    await tester.tap(find.text('加载更多输出'));
+    await tester.pumpAndSettle();
+    expect(calls.single, {'toolCallId': 'call-1', 'offset': 4});
+    expect(find.text('headtail'), findsWidgets);
+    expect(find.text('加载更多输出'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   if (const bool.fromEnvironment('WORKFLOW_PREVIEW')) {
     for (final brightness in Brightness.values) {
       testWidgets('preview ${brightness.name}', (tester) async {
@@ -267,11 +318,16 @@ void main() {
         }
 
         await show(true);
-        expect(find.text('Planning Next Step'), findsOneWidget);
+        final title = workStageLabel(groupWorkStages(row.items).single);
+        expect(find.text('Planning Next Step'), findsNothing);
+        expect(find.byType(WorkStageRow), findsOneWidget);
+        expect(find.byType(ToolCell), findsNothing);
+        await tester.tap(find.text(title));
+        await tester.pump();
         expect(find.byType(ToolCell), findsOneWidget);
         await tester.tap(find.text('读取文件'));
         await tester.pump();
-        expect(find.byType(StepOutputCard), findsOneWidget);
+        expect(find.byType(StepOutputCard), findsNWidgets(2));
         expect(find.text('Original mobile output'), findsWidgets);
         await show(false);
         expect(find.text('Planning Next Step'), findsNothing);
@@ -279,10 +335,13 @@ void main() {
         expect(find.text('· 1 tool call'), findsOneWidget);
         await tester.tap(find.textContaining('Worked for'));
         await tester.pump(const Duration(milliseconds: 200));
-        expect(find.byType(ToolCell), findsOneWidget);
+        expect(find.byType(WorkStageRow), findsOneWidget);
+        expect(find.byType(ToolCell), findsNothing);
+        await tester.tap(find.text(title));
+        await tester.pump();
         await tester.tap(find.text('读取文件'));
         await tester.pump();
-        expect(find.byType(StepOutputCard), findsOneWidget);
+        expect(find.byType(StepOutputCard), findsNWidgets(2));
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },

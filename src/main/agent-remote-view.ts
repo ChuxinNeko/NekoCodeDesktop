@@ -1,4 +1,6 @@
 import type { AgentCell, AgentSnapshot } from "../shared/agent";
+import { toolChangeStats } from "../shared/tool-change-stats";
+import { remoteTurnChanges } from "../shared/remote-turn-changes";
 
 /** Cells a remote client gets when it does not say how far back it already is. */
 export const REMOTE_WINDOW = 60;
@@ -141,7 +143,8 @@ function trimCell(cell: AgentCell, limits: TranscriptViewLimits): AgentCell {
 	// `task` results are a JSON control payload the transcript parses to find the
 	// worker a row started — a truncated one parses to nothing.
 	if (cell.toolName === "task") return cell;
-	const trimmed: AgentCell = { ...cell, args: trimValue(cell.args, limits) };
+	const stats = toolChangeStats(cell);
+	const trimmed: AgentCell = { ...cell, args: trimValue(cell.args, limits), ...(stats ? { changeStats: stats } : {}) };
 	if (cell.details !== undefined) trimmed.details = trimValue(cell.details, limits);
 	// The output keeps a clean prefix and a length instead of an inline marker:
 	// it is the one field with a way to fetch the rest, and appending a chunk to
@@ -188,7 +191,7 @@ export function remoteView(
 		start = i;
 	}
 	return {
-		snapshot: { ...snapshot, cells: trimmed.slice(start - offset) },
+		snapshot: { ...snapshot, currentTurnChanges: remoteTurnChanges(snapshot), cells: trimmed.slice(start - offset) },
 		more: start > 0,
 		earlier: start,
 	};

@@ -35,6 +35,17 @@ void main() {
       final id = created['id'] as String;
       final first = await desktop.sync(id);
       expect(records(first['cells']).first['text'], '初始消息');
+      final diff = object(
+        await desktop.request('/api/tasks/$id/checkpoint-diff', {
+          'checkpointId': 'checkpoint-1',
+          'path': 'lib/main.dart',
+          'offset': 0,
+        }),
+      );
+      expect(diff['patch'], contains('+new'));
+      expect(diff['version'], matches(RegExp(r'^[a-f0-9]{64}$')));
+      expect(diff['offset'], 0);
+      expect(diff['total'], (diff['patch'] as String).length);
       await desktop.submit('/api/tasks/$id/send', {'text': '继续执行'});
       final next = await desktop.sync(id);
       expect(records(next['cells']).last['text'], '继续执行');

@@ -14,6 +14,8 @@ import '../home/welcome_view.dart';
 import '../mobile_controller.dart';
 import 'attachments.dart';
 import 'configuration.dart';
+import 'file_changes.dart';
+import 'edited_files.dart';
 import 'run_details.dart';
 import 'transcript.dart';
 import 'transcript_rows.dart';
@@ -478,6 +480,14 @@ class _ChatPageState extends State<ChatPage> {
     }
     final items = transcriptRows(cells, streaming: streaming);
     final waiting = waitingOnModel(cells, streaming);
+    final changes = c.isAcp
+        ? <String, TurnChanges>{}
+        : completedTurnChanges(
+            items,
+            records(c.snapshot?['checkpoints']),
+            streaming: streaming,
+            currentHint: snapshotTurnChanges(c.snapshot ?? {}),
+          );
     final lastUser = items.lastIndexWhere((row) => row.kind == 'user');
     final planning = waiting && (items.isEmpty || items.last.kind != 'work');
     final more = c.desktop.more && !c.isAcp;
@@ -524,16 +534,25 @@ class _ChatPageState extends State<ChatPage> {
           );
         }
         final item = items[index];
-        if (item.kind == 'work') {
-          return WorkingBlock(
-            key: ValueKey(item.id),
-            row: item,
-            controller: c,
-            active: streaming && index > lastUser,
-            waiting: waiting && index == items.length - 1,
-          );
-        }
-        return TranscriptItem(key: ValueKey(item.id), row: item, controller: c);
+        final content = item.kind == 'work'
+            ? WorkingBlock(
+                key: ValueKey(item.id),
+                row: item,
+                controller: c,
+                active: streaming && index > lastUser,
+                waiting: waiting && index == items.length - 1,
+              )
+            : TranscriptItem(key: ValueKey(item.id), row: item, controller: c);
+        final changed = changes[item.id];
+        return Column(
+          key: ValueKey('row-${item.id}'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            content,
+            if (changed != null)
+              EditedFilesCapsule(changes: changed, controller: c),
+          ],
+        );
       },
     );
   }
@@ -544,6 +563,9 @@ class _ChatPageState extends State<ChatPage> {
     bool running,
     bool blocked,
   ) {
+    final liveChanges = !c.isAcp && c.snapshot?['streaming'] == true
+        ? snapshotTurnChanges(c.snapshot!)
+        : null;
     // Keep the inset dependency out of ChatPage/GlassPage: IME animation
     // should update only this padding, without rebuilding the transcript.
     final content = RepaintBoundary(
@@ -559,6 +581,8 @@ class _ChatPageState extends State<ChatPage> {
           ),
           if (c.snapshot?['error'] != null && c.snapshot?['error'] != c.error)
             ErrorNotice(string(c.snapshot?['error'])),
+          if (liveChanges != null)
+            EditedFilesCapsule(changes: liveChanges, controller: c, live: true),
           WorkflowPanel(controller: c),
           ExtensionWidgets(
             ui: extension,

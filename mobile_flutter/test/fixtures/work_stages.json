@@ -1,0 +1,1042 @@
+[
+  {
+    "name": "read and search share investigation",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-0",
+        "cell": {
+          "type": "tool",
+          "id": "cell-1",
+          "toolCallId": "call-1",
+          "toolName": "read",
+          "args": {
+            "path": "README.md"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-1",
+        "cell": {
+          "type": "tool",
+          "id": "cell-2",
+          "toolCallId": "call-2",
+          "toolName": "grep",
+          "args": {
+            "pattern": "main"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查实现与相关调用",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-0",
+            "text": ""
+          },
+          {
+            "kind": "tool",
+            "id": "tool-1",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "explicit objectives split prose",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-2-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-2",
+          "text": "",
+          "thinking": "## 检查消息结构\n保留思考内容。\n\n## 修改消息样式\n保留下一段。",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-3",
+        "cell": {
+          "type": "tool",
+          "id": "cell-4",
+          "toolCallId": "call-4",
+          "toolName": "edit",
+          "args": {
+            "path": "lib/chat.dart"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查消息结构",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-2-thinking-part-0",
+            "text": "## 检查消息结构\n保留思考内容。\n"
+          }
+        ]
+      },
+      {
+        "id": "stage-0-1",
+        "title": "修改消息样式",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-2-thinking-part-1",
+            "text": "## 修改消息样式\n保留下一段。"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-3",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "narrative never becomes a title",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-4-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-4",
+          "text": "",
+          "thinking": "我先看一下项目入口，随后检查调用。",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-5",
+        "cell": {
+          "type": "tool",
+          "id": "cell-6",
+          "toolCallId": "call-6",
+          "toolName": "read",
+          "args": {
+            "path": "src/main.ts"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查项目入口与启动配置",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-4-thinking",
+            "text": "我先看一下项目入口，随后检查调用。"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-5",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "headings inside fences stay literal",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-6-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-6",
+          "text": "",
+          "thinking": "```markdown\n## 错误标题\n~~~\n```\n    ## 缩进示例\n## 检查组件结构\n保留内容",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-7",
+        "cell": {
+          "type": "tool",
+          "id": "cell-8",
+          "toolCallId": "call-8",
+          "toolName": "read",
+          "args": {
+            "path": "components/Transcript.tsx"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-1",
+        "title": "检查组件结构",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-6-thinking-part-0",
+            "text": "```markdown\n## 错误标题\n~~~\n```\n    ## 缩进示例"
+          },
+          {
+            "kind": "thinking",
+            "id": "thought-6-thinking-part-1",
+            "text": "## 检查组件结构\n保留内容"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-7",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "phases split explicit plan and execution",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-8-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-8",
+          "text": "",
+          "thinking": "## 设计页面结构\n布局约束",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-9",
+        "cell": {
+          "type": "tool",
+          "id": "cell-10",
+          "toolCallId": "call-10",
+          "toolName": "read",
+          "args": {
+            "path": "README.md"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-10",
+        "cell": {
+          "type": "tool",
+          "id": "cell-11",
+          "toolCallId": "call-11",
+          "toolName": "edit",
+          "args": {
+            "path": "src/index.css"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-11",
+        "cell": {
+          "type": "tool",
+          "id": "cell-12",
+          "toolCallId": "call-12",
+          "toolName": "bash",
+          "args": {
+            "command": "bun test"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-12",
+        "cell": {
+          "type": "tool",
+          "id": "cell-13",
+          "toolCallId": "call-13",
+          "toolName": "bash",
+          "args": {
+            "command": "bun run build"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "设计页面结构",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-8-thinking",
+            "text": "## 设计页面结构\n布局约束"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-9",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-2-0",
+        "title": "调整主题与布局样式",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-10",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-3-0",
+        "title": "检查类型与测试结果",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-11",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-4-0",
+        "title": "编译界面并检查构建结果",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-12",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "same response reasoning and text merge",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "same-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "same",
+          "text": "",
+          "thinking": "## 检查消息组件\n推理",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "message",
+        "id": "same-message",
+        "cell": {
+          "type": "assistant",
+          "id": "same",
+          "text": "## 检查消息结构\n说明",
+          "thinking": "",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-13",
+        "cell": {
+          "type": "tool",
+          "id": "cell-14",
+          "toolCallId": "call-14",
+          "toolName": "read",
+          "args": {
+            "path": "components/chat.tsx"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查消息结构",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "same-thinking",
+            "text": "## 检查消息组件\n推理"
+          },
+          {
+            "kind": "message",
+            "id": "same-message",
+            "text": "## 检查消息结构\n说明"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-13",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "file titles use objective fallback",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-14",
+        "cell": {
+          "type": "tool",
+          "id": "cell-15",
+          "toolCallId": "call-15",
+          "toolName": "read",
+          "args": {
+            "path": "src/main.ts",
+            "description": "读取 src/main.ts"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-15",
+        "cell": {
+          "type": "tool",
+          "id": "cell-16",
+          "toolCallId": "call-16",
+          "toolName": "read",
+          "args": {
+            "path": "package.json"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查项目入口与启动配置",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-14",
+            "text": ""
+          },
+          {
+            "kind": "tool",
+            "id": "tool-15",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "topic switches without mixing",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-16",
+        "cell": {
+          "type": "tool",
+          "id": "cell-17",
+          "toolCallId": "call-17",
+          "toolName": "read",
+          "args": {
+            "path": "src/index.css"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-17",
+        "cell": {
+          "type": "tool",
+          "id": "cell-18",
+          "toolCallId": "call-18",
+          "toolName": "read",
+          "args": {
+            "path": "test/chat.test.ts"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-18",
+        "cell": {
+          "type": "tool",
+          "id": "cell-19",
+          "toolCallId": "call-19",
+          "toolName": "edit",
+          "args": {
+            "path": "test/chat.test.ts"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查主题变量与布局常量",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-16",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-1-0",
+        "title": "检查测试范围与断言",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-17",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-2-0",
+        "title": "补充测试与回归断言",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-18",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "empty placeholders make no stages",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-19-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-19",
+          "text": "",
+          "thinking": " \n### ** `",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "message",
+        "id": "message-20-message",
+        "cell": {
+          "type": "assistant",
+          "id": "message-20",
+          "text": "  ",
+          "thinking": "",
+          "timestamp": 1
+        }
+      }
+    ],
+    "expected": []
+  },
+  {
+    "name": "wrong language headings stay details",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-21-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-21",
+          "text": "",
+          "thinking": "## Inspect Message Layout\nEnglish reasoning",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-22",
+        "cell": {
+          "type": "tool",
+          "id": "cell-23",
+          "toolCallId": "call-23",
+          "toolName": "read",
+          "args": {
+            "path": "components/chat.tsx"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查界面组件与调用关系",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-21-thinking",
+            "text": "## Inspect Message Layout\nEnglish reasoning"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-22",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "notices and all prose survive",
+    "items": [
+      {
+        "kind": "notice",
+        "id": "notice-23",
+        "cell": {
+          "type": "notice",
+          "id": "n-24",
+          "text": "提示一",
+          "timestamp": 3,
+          "level": "info"
+        }
+      },
+      {
+        "kind": "thinking",
+        "id": "thought-24-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-24",
+          "text": "",
+          "thinking": "无标题推理",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-25",
+        "cell": {
+          "type": "tool",
+          "id": "cell-26",
+          "toolCallId": "call-26",
+          "toolName": "read",
+          "args": {
+            "path": "README.md"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "notice",
+        "id": "notice-26",
+        "cell": {
+          "type": "notice",
+          "id": "n-27",
+          "text": "提示二",
+          "timestamp": 3,
+          "level": "info"
+        }
+      },
+      {
+        "kind": "message",
+        "id": "message-27-message",
+        "cell": {
+          "type": "assistant",
+          "id": "message-27",
+          "text": "无标题说明",
+          "thinking": "",
+          "timestamp": 1
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查实现与相关调用",
+        "completed": false,
+        "items": [
+          {
+            "kind": "notice",
+            "id": "notice-23",
+            "text": "提示一"
+          },
+          {
+            "kind": "thinking",
+            "id": "thought-24-thinking",
+            "text": "无标题推理"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-25",
+            "text": ""
+          },
+          {
+            "kind": "notice",
+            "id": "notice-26",
+            "text": "提示二"
+          },
+          {
+            "kind": "message",
+            "id": "message-27-message",
+            "text": "无标题说明"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "unknown commands stay in current stage",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-28",
+        "cell": {
+          "type": "tool",
+          "id": "cell-29",
+          "toolCallId": "call-29",
+          "toolName": "read",
+          "args": {
+            "path": "README.md"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-29",
+        "cell": {
+          "type": "tool",
+          "id": "cell-30",
+          "toolCallId": "call-30",
+          "toolName": "bash",
+          "args": {
+            "command": "echo test"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-30",
+        "cell": {
+          "type": "tool",
+          "id": "cell-31",
+          "toolCallId": "call-31",
+          "toolName": "bash",
+          "args": {
+            "command": "npm test"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查实现与相关调用",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-28",
+            "text": ""
+          },
+          {
+            "kind": "tool",
+            "id": "tool-29",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-2-0",
+        "title": "检查类型与测试结果",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-30",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "headings survive streaming persistence",
+    "items": [
+      {
+        "kind": "thinking",
+        "id": "thought-31-thinking",
+        "cell": {
+          "type": "assistant",
+          "id": "thought-31",
+          "text": "",
+          "thinking": "## 修复消息布局\n思考",
+          "timestamp": 1
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-32",
+        "cell": {
+          "type": "tool",
+          "id": "cell-33",
+          "toolCallId": "call-33",
+          "toolName": "edit",
+          "args": {
+            "path": "chat.dart"
+          },
+          "status": "running",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "修复消息布局",
+        "completed": false,
+        "items": [
+          {
+            "kind": "thinking",
+            "id": "thought-31-thinking",
+            "text": "## 修复消息布局\n思考"
+          },
+          {
+            "kind": "tool",
+            "id": "tool-32",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "explicit completion separates planning",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-33",
+        "cell": {
+          "type": "tool",
+          "id": "cell-34",
+          "toolCallId": "call-34",
+          "toolName": "read",
+          "args": {
+            "path": "README.md"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "message",
+        "id": "message-34-message",
+        "cell": {
+          "type": "assistant",
+          "id": "message-34",
+          "text": "本阶段已完成。",
+          "thinking": "",
+          "timestamp": 1
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查实现与相关调用",
+        "completed": true,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-33",
+            "text": ""
+          },
+          {
+            "kind": "message",
+            "id": "message-34-message",
+            "text": "本阶段已完成。"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tool completion alone is not stage completion",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-35",
+        "cell": {
+          "type": "tool",
+          "id": "cell-36",
+          "toolCallId": "call-36",
+          "toolName": "read",
+          "args": {
+            "path": "README.md"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "检查实现与相关调用",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-35",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tool descriptions are scoped objectives",
+    "items": [
+      {
+        "kind": "tool",
+        "id": "tool-36",
+        "cell": {
+          "type": "tool",
+          "id": "cell-37",
+          "toolCallId": "call-37",
+          "toolName": "bash",
+          "args": {
+            "command": "node script.js",
+            "description": "修改界面组件与交互"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "tool-37",
+        "cell": {
+          "type": "tool",
+          "id": "cell-38",
+          "toolCallId": "call-38",
+          "toolName": "bash",
+          "args": {
+            "command": "node test.js",
+            "description": "验证交互行为"
+          },
+          "status": "done",
+          "output": "",
+          "timestamp": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "stage-0-0",
+        "title": "修改界面组件与交互",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-36",
+            "text": ""
+          }
+        ]
+      },
+      {
+        "id": "stage-1-0",
+        "title": "验证交互行为",
+        "completed": false,
+        "items": [
+          {
+            "kind": "tool",
+            "id": "tool-37",
+            "text": ""
+          }
+        ]
+      }
+    ]
+  }
+]

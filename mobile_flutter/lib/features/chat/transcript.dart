@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -9,6 +11,9 @@ import '../../ui/theme.dart';
 import '../../ui/widgets.dart';
 import '../mobile_controller.dart';
 import 'tool_presentation.dart';
+import 'work_stages.dart';
+import 'file_changes.dart';
+import 'edited_files.dart';
 import 'tool_result.dart';
 import 'transcript_rows.dart';
 import 'workflow_style.dart';
@@ -361,16 +366,16 @@ class _WorkingBlockState extends State<WorkingBlock> {
   @override
   Widget build(BuildContext context) {
     final tools = widget.row.items.where((i) => i.kind == 'tool').length;
-    final last = widget.row.items.lastOrNull;
-    final cell = last?.cell ?? <String, dynamic>{};
-    final summary = widget.waiting
+    final stages = groupWorkStages(widget.row.items);
+    final betweenStages =
+        widget.active && workStageCompleted(stages.lastOrNull);
+    final planning = widget.active && (stages.isEmpty || betweenStages);
+    final last = stages.lastOrNull;
+    final summary = planning
         ? 'Planning Next Step'
-        : last?.kind == 'tool'
-        ? presentTool(cell).subject
-        : string(
-                last?.kind == 'thinking' ? cell['thinking'] : cell['text'],
-              ).split('\n').where((s) => s.trim().isNotEmpty).lastOrNull ??
-              '';
+        : last == null
+        ? ''
+        : workStageLabel(last);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
@@ -415,24 +420,27 @@ class _WorkingBlockState extends State<WorkingBlock> {
           ),
           if (open) ...[
             const SizedBox(height: 6),
-            WorkflowStyle.rail(
-              context,
-              Column(
+            Padding(
+              padding: const EdgeInsets.only(left: 1),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (var i = 0; i < widget.row.items.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 8),
-                    TranscriptItem(
-                      key: ValueKey(widget.row.items[i].id),
-                      row: widget.row.items[i],
+                  for (var i = 0; i < stages.length; i++)
+                    WorkStageRow(
+                      key: ValueKey(stages[i].id),
+                      stage: stages[i],
                       controller: widget.controller,
-                      insideWork: true,
+                      active: widget.active,
+                      current:
+                          widget.active &&
+                          i == stages.length - 1 &&
+                          !betweenStages,
                     ),
-                  ],
-                  if (widget.waiting) ...[
-                    if (widget.row.items.isNotEmpty) const SizedBox(height: 8),
-                    const PlanningLine(),
-                  ],
+                  if (planning)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 12, top: 4, bottom: 8),
+                      child: PlanningLine(),
+                    ),
                 ],
               ),
             ),
@@ -441,7 +449,7 @@ class _WorkingBlockState extends State<WorkingBlock> {
             WorkflowStyle.rail(
               context,
               WorkflowShimmer(
-                active: widget.waiting,
+                active: widget.active,
                 child: Text(
                   summary,
                   maxLines: 1,
@@ -453,6 +461,140 @@ class _WorkingBlockState extends State<WorkingBlock> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The second disclosure level is initially closed, like desktop WorkStageRow.
+class WorkStageRow extends StatefulWidget {
+  const WorkStageRow({
+    super.key,
+    required this.stage,
+    required this.controller,
+    required this.active,
+    required this.current,
+  });
+  final WorkStage stage;
+  final MobileController controller;
+  final bool active, current;
+  @override
+  State<WorkStageRow> createState() => _WorkStageRowState();
+}
+
+class _WorkStageRowState extends State<WorkStageRow> {
+  bool open = false;
+  @override
+  Widget build(BuildContext context) {
+    final stage = widget.stage;
+    final running =
+        widget.active &&
+        (widget.current ||
+            stage.items.any(
+              (item) =>
+                  item.kind == 'tool' &&
+                  ['running', 'pending'].contains(item.cell?['status']),
+            ));
+    if (!workStageHasDetails(stage)) {
+      return running ? const PlanningLine() : const SizedBox.shrink();
+    }
+    final changes = stageChanges(stage.items, active: widget.active);
+    final hasChanges =
+        changes.additions > 0 ||
+        changes.deletions > 0 ||
+        (running &&
+            stage.items.any(
+              (i) =>
+                  i.kind == 'tool' &&
+                  i.cell?['status'] != 'error' &&
+                  ['edit', 'write', 'writeFile'].contains(i.cell?['toolName']),
+            ));
+    final title = workStageLabel(stage);
+    return Container(
+      margin: const EdgeInsets.only(left: 3),
+      padding: const EdgeInsets.only(left: 18, bottom: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: running
+                ? context.mx.primary.withValues(alpha: .7)
+                : WorkflowStyle.rule(context),
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            button: true,
+            expanded: open,
+            headingLevel: 2,
+            label: title,
+            child: MiuixPressable(
+              semanticLabel: title,
+              onPressed: () => setState(() => open = !open),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Flexible(
+                      child: WorkflowShimmer(
+                        active: running,
+                        child: Text(
+                          title,
+                          style: WorkflowStyle.text(
+                            context,
+                            13,
+                          ).copyWith(height: 24 / 13),
+                        ),
+                      ),
+                    ),
+                    if (hasChanges) ...[
+                      const SizedBox(width: 6),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: DiffStat(
+                          additions: changes.additions,
+                          deletions: changes.deletions,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 6),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: WorkflowChevron(open: open),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (open)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < stage.items.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 8),
+                    if (stage.items[i].kind == 'thinking')
+                      SelectableText(
+                        string(stage.items[i].cell?['thinking']),
+                        style: WorkflowStyle.text(context, 11),
+                      )
+                    else
+                      TranscriptItem(
+                        key: ValueKey(stage.items[i].id),
+                        row: stage.items[i],
+                        controller: widget.controller,
+                        insideWork: true,
+                      ),
+                  ],
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -566,18 +708,29 @@ class _ToolCellState extends State<ToolCell> {
   }
 
   Future<void> fetchExtra() async {
-    if (loading || extra.isNotEmpty || widget.controller.taskId == null) return;
+    if (loading || widget.controller.taskId == null) return;
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      final res = await widget.controller.desktop.request(
-        '/api/tasks/${Uri.encodeComponent(widget.controller.taskId!)}/tool-result/${Uri.encodeComponent(string(widget.cell['id']))}',
+      final prefix = extra.isNotEmpty ? extra : string(widget.cell['output']);
+      final res = object(
+        await widget.controller.desktop.request(
+          '/api/tasks/${Uri.encodeComponent(widget.controller.taskId!)}/tool-output',
+          {
+            'toolCallId': string(
+              widget.cell['toolCallId'],
+              string(widget.cell['id']),
+            ),
+            'offset': prefix.length,
+          },
+        ),
       );
+      if (res['offset'] != prefix.length) throw ApiError('工具输出已变化，请重新展开后重试');
       if (mounted) {
         setState(() {
-          extra = string(res['output']);
+          extra = prefix + string(res['text']);
           loading = false;
         });
       }
@@ -599,7 +752,9 @@ class _ToolCellState extends State<ToolCell> {
     final effective = extra.isNotEmpty ? extra : output;
     final running = widget.cell['status'] == 'running';
     final failed = widget.cell['status'] == 'error';
-    final hasMore = widget.cell['truncated'] == true && extra.isEmpty;
+    final hasMore = widget.cell['outputTotal'] is num
+        ? effective.length < (widget.cell['outputTotal'] as num).toInt()
+        : widget.cell['truncated'] == true && extra.isEmpty;
     final fallback = running ? (pres.isShell ? '等待命令输出…' : '执行中…') : '(无输出)';
 
     return Column(
@@ -614,6 +769,14 @@ class _ToolCellState extends State<ToolCell> {
           onTap: () => setState(() => expanded = !expanded),
         ),
         if (expanded) ...[
+          if (widget.cell['args'] != null)
+            StepOutputCard(
+              title: '调用参数',
+              output: const JsonEncoder.withIndent(
+                '  ',
+              ).convert(widget.cell['args']),
+              maxHeight: 160,
+            ),
           if (!pres.isShell)
             ToolResult(
               cell: widget.cell,
