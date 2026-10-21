@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import type {
 	PullRequestDetail,
 	PullRequestFilter,
@@ -150,7 +150,7 @@ function CommentCard({
 					) : null}
 				</div>
 				<div className="chat-markdown">
-					<ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+					<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins}>{body}</ReactMarkdown>
 				</div>
 			</div>
 		</div>
@@ -441,7 +441,7 @@ export function PullRequestsPage({ cwd, onClose }: { cwd: string | null; onClose
 
 								{detail.body.trim().length > 0 ? (
 									<div className="chat-markdown">
-										<ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.body}</ReactMarkdown>
+										<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins}>{detail.body}</ReactMarkdown>
 									</div>
 								) : null}
 

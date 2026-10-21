@@ -90,6 +90,23 @@ bun run build && ./node_modules/electron/dist/electron out/main/index.js /path/t
 
 Browser 是一个可拖拽调宽的右侧停靠面板；其余是侧栏里的整页视图。
 
+## 数学公式
+
+桌面端与 React 手机端的 Markdown 支持 LaTeX 数学公式，使用本地 KaTeX 渲染，
+无需联网加载字体或公式服务：
+
+- 行内公式：`$e^{i\pi}+1=0$`
+- 独立公式：将 `$$` 分别放在公式前后的单独一行，例如：
+
+```markdown
+$$
+\frac{-b \pm \sqrt{b^2-4ac}}{2a}
+$$
+```
+
+普通代码块和行内代码中的公式示例保持原文；普通金额可写成 `\$5` 避免被当成公式。
+无效或尚未接收完整的公式不会中断消息显示；过宽的独立公式可以横向滚动。
+
 ## AI 交互式回复（OpenUI）
 
 内置 PI 会话支持 [OpenUI](https://www.openui.com/)：AI 可以在回复中生成可点击的按钮、

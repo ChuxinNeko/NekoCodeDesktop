@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import type { GitHubFileChange } from "../../../../shared/github-client";
 import { api } from "../../api";
 import { useTranslation } from "../../i18n";
@@ -122,7 +122,7 @@ export function GhMarkdown({ text }: { text: string }) {
   return (
     <div className="chat-markdown gh-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins}
         components={{
           a: ({ href, children }) => (
             <button

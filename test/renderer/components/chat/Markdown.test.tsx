@@ -56,3 +56,50 @@ test("unfinished OpenUI fences are recognized during streaming", () => {
 	const html = render('```openui\nroot = Card([heading])\nheading = CardHeader("Cho', { streaming: true });
 	expect(html).toContain('data-slot="openui-response"');
 });
+
+test("inline and display math render with accessible KaTeX markup", () => {
+	const html = render("欧拉公式 $e^{i\\pi}+1=0$。\n\n$$\n\\frac{a}{b} = \\sqrt{c}\n$$");
+	expect(html).toContain('class="katex"');
+	expect(html).toContain('class="katex-display"');
+	expect(html).toContain('class="katex-mathml"');
+	expect(html).toContain('<mfrac>');
+	expect(html).toContain('encoding="application/x-tex"');
+	expect(html).toContain("欧拉公式");
+	expect(html).not.toContain('class="language-math');
+	expect(html).not.toContain("<pre>");
+});
+
+test("math works in user messages, lists and GFM tables", () => {
+	const text = "- 求 $x^2$\n\n| 公式 |\n| --- |\n| $\\alpha + \\beta$ |";
+	for (const user of [false, true]) {
+		const html = render(text, { user });
+		expect(html).toContain("<ul>");
+		expect(html).toContain("<table>");
+		expect(html.match(/class="katex"/g)).toHaveLength(2);
+	}
+});
+
+test("formula examples inside code and escaped currency stay literal", () => {
+	const html = render("`$x^2$`\n\n```latex\n$$\\frac{1}{2}$$\n```\n\n价格 \\$5，另一个 \\$10。");
+	expect(html).toContain("<code>$x^2$</code>");
+	expect(html).toContain('class="language-latex"');
+	expect(html).toContain("$$\\frac{1}{2}$$");
+	expect(html).toContain("价格 $5，另一个 $10。");
+	expect(html).not.toContain('class="katex"');
+});
+
+test("invalid and unfinished streaming formulas never crash the message", () => {
+	expect(render("Before $\\frac{1}{$ after")).toContain('class="katex-error"');
+	expect(render("Before $x^", { streaming: true })).toContain("Before $x^");
+	const partial = render("Before\n\n$$\n\\frac{1}{", { streaming: true });
+	expect(partial).toContain("Before");
+	expect(partial).toContain('class="katex-error"');
+	expect(render("$$\n\\frac{1}{2}\n$$", { streaming: false })).toContain('class="katex-display"');
+});
+
+test("untrusted TeX cannot inject links, HTML attributes or remote images", () => {
+	const html = render("$\\href{javascript:alert(1)}{click}$ $\\includegraphics{https://example.com/track.png}$ $\\htmlClass{injected}{x}$");
+	expect(html).not.toContain('href="javascript:');
+	expect(html).not.toContain("<img");
+	expect(html).not.toContain('class="injected"');
+});

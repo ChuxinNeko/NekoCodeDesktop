@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 @import "./components/beautiful-ui/foundation.css";
 /* Both Electron and Android compile these shared component utilities. */
 @source "./";

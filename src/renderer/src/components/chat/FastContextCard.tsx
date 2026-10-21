@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import type { AgentCell } from "../../../../shared/agent";
 import type { ExplorerRun } from "../../../../shared/workflow";
 import { useTranslation } from "../../i18n";
@@ -323,7 +323,7 @@ export const FastContextCard = memo(function FastContextCard({
 
 					{!running && status === "completed" && details && report ? (
 						<div className="chat-markdown max-h-80 overflow-auto rounded-md border border-border/50 p-2 text-[length:var(--app-font-size-ui-sm,11px)]">
-							<ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+							<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins} components={MARKDOWN_COMPONENTS}>
 								{report}
 							</ReactMarkdown>
 						</div>

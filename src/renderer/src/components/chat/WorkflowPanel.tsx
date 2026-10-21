@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import {
 	MAX_WORKERS,
 	type WorkflowAnswer,
@@ -114,7 +114,7 @@ function QuestionCard({ request, onAnswer }: { request: WorkflowRequest; onAnswe
 				<fieldset key={question.id} disabled={busy} className="min-w-0 space-y-2">
 					<legend className="sr-only">{question.question}</legend>
 					<div className="chat-markdown">
-						<ReactMarkdown remarkPlugins={[remarkGfm]}>{question.question}</ReactMarkdown>
+						<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins}>{question.question}</ReactMarkdown>
 					</div>
 					{question.options.map((option) => (
 						<label

@@ -1,6 +1,6 @@
 import { isValidElement, memo, useMemo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import { cn } from "../../lib/utils";
 import { MarkdownLink } from "./WebSources";
 import { MermaidDiagram } from "./MermaidDiagram";
@@ -24,7 +24,7 @@ export const Markdown = memo(function Markdown({ text, user, streaming = false }
 	}), [user, streaming]);
 	return (
 		<div className={cn("chat-markdown", user && "chat-markdown--user")}>
-			<ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown>
+			<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins} components={components}>{text}</ReactMarkdown>
 		</div>
 	);
 });
