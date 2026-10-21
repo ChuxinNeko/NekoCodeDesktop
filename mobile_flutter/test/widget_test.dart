@@ -78,7 +78,7 @@ void main() {
     expect(find.text('真实任务'), findsNothing);
     await tester.tap(find.byTooltip('设置'));
     await settle(tester);
-    expect(find.text('深色模式'), findsOneWidget);
+    expect(find.text('外观'), findsOneWidget);
     await tester.tap(find.byTooltip('返回'));
     await settle(tester);
     c.view = 'chat';
