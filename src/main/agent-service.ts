@@ -984,7 +984,9 @@ export class AgentService {
 
 	private registerProfiles(): void {
 		const runtime = this.runtime;
-		if (!runtime) return;
+		// Set together with the runtime (getModelRuntime), so every caller has it.
+		const getLevels = this.supportedThinking;
+		if (!runtime || !getLevels) return;
 		for (const id of this.customProviderIds) {
 			runtime.unregisterProvider(id);
 		}
@@ -997,7 +999,7 @@ export class AgentService {
 				apiKey: profile.apiKey,
 				api: profile.api,
 				authHeader: profile.api === "openai-completions" || profile.api === "openai-responses",
-				models: profile.modelIds.map((id) => customModelDefinition(profile, id, catalog)),
+				models: profile.modelIds.map((id) => customModelDefinition(profile, id, catalog, getLevels)),
 			});
 			this.customProviderIds.add(profile.providerId);
 		}

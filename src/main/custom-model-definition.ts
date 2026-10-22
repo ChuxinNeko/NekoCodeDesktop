@@ -1,4 +1,4 @@
-import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { effectiveModelLimits, effectiveThinkingLevels } from "../shared/settings";
 import type { RegistrationProfile } from "./model-config-service";
 import {
@@ -20,12 +20,16 @@ function agreedThinkingModel(matches: readonly Model<Api>[]): Model<Api> | undef
  * Register a custom endpoint's model with pi's built-in context window and
  * thinking map when the user has not overridden them. Manual per-model settings
  * still win; endpoint metadata fills only the fields the catalog does not know.
+ *
+ * `getLevels` is passed in rather than imported: pi-ai is ESM-only and the main
+ * bundle is CJS, so a value import here compiles to `require()` and fails with
+ * ERR_PACKAGE_PATH_NOT_EXPORTED before the window ever opens.
  */
 export function customModelDefinition(
 	profile: RegistrationProfile,
 	id: string,
 	catalog: readonly Model<Api>[],
-	getLevels: (model: Model<Api>) => string[] = getSupportedThinkingLevels,
+	getLevels: (model: Model<Api>) => string[],
 ) {
 	const matches = selectCatalogModels(catalog, id, {
 		api: profile.api,

@@ -18,7 +18,7 @@ function profile(id: string): RegistrationProfile {
 /** Capture the actual SDK payload, then fail locally before transport. */
 async function payload(id: string, reasoning?: Exclude<ThinkingLevel, "off">, changes: Partial<RegistrationProfile> = {}) {
 	const config = { ...profile(id), ...changes };
-	const definition = customModelDefinition(config, id, catalog);
+	const definition = customModelDefinition(config, id, catalog, getSupportedThinkingLevels);
 	const model = { ...definition, provider: config.providerId, baseUrl: config.sdkBaseUrl } as Model<"anthropic-messages">;
 	let captured: Record<string, any> | undefined;
 	let requests = 0;
@@ -42,7 +42,7 @@ test("existing custom Opus 5.5 profiles inherit adaptive thinking without refetc
 
 test("the model test omits unsupported disabled thinking on Opus 5.5", async () => {
 	expect((await payload("claude-opus-5-5")).thinking).toBeUndefined();
-	const model = customModelDefinition(profile("claude-opus-5-5"), "claude-opus-5-5", catalog);
+	const model = customModelDefinition(profile("claude-opus-5-5"), "claude-opus-5-5", catalog, getSupportedThinkingLevels);
 	expect(getSupportedThinkingLevels(model as Model<"anthropic-messages">)).not.toContain("off");
 });
 
