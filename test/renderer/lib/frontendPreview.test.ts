@@ -11,7 +11,7 @@ test("frontend detection excludes backend work, tests, and generated dependencie
 });
 
 test("only the answer closing an edited frontend turn receives its own checkpoint", () => {
-	const checkpoint: CheckpointSummary = { id: "checkpoint", sessionId: "session", createdAt: 1, label: "Build app", cellId: "prompt", conversationRestorable: true, codeRestorable: true, fileCount: 1, files: [{ path: "src/App.tsx", additions: 4, deletions: 0 }], additions: 4, deletions: 0 };
+	const checkpoint: CheckpointSummary = { id: "checkpoint", sessionId: "session", createdAt: 1, label: "Build app", cellId: "prompt", conversationRestorable: true, codeRestorable: true, fileCount: 1, files: [{ path: "src/App.tsx", additions: 4, deletions: 0 }], additions: 4, deletions: 0, shellRuns: 0 };
 	const user = (id: string): AgentCell => ({ id, type: "user", text: id, timestamp: 1 });
 	const answer: AgentCell = { id: "answer", type: "assistant", text: "Built", thinking: "", streaming: false, timestamp: 2 };
 	const cells = [user("prompt"), answer];
