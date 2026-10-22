@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseModelsJson } from "../../src/main/model-endpoint";
-import { fillCatalogCapabilities, parseModelCapabilities } from "../../src/main/model-capabilities";
+import {
+	capabilitiesFromMatches, fillCatalogCapabilities, overlayBuiltinCapabilities, parseModelCapabilities, selectCatalogModels,
+} from "../../src/main/model-capabilities";
 import { effectiveModelLimits, effectiveThinkingLevels, type ModelProfileSummary } from "../../src/shared/settings";
 import { thinkingRegistration, toSummary, validateProfileFile } from "../../src/main/model-config-store";
 
@@ -42,12 +44,39 @@ const model = (overrides = {}): Model<Api> => ({ id: "m", contextWindow: 100000,
 	reasoning: true, thinkingLevelMap: { off: null, minimal: null, low: "low", high: "high", medium: null, xhigh: null, max: "max" }, ...overrides }) as Model<Api>;
 
 describe("catalog fallback and precedence", () => {
-	test("fills missing fields by exact ID and preserves endpoint values and provenance", () => {
+	test("prefers the built-in context and thinking levels over endpoint values for the same id", () => {
 		const result = fillCatalogCapabilities([{ id: "m", name: "M", capabilities: parseModelCapabilities({ context_length: 64000 }, 1) },
 			{ id: "m-alias", name: "M" }], [model()], getSupportedThinkingLevels, 1);
-		expect(result[0].capabilities).toEqual({ contextWindow: 64000, maxTokens: 16000, thinkingLevels: ["low", "high", "max"],
-			sources: { contextWindow: "endpoint", maxTokens: "catalog", thinkingLevels: "catalog" }, fetchedAt: 1 });
+		expect(result[0].capabilities).toEqual({ contextWindow: 100000, maxTokens: 16000, thinkingLevels: ["low", "high", "max"],
+			sources: { contextWindow: "catalog", maxTokens: "catalog", thinkingLevels: "catalog" }, fetchedAt: 1 });
 		expect(result[1].capabilities).toBeUndefined();
+	});
+	test("keeps endpoint values when the built-in catalog has no row", () => {
+		const [result] = fillCatalogCapabilities([{ id: "proxy-only", name: "P", capabilities: parseModelCapabilities({ context_length: 64000, max_tokens: 8000 }, 1) }],
+			[model()], getSupportedThinkingLevels, 1);
+		expect(result.capabilities).toMatchObject({ contextWindow: 64000, maxTokens: 8000, sources: { contextWindow: "endpoint", maxTokens: "endpoint" } });
+	});
+	test("uses the origin provider when the same id disagrees across catalogs", () => {
+		const anthropic = model({ provider: "anthropic", api: "anthropic-messages", contextWindow: 200000, maxTokens: 32000 });
+		const bedrock = model({ provider: "amazon-bedrock", api: "bedrock-converse-stream", contextWindow: 100000, maxTokens: 8000 });
+		const [selected] = selectCatalogModels([bedrock, anthropic], "m", { api: "anthropic-messages" });
+		expect(selected.provider).toBe("anthropic");
+		expect(capabilitiesFromMatches([selected], getSupportedThinkingLevels, 1)).toMatchObject({ contextWindow: 200000, maxTokens: 32000 });
+		const overlaid = overlayBuiltinCapabilities({
+			api: "anthropic-messages", baseUrl: "https://proxy.example/v1", modelIds: ["m"],
+			modelCapabilities: { m: parseModelCapabilities({ context_length: 64000 }, 4)! },
+		}, [bedrock, anthropic], getSupportedThinkingLevels, 1);
+		expect(overlaid?.m).toMatchObject({ contextWindow: 200000, maxTokens: 32000, sources: { contextWindow: "catalog", maxTokens: "catalog" }, fetchedAt: 4 });
+	});
+	test("keeps thinking levels every catalog row supports, including max", () => {
+		const opencode = model({ provider: "opencode", api: "openai-completions", contextWindow: 1_000_000, maxTokens: 384000 });
+		const qwen = model({ provider: "qwen-token-plan", api: "openai-completions", contextWindow: 1_000_000, maxTokens: 384000 });
+		const levels = (entry: Model<Api>) => entry.provider === "opencode" ? ["off", "high", "max"] : ["low", "high", "max"];
+		const [result] = fillCatalogCapabilities([{ id: "m", name: "M" }], [opencode, qwen], levels, 1, { api: "openai-completions" });
+		expect(result.capabilities?.thinkingLevels).toEqual(["high", "max"]);
+		expect(result.capabilities?.contextWindow).toBe(1_000_000);
+		expect(result.capabilities?.maxTokens).toBe(384000);
+		expect(getSupportedThinkingLevels(thinkingRegistration(result.capabilities!.thinkingLevels, false) as never)).toEqual(["high", "max"]);
 	});
 	test("does not pick arbitrary limits from ambiguous catalog models", () => {
 		const [result] = fillCatalogCapabilities([{ id: "m", name: "M" }], [model(), model({ maxTokens: 32000 })], getSupportedThinkingLevels, 1);

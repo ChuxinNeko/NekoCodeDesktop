@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { app, safeStorage } from "electron";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
 	FetchModelsRequest,
 	FetchedModel,
@@ -20,7 +21,9 @@ import type {
 	SaveModelProfileRequest,
 } from "../shared/settings";
 import type { ThinkingLevel } from "../shared/agent";
-import { fillCatalogCapabilities } from "./model-capabilities";
+import {
+	fillCatalogCapabilities, overlayBuiltinCapabilities, preferredBuiltinProvider,
+} from "./model-capabilities";
 import {
 	buildModelsHeaders,
 	parseModelsJson,
@@ -139,6 +142,45 @@ export class ModelConfigService {
 
 	list(): ModelProfileSummary[] {
 		return this.load().map(toSummary);
+	}
+
+	/**
+	 * Settings view. Built-in context and thinking levels are applied in memory,
+	 * so a saved profile picks up the pi catalog without another fetch. The
+	 * catalog read is local; a missing catalog leaves the stored profile as-is.
+	 */
+	async listForSettings(): Promise<ModelProfileSummary[]> {
+		const builtin = await this.builtinCatalog();
+		const summaries = this.list();
+		if (!builtin) return summaries;
+		return summaries.map((summary) => {
+			const modelCapabilities = overlayBuiltinCapabilities(summary, builtin.models, builtin.getLevels, builtin.generatedAt);
+			if (!modelCapabilities || modelCapabilities === summary.modelCapabilities) return summary;
+			return { ...summary, modelCapabilities };
+		});
+	}
+
+	private builtinCatalogPromise: Promise<{
+		models: Model<Api>[];
+		getLevels: (model: Model<Api>) => string[];
+		generatedAt: number;
+	} | null> | null = null;
+
+	private builtinCatalog() {
+		if (!this.builtinCatalogPromise) {
+			this.builtinCatalogPromise = Promise.all([
+				import("@earendil-works/pi-ai/providers/all"),
+				import("@earendil-works/pi-ai/models"),
+			]).then(([catalog, helpers]) => ({
+				models: catalog.getBuiltinProviders().flatMap((id) => catalog.getBuiltinModels(id)),
+				getLevels: helpers.getSupportedThinkingLevels,
+				generatedAt: catalog.getBuiltinModelDataGeneratedAt() ?? Date.now(),
+			})).catch(() => {
+				this.builtinCatalogPromise = null;
+				return null;
+			});
+		}
+		return this.builtinCatalogPromise;
 	}
 
 	save(req: SaveModelProfileRequest): ModelProfileSummary {
@@ -351,19 +393,13 @@ export class ModelConfigService {
 				);
 			}
 			let models = parseModelsJson(JSON.parse(text));
-			// Load the bundled reference catalog only on an explicit model fetch.
-			// No network request or credential is sent to a catalog provider.
-			try {
-				const [catalog, helpers] = await Promise.all([
-					import("@earendil-works/pi-ai/providers/all"),
-					import("@earendil-works/pi-ai/models"),
-				]);
-				const host = new URL(req.baseUrl).hostname;
-				const preferred = host === "api.openai.com" ? "openai" : host === "api.anthropic.com" ? "anthropic" : host === "openrouter.ai" ? "openrouter" : undefined;
-				const providers = catalog.getBuiltinProviders().filter((id) => !preferred || id === preferred);
-				models = fillCatalogCapabilities(models, providers.flatMap((id) => catalog.getBuiltinModels(id)), helpers.getSupportedThinkingLevels);
-			} catch {
-				// A missing reference catalog must not discard usable endpoint data.
+			// Local catalog only. No request or credential is sent to a catalog provider.
+			const builtin = await this.builtinCatalog();
+			if (builtin) {
+				models = fillCatalogCapabilities(models, builtin.models, builtin.getLevels, builtin.generatedAt, {
+					api: req.api,
+					provider: preferredBuiltinProvider(req.baseUrl),
+				});
 			}
 			if (req.profileId && this.fetchVersions.get(req.profileId) === version) {
 				const profiles = this.load();

@@ -1668,7 +1668,7 @@ function registerIpc(): void {
 	ipcMain.handle("terminal:kill", (_e, id: string) => terminalService?.kill(id));
 
 	ipcMain.handle("settings:modelStatus", () => modelConfig?.status());
-	ipcMain.handle("settings:listModels", () => modelConfig?.list());
+	ipcMain.handle("settings:listModels", () => modelConfig?.listForSettings());
 	ipcMain.handle("settings:saveModel", async (_e, req: SaveModelProfileRequest) => {
 		const summary = modelConfig?.save(req);
 		await taskManager?.reloadModels();
