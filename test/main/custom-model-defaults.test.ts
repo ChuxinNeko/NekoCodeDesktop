@@ -74,7 +74,7 @@ test("anthropic request flags still come from the built-in row", () => {
 		() => ["low", "medium", "high", "xhigh", "max"],
 	);
 	expect(defined.contextWindow).toBe(1_000_000);
-	expect(defined.compat).toEqual({ forceAdaptiveThinking: true });
+	expect("compat" in defined ? defined.compat : undefined).toEqual({ forceAdaptiveThinking: true });
 	expect(defined.thinkingLevelMap?.off).toBeNull();
 	expect(defined.thinkingLevelMap?.max).toBe("max");
 });

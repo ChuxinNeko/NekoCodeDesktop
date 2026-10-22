@@ -1539,6 +1539,10 @@ function registerIpc(): void {
 		});
 		return result.canceled ? null : result.filePaths[0];
 	});
+	ipcMain.handle("agent:frontendPreview", async (_event, sessionId: string, promptId: string, open = false) => {
+		if (typeof sessionId !== "string" || typeof promptId !== "string" || typeof open !== "boolean") throw new Error("Invalid preview request");
+		return (await taskManager?.byId(sessionId))?.frontendPreview(promptId, open) ?? null;
+	});
 	ipcMain.handle("agent:snapshot", () => toWindow(taskManager?.active.getSnapshot()));
 	ipcMain.handle("agent:defaults", (_e, cwd: string) =>
 		taskManager?.active.getDefaults(cwd),

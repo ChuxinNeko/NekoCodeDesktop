@@ -11,6 +11,8 @@ export interface OpenUIActionHandlers {
 	openFile?: (path: string, line?: number) => void | Promise<void>;
 	openTask?: (taskId: string) => void | Promise<void>;
 	disabled?: boolean;
+	storageScope?: string;
+	readProjectJson?: (path: string) => Promise<unknown>;
 }
 export const OpenUIActionsContext = createContext<OpenUIActionHandlers>({});
 
@@ -28,6 +30,17 @@ export interface OpenUIHostScope {
 /** Resolve current host state at click time and again after asynchronous reads. */
 export function createOpenUIHostActions(getScope: () => OpenUIHostScope, readFile: (cwd: string, path: string) => Promise<unknown>) {
 	return {
+		readProjectJson: async (path: string) => {
+			const relative = openFileParams.shape.path.parse(path);
+			const scope = getScope();
+			if (!scope.active || !scope.cwd || !scope.sessionId || scope.disabled) throw new Error("Project data unavailable");
+			const identity = scope.identity;
+			const result = await readFile(scope.cwd, relative);
+			const current = getScope();
+			if (!current.active || current.identity !== identity || current.disabled) throw new Error("Session changed");
+			if (!result || typeof result !== "object" || !("kind" in result) || result.kind !== "text" || !("text" in result) || typeof result.text !== "string" || ("truncated" in result && result.truncated)) throw new Error("A complete JSON text file is required");
+			return JSON.parse(result.text);
+		},
 		openFile: async (path: string, line?: number) => {
 			const scope = getScope();
 			if (!scope.active || !scope.cwd || !scope.sessionId || scope.disabled || !scope.onOpenFile) throw new Error("File view unavailable");

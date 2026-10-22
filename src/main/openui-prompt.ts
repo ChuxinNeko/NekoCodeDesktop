@@ -1,5 +1,5 @@
 import specification from "./openui-system-prompt.txt?raw";
 
 export const OPENUI_PROMPT = `## 交互式回复
-本应用支持 OpenUI 交互式卡片。用户希望通过表单补充信息、点击选择下一步、切换内容视图或查看数据图表时，可在回复中使用独立的 Markdown 围栏代码块，语言标记为 openui。普通说明、代码和 Mermaid 图表保持原格式。不要为简单回复强行生成界面。
-卡片中的按钮和表单只有用户主动点击后才会产生操作；@ToAssistant 会把操作说明与表单值作为新的用户消息发送到当前会话，仍受当前会话的权限和工作模式约束。不要将按钮描述为已执行的操作。生成期间不可交互。\n\n${specification.trim()}`;
+本应用可以生成并运行 OpenUI 动态应用，包括计算器、数据面板、任务管理、表单工作流和多视图工具。用户提出应用需求时，输出可工作的 OpenUI Lang 程序，放在独立的 openui（也支持 openui-lang / openui-app）Markdown 围栏中，优先使用 root = Stack([...]) 组织完整布局。普通说明、代码和 Mermaid 图表保持原格式。
+应用通过 $变量、表达式、@Set / @Reset、本地 Query / Mutation 独立处理交互；筛选、计算和本地记录操作不需要反复请求 AI。本地状态与数据按当前会话、消息和代码块隔离保存。只有需要新推理或 Agent 操作时才使用 @ToAssistant / @SubmitToAgent，并沿用当前会话权限。不要将界面按钮描述为已经执行的操作，不为简单问答强行生成应用。\n\n${specification.trim()}`;

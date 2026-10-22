@@ -237,6 +237,7 @@ const api = {
 	onBrowserPopup: (listener: (request: BrowserPopupRequest) => void) =>
 		subscribe("browser:popup", listener),
 
+	frontendPreview: (sessionId: string, promptId: string, open = false): Promise<BrowserPreviewRequest | null> => ipcRenderer.invoke("agent:frontendPreview", sessionId, promptId, open),
 	onBrowserPreview: (listener: (request: BrowserPreviewRequest) => void) => subscribe("browser:preview", listener),
 	onBrowserElementSelected: (listener: (selection: BrowserElementSelection) => void) => subscribe("browser:elementSelected", listener),
 	onBrowserInspectStopped: (listener: (state: { guestId: number }) => void) => subscribe("browser:inspectStopped", listener),

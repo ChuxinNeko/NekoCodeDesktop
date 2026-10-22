@@ -21,7 +21,17 @@ describe("OpenUI component contract", () => {
 		for (const example of openuiPromptOptions.examples ?? []) {
 			const code = example.replace(/^```openui\n/, "").replace(/\n```$/, "");
 			const result = parser.parse(code);
-			expect(result.root?.typeName).toBe("Card");
+			expect(["Card", "Stack"]).toContain(result.root?.typeName ?? "");
+			expect(result.meta.errors).toEqual([]);
+			expect(result.meta.unresolved).toEqual([]);
+		}
+	});
+	test("application flex layouts and saved chat source arrays both remain valid", () => {
+		for (const code of [
+			'root = Stack([row])\nrow = Stack([card], "row", "m", "stretch", "start", true)\ncard = Card([TextContent("Content")], "sunk")',
+			'root = Card([CardHeader("Legacy")], [{title: "Docs", sourceName: "Example", url: "https://example.com"}])',
+		]) {
+			const result = parser.parse(code);
 			expect(result.meta.errors).toEqual([]);
 			expect(result.meta.unresolved).toEqual([]);
 		}
@@ -52,8 +62,7 @@ series = Series("Tasks", [3, 5])`);
 	test("the main-process prompt matches the renderer without importing React at runtime", () => {
 		const saved = readFileSync(new URL("../../../src/main/openui-system-prompt.txt", import.meta.url), "utf8");
 		expect(saved).toBe(openuiLibrary.prompt(openuiPromptOptions).trim() + "\n");
-		expect(openuiLibrary.components).not.toHaveProperty("Image");
-		expect(openuiLibrary.components).not.toHaveProperty("CodeBlock");
+		for (const component of ["Stack", "Card", "Modal", "Image", "CodeBlock", "Slider", "DatePicker", "EditableTable", "FollowUpBlock"]) expect(openuiLibrary.components).toHaveProperty(component);
 	});
 });
 

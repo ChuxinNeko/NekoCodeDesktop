@@ -25,3 +25,10 @@ test("the priority field remains disabled while a reply is streaming", () => {
 	const html = renderToStaticMarkup(<Renderer response={response} library={openuiLibrary} isStreaming publishObservability={false} />);
 	expect(html).toMatch(/<select[^>]+disabled=""/);
 });
+
+test("an empty option value can represent all records in an application filter", () => {
+	const code = 'root = Stack([field])\nfield = FormControl("Filter", Select("filter", [SelectItem("", "All"), SelectItem("open", "Open")]))';
+	const html = renderToStaticMarkup(<Renderer response={code} library={openuiLibrary} publishObservability={false} />);
+	expect(html).toContain('<option value="" selected="">All</option>');
+	expect(html).not.toContain('disabled="" hidden=""');
+});

@@ -16,6 +16,8 @@ import { groupWorkStages, workStageCompleted, workStageLabel, workStageHasDetail
 import { AssistantSelection, type SelectionSend } from "./chat/AssistantSelection";
 import { MessageActions } from "./chat/MessageActions";
 import { UsageModelsContext } from "./chat/UsagePanel";
+import { frontendFiles } from "../../../shared/frontend-preview";
+import { FrontendPreview } from "./chat/FrontendPreview";
 import { completedTurnChanges } from "../lib/turnChanges";
 import { fileEditPreview, fileEditStats, type FileEditPreview } from "../lib/fileEditPreview";
 import { useReducedMotion } from "../lib/motion";
@@ -132,10 +134,12 @@ const MessageCell = memo(function MessageCell({
 	cell,
 	closesTurn,
 	afterWork,
+	frontendCheckpoint,
 	onFork,
 	team,
 }: {
 	cell: AssistantCellData;
+	frontendCheckpoint?: CheckpointSummary;
 	closesTurn: boolean;
 	/** Concludes a run of work: a rule sets the answer apart from the process above it. */
 	afterWork?: boolean;
@@ -146,8 +150,9 @@ const MessageCell = memo(function MessageCell({
 	const actions = closesTurn && !cell.streaming && (cell.text || cell.usage) ? (
 		<MessageActions cell={cell} onFork={cell.text ? onFork : undefined} />
 	) : null;
+	const preview = frontendCheckpoint ? <FrontendPreview key={frontendCheckpoint.id} checkpoint={frontendCheckpoint} /> : null;
 	if (team) return (
-		<TeamFinalMessage turn={team} footer={actions}>
+		<TeamFinalMessage turn={team} footer={<>{preview}{actions}</>}>
 			{cell.text ? <AssistantBody cell={cell} /> : null}
 			{cell.text && !cell.streaming ? <SourceList text={cell.text} /> : null}
 			{cell.error ? <p role="alert" className="mt-1 whitespace-pre-wrap break-words text-[length:var(--app-font-size-chat-meta,10px)] text-destructive">{cell.error}</p> : null}
@@ -164,6 +169,7 @@ const MessageCell = memo(function MessageCell({
 					<span className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{cell.error}</span>
 				</div>
 			) : null}
+			{preview}
 			{actions}
 		</div>
 	);
@@ -384,7 +390,7 @@ function PlanningLine() {
 }
 
 function AssistantBody({ cell }: { cell: AssistantCellData }) {
-  return <div data-assistant-selection-body={!cell.streaming ? "true" : "false"}><Markdown text={cell.text} streaming={cell.streaming} /></div>;
+  return <div data-assistant-selection-body={!cell.streaming ? "true" : "false"}><Markdown text={cell.text} streaming={cell.streaming} documentId={cell.id} /></div>;
 }
 
 /** A remark the model made on the way, inside the run it was part of. */
@@ -664,7 +670,7 @@ const TranscriptView = function Transcript({
 	}, []);
 	const actionScope = useRef({ cwd, sessionId, tasks, interactiveBusy, scopeIdentity });
 	actionScope.current = { cwd, sessionId, tasks, interactiveBusy, scopeIdentity };
-	const { openFile: openInteractiveFile, openTask: openInteractiveTask } = useMemo(() => createOpenUIHostActions(() => ({
+	const { openFile: openInteractiveFile, openTask: openInteractiveTask, readProjectJson } = useMemo(() => createOpenUIHostActions(() => ({
 		...actionScope.current,
 		identity: actionScope.current.scopeIdentity,
 		active: actionMounted.current,
@@ -673,11 +679,13 @@ const TranscriptView = function Transcript({
 		onOpenTask: handlers.current.onOpenTask,
 	}), (root, path) => api.fsReadFile(root, path)), []);
 	const openuiActions = useMemo(() => ({
+		storageScope: sessionId,
+		readProjectJson: cwd && sessionId ? readProjectJson : undefined,
 		send: onInteractiveSend || onSend ? sendInteractive : undefined,
 		openFile: onOpenFile && cwd && sessionId ? openInteractiveFile : undefined,
 		openTask: onOpenTask && sessionId ? openInteractiveTask : undefined,
 		disabled: interactiveBusy,
-	}), [!!onSend, !!onInteractiveSend, !!onOpenFile, !!onOpenTask, cwd, sessionId, sendInteractive, openInteractiveFile, openInteractiveTask, interactiveBusy]);
+	}), [!!onSend, !!onInteractiveSend, !!onOpenFile, !!onOpenTask, cwd, sessionId, sendInteractive, openInteractiveFile, openInteractiveTask, readProjectJson, interactiveBusy]);
 	const stopCommand = useCallback((id: string) => handlers.current.onStopCommand?.(id) ?? Promise.resolve(false), []);
 	const forkMessage = useCallback((cellId: string) => handlers.current.onForkMessage?.(cellId), []);
 	const openTask = useCallback((taskId: string) => handlers.current.onOpenTask?.(taskId), []);
@@ -814,6 +822,7 @@ const TranscriptView = function Transcript({
 							) : row.kind === "message" ? (
 								<MessageCell
 									cell={row.cell}
+									frontendCheckpoint={card && frontendFiles(card.files.map(file => file.path)).length ? card : undefined}
 									closesTurn={closingReplies.has(row.id)}
 									afterWork={closingReplies.has(row.id) && rows[index - 1]?.kind === "work"}
 									onFork={onForkMessage ? forkMessage : undefined}

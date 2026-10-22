@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { AgentCell } from "../shared/agent";
 import type { BrowserPreviewRequest } from "../shared/browser";
 import { isShellTool } from "../shared/hooks";
 import { toolOutputText, type ProjectionEvent } from "./agent-projection";
@@ -130,7 +131,7 @@ export class BrowserPreview {
 		} finally { this.probing.delete(url); }
 	}
 
-	private async openHtml(path: string): Promise<void> {
+	private async htmlUrl(path: string): Promise<string | undefined> {
 		if (this.closed) return;
 		const root = await realpath(this.options.cwd);
 		const target = await realpath(resolve(root, path));
@@ -148,11 +149,58 @@ export class BrowserPreview {
 		const origin = await (this.origin ??= this.serve(root));
 		if (this.closed) return;
 		const url = origin + "/" + relative(root, target).split(sep).map(encodeURIComponent).join("/");
-		this.emit(url, "html");
+		return url;
+	}
+
+	private async openHtml(path: string): Promise<void> {
+		const url = await this.htmlUrl(path);
+		if (url) this.emit(url, "html");
+	}
+
+	/** Resolve current workspace content; never trust a URL supplied by answer text. */
+	async resolveFrontend(files: readonly string[], cells: readonly AgentCell[]): Promise<BrowserPreviewRequest | null> {
+		if (this.closed) return null;
+		const history: string[] = [];
+		// Reopened conversations can recover explicit server addresses from launch logs.
+		let startup = false;
+		for (const cell of cells) {
+			if (cell.type !== "tool" || cell.status !== "done" || !isShellTool(cell.toolName)) continue;
+			const command = String((cell.args as { command?: unknown } | null)?.command ?? "");
+			const launch = isServerCommand(command);
+			if (launch) startup = true;
+			if (launch || (startup && /\b(?:Get-Content|cat|tail)\b[^\r\n]*\.log\b/i.test(command))) {
+				for (const url of localServerUrls(cell.output)) history.push(url);
+			}
+		}
+		const candidates = [...new Set([...history.reverse(), ...[...this.openedServers].reverse()])].slice(0, 8);
+		for (const url of candidates) {
+			if (this.closed) return null;
+			try {
+				const response = await fetch(url, { redirect: "manual", signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(1200)]) });
+				await response.body?.cancel();
+				if (response.status >= 200 && response.status < 300) return this.request(url, "server");
+			} catch { /* Show the start-preview action when the service has stopped. */ }
+		}
+		const pages = new Set(files.filter(path => /\.html?$/i.test(path)));
+		for (const file of files) {
+			for (let dir = dirname(file); dir !== "." && dir !== dirname(dir); dir = dirname(dir)) pages.add(resolve(this.options.cwd, dir, "index.html"));
+		}
+		pages.add("index.html");
+		for (const page of pages) {
+			try {
+				const url = await this.htmlUrl(page);
+				if (url) return this.request(url, "html");
+			} catch { /* Missing, deleted, or outside this workspace. */ }
+		}
+		return null;
+	}
+
+	private request(url: string, kind: BrowserPreviewRequest["kind"]): BrowserPreviewRequest {
+		return { id: randomUUID(), sessionId: this.options.sessionId, cwd: this.options.cwd, url, kind };
 	}
 
 	private emit(url: string, kind: BrowserPreviewRequest["kind"]): void {
-		if (!this.closed) this.options.onPreview({ id: randomUUID(), sessionId: this.options.sessionId, cwd: this.options.cwd, url, kind });
+		if (!this.closed) this.options.onPreview(this.request(url, kind));
 	}
 
 	private async serve(root: string): Promise<string> {

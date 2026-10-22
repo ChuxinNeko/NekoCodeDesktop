@@ -1,6 +1,15 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css";
 @import "./components/beautiful-ui/foundation.css";
+
+/* Renderer.Content marks the whole app hidden on a failed query. Keep its
+   usable controls/fallback data visible beside retry. Match the base layer's
+   important [hidden] rule without changing source-view or dialog visibility. */
+@layer base {
+  .openui-generated-content[hidden] {
+    display: block !important;
+  }
+}
 /* Both Electron and Android compile these shared component utilities. */
 @source "./";
 

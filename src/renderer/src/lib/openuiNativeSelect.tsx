@@ -18,6 +18,7 @@ export const openuiNativeSelect = defineComponent({
 		const rules = useMemo(() => parseStructuredRules(props.rules), [props.rules]);
 		const hasRules = rules.length > 0;
 		const items = (props.items ?? []) as Array<{ props?: { value: string; label?: string } }>;
+		const options = items.filter(item => typeof item?.props?.value === "string");
 
 		useEffect(() => {
 			if (streaming || !hasRules || !validation) return;
@@ -39,8 +40,8 @@ export const openuiNativeSelect = defineComponent({
 				if (hasRules) validation?.validateField(field.name, value, rules);
 			}}
 		>
-			<option value="" disabled hidden>{props.placeholder || "Select…"}</option>
-			{items.filter(item => item?.props?.value).map((item, index) =>
+			{!options.some(item => item.props!.value === "") ? <option value="" disabled hidden>{props.placeholder || "Select…"}</option> : null}
+			{options.map((item, index) =>
 				<option key={index} value={item.props!.value}>{item.props!.label || item.props!.value}</option>)}
 		</select>;
 	},

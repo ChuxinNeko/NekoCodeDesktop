@@ -57,6 +57,14 @@ test("unfinished OpenUI fences are recognized during streaming", () => {
 	expect(html).toContain('data-slot="openui-response"');
 });
 
+test("official Lang and application fence names render applications but remain literal in user messages", () => {
+	for (const language of ["openui", "openui-lang", "openui-app"]) {
+		const text = `\`\`\`${language}\nroot = Stack([])\n\`\`\``;
+		expect(render(text)).toContain('data-slot="openui-response"');
+		expect(render(text, { user: true })).not.toContain('data-slot="openui-response"');
+	}
+});
+
 test("inline and display math render with accessible KaTeX markup", () => {
 	const html = render("欧拉公式 $e^{i\\pi}+1=0$。\n\n$$\n\\frac{a}{b} = \\sqrt{c}\n$$");
 	expect(html).toContain('class="katex"');

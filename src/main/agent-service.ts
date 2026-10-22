@@ -118,6 +118,7 @@ import { isFusionConfig, type FusionConfig } from "../shared/fusion";
 import { resolveFusion } from "./fusion-config";
 import { withFusionUsage } from "./fusion-usage";
 import { preparePromptImages } from "./prompt-images";
+import { frontendFiles } from "../shared/frontend-preview";
 import { BrowserPreview } from "./browser-preview";
 import { hookService, memorySection, memoryStore } from "./context-services";
 import { createMemoryTool } from "./memory-tool";
@@ -1262,6 +1263,20 @@ export class AgentService {
 
 	getSnapshot(): AgentSnapshot | null {
 		return this.session ? this.buildSnapshot() : null;
+	}
+
+	/** Preview only a verified frontend edit in this session's active branch. */
+	async frontendPreview(promptId: string, open = false) {
+		const snapshot = this.getSnapshot();
+		const preview = this.preview;
+		if (!snapshot || !preview) return null;
+		const checkpoint = snapshot.checkpoints?.find(item => item.cellId === promptId);
+		const files = frontendFiles(checkpoint?.files.map(file => file.path) ?? []);
+		if (!files.length) return null;
+		const result = await preview.resolveFrontend(files, snapshot.cells);
+		if (this.preview !== preview || this.getSnapshot()?.session.id !== snapshot.session.id || !this.listCheckpoints().some(item => item.id === checkpoint?.id && item.cellId === promptId)) return null;
+		if (result && open) this.publish("browser:preview", result);
+		return result;
 	}
 
 	/** Read the model's current branch, including context retained after compaction. */

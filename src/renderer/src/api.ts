@@ -221,6 +221,8 @@ export interface AgentApi {
 	openExternal(url: string): Promise<void>;
 	onBrowserPopup(listener: (request: BrowserPopupRequest) => void): () => void;
 
+	/** Desktop workspace preview, resolved from an authoritative turn checkpoint. */
+	frontendPreview?(sessionId: string, promptId: string, open?: boolean): Promise<BrowserPreviewRequest | null>;
 	onBrowserPreview(listener: (request: BrowserPreviewRequest) => void): () => void;
 	onBrowserElementSelected(listener: (selection: BrowserElementSelection) => void): () => void;
 	onBrowserInspectStopped(listener: (state: { guestId: number }) => void): () => void;
