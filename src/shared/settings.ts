@@ -281,7 +281,11 @@ export function normalizeThinkingLevels(levels: unknown): ThinkingLevel[] | null
 	return THINKING_LEVEL_ORDER.filter((level) => levels.includes(level));
 }
 
-/** The levels a model offers: its own, else the endpoint's default. */
+/**
+ * The levels a model offers. Manual choice wins. Otherwise the caller passes
+ * capabilities that already prefer pi's built-in catalog over endpoint metadata,
+ * and only then the provider-wide default.
+ */
 export function effectiveThinkingLevels(
 	profile: Pick<ModelProfileSummary, "reasoning" | "modelThinking" | "modelCapabilities">,
 	modelId: string,
@@ -289,6 +293,7 @@ export function effectiveThinkingLevels(
 	return profile.modelThinking?.[modelId] ?? profile.modelCapabilities?.[modelId]?.thinkingLevels ?? defaultThinkingLevels(profile.reasoning);
 }
 
+/** Manual ceilings win. Callers put pi's built-in limits into `modelCapabilities` ahead of endpoint metadata; anything left uses the provider default. */
 export function effectiveModelLimits(
 	profile: Pick<ModelProfileSummary, "contextWindow" | "maxTokens" | "modelOverrides" | "modelCapabilities">,
 	modelId: string,
