@@ -102,6 +102,16 @@ export function selectCatalogModels<T extends { id: string; provider: string; ap
 	return pool;
 }
 
+/**
+ * Levels every selected row supports. A full-set mismatch no longer drops `max`
+ * when each row lists it; levels only some rows support stay out.
+ */
+function sharedThinkingLevels(sets: readonly (readonly string[] | null)[]): ReturnType<typeof normalizeThinkingLevels> {
+	if (!sets.length || sets.some((levels) => !levels?.length)) return null;
+	const shared = THINKING_LEVEL_ORDER.filter((level) => sets.every((levels) => levels!.includes(level)));
+	return shared.length ? shared : null;
+}
+
 /** Fields the selected catalog rows agree on. One row contributes all of its fields. */
 export function capabilitiesFromMatches(
 	matches: readonly Model<Api>[],
@@ -110,19 +120,18 @@ export function capabilitiesFromMatches(
 ): ModelCapabilities | undefined {
 	if (!matches.length) return undefined;
 	const detected: ModelCapabilities = { sources: {}, fetchedAt };
-	for (const key of ["contextWindow", "maxTokens", "thinkingLevels"] as const) {
-		const values = matches.map((model) => key === "thinkingLevels" ? normalizeThinkingLevels(getLevels(model)) : model[key]);
-		if (!values.every((value) => JSON.stringify(value) === JSON.stringify(values[0]))) continue;
-		if (key === "thinkingLevels") {
-			const levels = normalizeThinkingLevels(values[0]);
-			if (!levels) continue;
-			detected.thinkingLevels = levels;
-		} else {
-			const value = limit(values[0], key === "contextWindow" ? MAX_CONTEXT_WINDOW : MAX_OUTPUT_TOKENS);
-			if (value === undefined) continue;
-			detected[key] = value;
-		}
+	for (const key of ["contextWindow", "maxTokens"] as const) {
+		const values = matches.map((model) => model[key]);
+		if (!values.every((value) => value === values[0])) continue;
+		const value = limit(values[0], key === "contextWindow" ? MAX_CONTEXT_WINDOW : MAX_OUTPUT_TOKENS);
+		if (value === undefined) continue;
+		detected[key] = value;
 		detected.sources[key] = "catalog";
+	}
+	const sharedLevels = sharedThinkingLevels(matches.map((model) => normalizeThinkingLevels(getLevels(model))));
+	if (sharedLevels) {
+		detected.thinkingLevels = sharedLevels;
+		detected.sources.thinkingLevels = "catalog";
 	}
 	const anthropic = matches.filter((model): model is Model<"anthropic-messages"> => model.api === "anthropic-messages");
 	const modes = anthropic.map((model) => ({ adaptive: model.compat?.forceAdaptiveThinking === true, disabled: model.thinkingLevelMap?.off !== null }));

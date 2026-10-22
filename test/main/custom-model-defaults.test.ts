@@ -44,6 +44,23 @@ test("unknown ids keep the provider default", () => {
 	expect(defined.thinkingLevelMap).toMatchObject({ xhigh: null, max: null });
 });
 
+test("disagreement still registers max when every built-in row supports it", () => {
+	const row = (provider: string, thinkingLevelMap: Model<"openai-completions">["thinkingLevelMap"]) => ({
+		...builtin, id: "deepseek-v4.1-flash", provider, maxTokens: 384_000, thinkingLevelMap,
+	});
+	const defined = customModelDefinition(profile({
+		api: "openai-completions", modelIds: ["deepseek-v4.1-flash"], reasoning: true,
+	}), "deepseek-v4.1-flash", [
+		row("opencode", { off: "none", minimal: null, low: null, medium: null, high: "high", max: "max" }),
+		row("qwen-token-plan", { off: null, minimal: null, low: "low", medium: null, high: "high", max: "max" }),
+	], (model) => model.provider === "opencode" ? ["off", "high", "max"] : ["low", "high", "max"]);
+	expect(defined.contextWindow).toBe(1_000_000);
+	expect(defined.maxTokens).toBe(384_000);
+	expect(defined.reasoning).toBe(true);
+	expect(defined.thinkingLevelMap?.max).toBe("max");
+	expect(defined.thinkingLevelMap?.off).toBeNull();
+});
+
 test("anthropic request flags still come from the built-in row", () => {
 	const claude = {
 		...builtin, id: "claude-test", api: "anthropic-messages", provider: "anthropic",

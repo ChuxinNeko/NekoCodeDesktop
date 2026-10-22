@@ -68,6 +68,16 @@ describe("catalog fallback and precedence", () => {
 		}, [bedrock, anthropic], getSupportedThinkingLevels, 1);
 		expect(overlaid?.m).toMatchObject({ contextWindow: 200000, maxTokens: 32000, sources: { contextWindow: "catalog", maxTokens: "catalog" }, fetchedAt: 4 });
 	});
+	test("keeps thinking levels every catalog row supports, including max", () => {
+		const opencode = model({ provider: "opencode", api: "openai-completions", contextWindow: 1_000_000, maxTokens: 384000 });
+		const qwen = model({ provider: "qwen-token-plan", api: "openai-completions", contextWindow: 1_000_000, maxTokens: 384000 });
+		const levels = (entry: Model<Api>) => entry.provider === "opencode" ? ["off", "high", "max"] : ["low", "high", "max"];
+		const [result] = fillCatalogCapabilities([{ id: "m", name: "M" }], [opencode, qwen], levels, 1, { api: "openai-completions" });
+		expect(result.capabilities?.thinkingLevels).toEqual(["high", "max"]);
+		expect(result.capabilities?.contextWindow).toBe(1_000_000);
+		expect(result.capabilities?.maxTokens).toBe(384000);
+		expect(getSupportedThinkingLevels(thinkingRegistration(result.capabilities!.thinkingLevels, false) as never)).toEqual(["high", "max"]);
+	});
 	test("does not pick arbitrary limits from ambiguous catalog models", () => {
 		const [result] = fillCatalogCapabilities([{ id: "m", name: "M" }], [model(), model({ maxTokens: 32000 })], getSupportedThinkingLevels, 1);
 		expect(result.capabilities?.contextWindow).toBe(100000);
