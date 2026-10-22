@@ -18,8 +18,8 @@ export function workspaceName(workspace: string, agents: readonly AcpAgentInfo[]
  * Which agent the conversation is with: NekoLocal — NekoCode's own agent on the
  * models configured in settings — or an external agent reached over ACP.
  *
- * Sits above the composer because it decides what the next message goes to,
- * and the sidebar follows it: each workspace has a history of its own.
+ * Sits at the right end of the conversation header; the sidebar follows it
+ * because each workspace has a history of its own.
  */
 export function WorkspacePicker({
 	value,
@@ -38,7 +38,7 @@ export function WorkspacePicker({
 	const { t } = useTranslation();
 	const enabled = agents.filter((agent) => agent.enabled);
 	return (
-		<div className="flex min-w-0 items-center">
+		<div className="flex min-w-0 shrink-0 items-center">
 			<Menu>
 				<MenuTrigger
 					disabled={disabled}
@@ -56,7 +56,7 @@ export function WorkspacePicker({
 						</Button>
 					}
 				/>
-				<ComposerPickerMenuPopup align="start" side="top">
+				<ComposerPickerMenuPopup align="end" side="bottom">
 					<MenuRadioGroup onValueChange={(next) => onChange(next as string)} value={value}>
 						<MenuGroupLabel>{t("workspace.label")}</MenuGroupLabel>
 						<MenuRadioItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} value={NEKO_LOCAL_WORKSPACE}>

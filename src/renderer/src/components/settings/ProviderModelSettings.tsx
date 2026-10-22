@@ -352,8 +352,15 @@ function LocalProviderModelSettings() {
 	);
 }
 
-/** The same provider page follows each enabled ACP workspace. */
+// Temporarily hide ACP provider/model settings while retaining their implementation.
+const SHOW_ACP_MODEL_SETTINGS = false;
+
 export function ProviderModelSettings() {
+	return SHOW_ACP_MODEL_SETTINGS ? <WorkspaceProviderModelSettings /> : <LocalProviderModelSettings />;
+}
+
+/** The same provider page follows each enabled ACP workspace. */
+function WorkspaceProviderModelSettings() {
 	const { t } = useTranslation();
 	const [agents, setAgents] = useState<AcpAgentInfo[]>([]);
 	const [selected, setSelected] = useState("nekolocal");

@@ -462,26 +462,24 @@ export default function App() {
 	/** NekoLocal's sessions and every enabled agent's, grouped by project in one list. */
 	const allRows = useMemo(() => [...sessionRows, ...acp.rows], [sessionRows, acp.rows]);
 
-	// The open session owns the project path, and a snapshot can arrive without
-	// anyone here having opened it: a restore on launch, a background task made
-	// active, a session that moved into its own worktree. Left behind, `cwd`
-	// roots the Files pane in a directory the transcript has nothing to do with,
-	// and every "Read file" row answers "path escapes project root".
-	const cwdRef = useRef(cwd);
-	cwdRef.current = cwd;
-
 	useEffect(() => {
 		const unsubscribe = api.onAgentSnapshot((next) => {
 			showSnapshot(next);
 			setError(next?.error ?? null);
-			const sessionCwd = next?.session.cwd;
-			if (!sessionCwd || sessionCwd === cwdRef.current) return;
-			cwdRef.current = sessionCwd;
-			setCwd(sessionCwd);
-			writeStored(PROJECT_STORAGE_KEY, sessionCwd);
 		});
 		return unsubscribe;
 	}, []);
+
+	// Only the visible agent owns the project path. NekoLocal keeps streaming
+	// while an ACP conversation is open; its background snapshots must not move
+	// that conversation (or its new-session warmup) back to NekoLocal's folder.
+	// Reconcile on returning to NekoLocal too, even if it has stopped streaming.
+	const localSessionCwd = snapshot?.session.cwd;
+	useEffect(() => {
+		if (acpActive || !localSessionCwd) return;
+		setCwd(localSessionCwd);
+		writeStored(PROJECT_STORAGE_KEY, localSessionCwd);
+	}, [acpActive, localSessionCwd]);
 
 	useEffect(() => api.onAgentDefaults(setDefaults), []);
 
@@ -599,7 +597,7 @@ export default function App() {
 		revealWorkspace(path);
 		setCwd(path);
 		writeStored(PROJECT_STORAGE_KEY, path);
-		acp.startNew();
+		acp.startNew(path);
 		setView("chat");
 	};
 
@@ -918,7 +916,7 @@ export default function App() {
 					insertion={composerInsertion}
 					onInsertionConsumed={(id) => setComposerInsertion((current) => (current?.id === id ? null : current))}
 					agent={acp.agent}
-					composerHeader={workspacePicker}
+					workspacePicker={workspacePicker}
 					cwd={acp.snapshot?.cwd ?? cwd}
 					error={acp.error}
 					historyError={acp.historyError}
@@ -954,7 +952,7 @@ export default function App() {
 			};
 		return (
 			<ChatView
-				composerHeader={split ? undefined : workspacePicker}
+				workspacePicker={split ? undefined : workspacePicker}
 				onGoalAction={async (action) => {
 					await panes.ready(slot.key);
 					const next = await api.agentGoal(action);

@@ -22,6 +22,14 @@ const shape = (items: WorkItem[], active = false) =>
 	);
 
 describe("workUnits", () => {
+	test("expanded timeline reasoning stays between desktop cards, including a live tail", () => {
+		const items = [tool("a", "computer_click"), thought("t"), tool("b", "computer_scroll"), thought("tail")];
+		for (const active of [true, false]) {
+			const units = workUnits(items, active, { inlineThinking: true });
+			expect(units.map((unit) => unit.kind === "computer" ? unit.steps.map((step) => step.cell.id).join(",") : unit.item.id)).toEqual(["a", items[1].id, "b", items[3].id]);
+			expect(units.filter((unit) => unit.kind === "computer").every((unit) => !unit.pending && unit.steps.every((step) => !step.thought))).toBe(true);
+		}
+	});
 	test("gathers adjacent desktop actions into one card", () => {
 		expect(shape([tool("a", "read"), tool("b", "computer_click"), tool("c", "computer_type_text"), tool("d", "bash")])).toEqual([
 			"a",

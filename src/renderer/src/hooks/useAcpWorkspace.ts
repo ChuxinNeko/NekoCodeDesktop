@@ -40,7 +40,7 @@ export interface AcpWorkspace {
 	/** Open a row's conversation without selecting it — for a pane beside the selection. */
 	ensureLive: (rowId: string) => Promise<string | null>;
 	/** Leave the open conversation for an empty composer, as "new session" does. */
-	startNew: () => void;
+	startNew: (cwd?: string) => void;
 	send: (cwd: string, text: string, images?: PromptImageAttachment[]) => Promise<void>;
 	cancel: () => void;
 	setConfig: (configId: string, value: string) => void;
@@ -78,6 +78,10 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 	const opening = useRef(false);
 	/** A delayed open or warmup cannot undo a later explicit selection. */
 	const selectionVersion = useRef(0);
+	// The destination is updated during render and immediately on an explicit
+	// new-project click, before effects or delayed create replies can run.
+	const destination = useRef({ workspace, cwd });
+	destination.current = { workspace, cwd };
 	/** History rows being opened, so a drop and its pane do not open one twice. */
 	const ensuring = useRef(new Map<string, Promise<AcpSessionSnapshot>>());
 
@@ -182,7 +186,8 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 			const pending = api.acpCreate({ agentId: target.id, cwd: directory, warm: true }).then(
 				(created) => {
 					setSnapshot(created);
-					if (selectionVersion.current === version) {
+					if (selectionVersion.current === version &&
+						destination.current.workspace === target.id && destination.current.cwd === directory) {
 						setActiveByAgent((current) => ({ ...current, [target.id]: created.id }));
 					}
 					return created.id;
@@ -307,15 +312,17 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 		);
 	}, [openEntry]);
 
-	const startNew = useCallback(() => {
+	const startNew = useCallback((directory = cwd ?? undefined) => {
 		// Already an unsent conversation on screen: that is the new one.
-		if (liveActive?.pristine) return;
+		if (liveActive?.pristine && liveActive.cwd === directory) return;
 		selectionVersion.current++;
+		destination.current = { workspace, cwd: directory ?? null };
 		opening.current = false;
 		warmFailed.current = null;
+		if (liveActive?.pristine) void api.acpClose(liveActive.id);
 		if (agent) setActive(agent.id, null);
 		setError(null);
-	}, [agent, setActive, liveActive]);
+	}, [agent, setActive, liveActive, workspace, cwd]);
 
 	const send = useCallback(
 		async (cwd: string, text: string, images?: PromptImageAttachment[]) => {

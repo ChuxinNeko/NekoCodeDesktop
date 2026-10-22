@@ -94,6 +94,29 @@ test("a failed command does not color or label the whole stage as failed", () =>
 
 
 describe("reasoning disclosure content", () => {
+ for (const active of [true, false]) {
+  test(`stage details interleave reasoning, tools and notices in stream order (active=${active})`, () => {
+   const first = thought("first", "### 检查组件调用关系\nFIRST_REASONING");
+   const second = thought("second", "SECOND_REASONING");
+   const third = thought("third", "THIRD_REASONING");
+   const notice: Extract<AgentCell, {type:"notice"}> = {id:"notice",type:"notice",text:"ORDERED_NOTICE",level:"info",timestamp:3};
+   const items: WorkItem[] = [
+    {kind:"thinking",id:"first-thinking",cell:first},
+    {kind:"tool",id:"first-read",cell:read("first-read", "first-ordered.ts") as Extract<AgentCell,{type:"tool"}>},
+    {kind:"thinking",id:"second-thinking",cell:second},
+    {kind:"notice",id:notice.id,cell:notice},
+    {kind:"tool",id:"second-read",cell:read("second-read", "second-ordered.ts") as Extract<AgentCell,{type:"tool"}>},
+    {kind:"thinking",id:"third-thinking",cell:third},
+   ];
+   const stage = groupWorkStages(items)[0];
+   const html = renderToString(<I18nProvider><WorkStageDetails stage={stage} active={active} /></I18nProvider>);
+   const labels = ["FIRST_REASONING", "first-ordered.ts", "SECOND_REASONING", "ORDERED_NOTICE", "second-ordered.ts", "THIRD_REASONING"];
+   const positions = labels.map(label => html.indexOf(label));
+   for (const position of positions) expect(position).toBeGreaterThanOrEqual(0);
+   expect(positions).toEqual([...positions].sort((a,b)=>a-b));
+  });
+ }
+
  test("empty thinking uses a non-expandable status, not a blank secondary heading", () => {
   for (const text of ["", " \n\t", "### "]) {
    const html = render([user, {...thought("empty", text), streaming: true}]);

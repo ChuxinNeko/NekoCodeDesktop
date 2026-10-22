@@ -289,7 +289,7 @@ export class AcpProjection {
 	private planCellId: string | null = null;
 	private differ: TextDiffer | undefined;
 
-	constructor(private readonly now: () => number = Date.now) {}
+	constructor(private readonly now: () => number = Date.now, private readonly resolveUsageModel: (model: string) => string = (model) => model) {}
 
 	setDiffer(differ: TextDiffer): void {
 		this.differ = differ;
@@ -399,8 +399,8 @@ export class AcpProjection {
 	/** The model the agent is on, for labelling usage. */
 	currentModel(): string {
 		const option = this.rawConfig.find((entry) => entry.id === "model" || (entry as { category?: unknown }).category === "model");
-		if (option && typeof option.currentValue === "string") return option.currentValue;
-		return this.models?.current ?? "";
+		const model = option && typeof option.currentValue === "string" ? option.currentValue : this.models?.current ?? "";
+		return this.resolveUsageModel(model);
 	}
 
 	/** The specific thing a tool call acts on: its command, file, or pattern. */
@@ -668,6 +668,15 @@ export class AcpProjection {
 		this.finishTurn("failed");
 		this.addNotice("error", message);
 	}
+
+	/** Close the interrupted attempt without presenting it as the final failure. */
+	prepareRetry(): void {
+		this.closeAssistant();
+		this.cells = this.cells.map((cell) =>
+			cell.type === "tool" && (cell.status === "pending" || cell.status === "running")
+				? { ...cell, status: "error" } : cell,
+		);
+	}
 }
 
 const STOP_REASON_NOTICES: Record<string, { level: "info" | "warning"; text: string }> = {
@@ -678,7 +687,7 @@ const STOP_REASON_NOTICES: Record<string, { level: "info" | "warning"; text: str
 };
 
 /** Map an ACP `session/prompt` usage object onto a turn's usage. */
-export function turnUsageFromAcp(usage: unknown, durationMs: number): Omit<TurnUsage, "provider" | "model"> | undefined {
+export function turnUsageFromAcp(usage: unknown, durationMs: number, modelMs?: number): Omit<TurnUsage, "provider" | "model"> | undefined {
 	if (!isObject(usage)) return undefined;
 	const number = (key: string) => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
 	const cacheRead = number("cachedReadTokens");
@@ -695,5 +704,6 @@ export function turnUsageFromAcp(usage: unknown, durationMs: number): Omit<TurnU
 		...(reasoning !== undefined ? { reasoning } : {}),
 		totalTokens: number("totalTokens"),
 		durationMs,
+		...(modelMs !== undefined && Number.isFinite(modelMs) && modelMs >= 1 ? { modelMs } : {}),
 	};
 }

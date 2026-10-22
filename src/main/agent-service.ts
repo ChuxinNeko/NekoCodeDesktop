@@ -99,6 +99,7 @@ import { registerOAuthClientIdentity } from "./oauth-service";
 import type { AntigravityOAuthService } from "./antigravity-oauth-service";
 import { registerAntigravityProvider } from "./antigravity-provider";
 import { pi, piAi, piModels } from "./pi";
+import { currentAgentRetrySettings } from "./agent-retry";
 import { SessionHistoryReader } from "./session-history";
 import { buildTitleRequest, sanitizeGeneratedTitle, TITLE_TIMEOUT_MS } from "./session-title";
 import {
@@ -1344,6 +1345,7 @@ export class AgentService {
 		recordDiagnostic("nekolocal.send", { sessionId: this.session?.sessionManager.getSessionId() });
 		const session = this.session;
 		if (!session) return { accepted: false, error: "No active session" };
+		if (!session.isStreaming) session.settingsManager.applyOverrides(currentAgentRetrySettings());
 		const interaction = displayInteractiveMessage(req.text);
 		let text = interaction !== null ? req.text : expandNekoSlashAlias(req.text);
 		const imagesSupplied = req.images !== undefined;

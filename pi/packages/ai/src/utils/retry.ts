@@ -266,5 +266,7 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
-	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage) ||
+		/\bbasispoints_tool_arguments_stalled\b/.test(errorMessage) ||
+		(/\bbasispoints_protocol_error\b/.test(errorMessage) && /no tool was executed/i.test(errorMessage));
 }

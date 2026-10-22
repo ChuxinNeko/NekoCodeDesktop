@@ -11,6 +11,7 @@ function fixture() {
 	const disk = new Map<string, SessionSummary>();
 	/** Set to make the next `send` refuse its prompt, the way no configured model would. */
 	let refuseNext: string | null = null;
+	let nextCreateWait: Promise<void> | undefined;
 	const board = { changes: 0 };
 	class FakeAgent {
 		snapshot: AgentSnapshot | null = null;
@@ -25,6 +26,9 @@ function fixture() {
 		getSnapshot() { return this.snapshot; }
 		inheritDefaults() {}
 		async createSession(cwd: string) {
+			const wait = nextCreateWait;
+			nextCreateWait = undefined;
+			if (wait) await wait;
 			const id = `task-${++nextId}`;
 			this.snapshot = {
 				session: { id, cwd, sessionFile: `/sessions/${id}.jsonl`, title: id, titlePending: false, preview: "", createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0 },
@@ -71,6 +75,7 @@ function fixture() {
 		/** The most recently made agent — what a background start just created. */
 		last: () => agents[agents.length - 1],
 		refuseNext: (error: string) => { refuseNext = error; },
+		delayNextCreate: (wait: Promise<void>) => { nextCreateWait = wait; },
 	};
 }
 
@@ -156,6 +161,42 @@ describe("parallel task execution", () => {
 		expect(f.events.filter((e) => e.channel === "agent:snapshot")).toHaveLength(0);
 		expect((await f.manager.list()).filter((s) => s.running)).toHaveLength(2);
 		expect(phone.owner).toBe(f.manager.owner);
+	});
+
+	test("a new conversation in another project stays selected while the old conversation streams and finishes", async () => {
+		const f = fixture();
+		const old = f.fake(await f.manager.create("/old-project"));
+		old.run();
+		const next = await f.manager.create("/new-project");
+		f.events.length = 0;
+		for (let i = 0; i < 20; i++) old.run();
+		old.run(false);
+		expect(f.manager.active).toBe(next);
+		expect(next.getSnapshot()?.session.cwd).toBe("/new-project");
+		expect(f.events.filter((event) => event.channel === "agent:snapshot")).toHaveLength(0);
+		expect(old.aborts).toBe(0);
+		f.manager.close();
+	});
+
+	test("tokens from two running projects cannot redirect a pending new conversation in project 2", async () => {
+		const f = fixture();
+		const one = f.fake(await f.manager.create("/project-1")); one.run();
+		const two = f.fake(await f.manager.create("/project-2")); two.run();
+		await f.manager.open(one.snapshot!.session);
+		let finish!: () => void;
+		f.delayNextCreate(new Promise<void>((resolve) => { finish = resolve; }));
+		const creating = f.manager.create("/project-2");
+		await Promise.resolve();
+		for (let i = 0; i < 20; i++) { one.run(); two.run(); }
+		finish();
+		const created = await creating;
+		f.events.length = 0;
+		one.run(); two.run();
+		expect(f.manager.active).toBe(created);
+		expect(created.getSnapshot()?.session.cwd).toBe("/project-2");
+		expect(f.events.filter((event) => event.channel === "agent:snapshot")).toHaveLength(0);
+		expect(one.aborts + two.aborts).toBe(0);
+		f.manager.close();
 	});
 
 	test("selecting an existing running task reuses its instance, and abort affects only that task", async () => {

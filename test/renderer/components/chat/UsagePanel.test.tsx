@@ -14,6 +14,12 @@ const render = (usage: TurnUsage, options = models) => renderToString(
 ).replaceAll("<!-- -->", "");
 
 describe("turn usage model labels", () => {
+	test("shows Claude generation speed when ACP provides SDK API time", () => {
+		const html = render({ ...primary, provider: "Claude Agent", model: "deepseek-reasoner", output: 100, totalTokens: 101, durationMs: 120_000, modelMs: 2000 });
+		expect(html).toContain("50.0 t/s");
+		expect(html).toContain("Claude Agent/deepseek-reasoner");
+	});
+
 	test("SideKick keeps its actual model label when detailed records also contain Lead calls", () => {
 		const html = render({ ...primary, fusion: { lead: primary, sidekick: { provider, model: "tr-alpha-channel", usage: { ...primary, model: "tr-alpha-channel", totalTokens: 300 } },
 			breakdown: [{ source: "main", kind: "inference", usage: primary }, { source: "main", kind: "inference", usage: { ...primary, model: "tr-alpha-channel" } }],

@@ -39,6 +39,7 @@ interface WelcomeViewProps {
 	onSetMode: (mode: ExecutionMode) => void;
 	onSetWorkMode: (mode: WorkMode) => void;
 	composerHeader?: React.ReactNode;
+	workspacePicker?: React.ReactNode;
 }
 
 const QUICK_STARTS = [
@@ -70,7 +71,12 @@ export function WelcomeView(props: WelcomeViewProps) {
 	return (
 		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
 			{wallpaperOn ? null : <AsciiWaveBackground />}
-			<div className="welcome-theme-toggle absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
+			{props.workspacePicker ? (
+				<header className="relative flex h-11 shrink-0 items-center justify-end px-3">
+					{props.workspacePicker}
+				</header>
+			) : null}
+			<div className={cn("welcome-theme-toggle absolute right-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 p-1 shadow-xs sm:flex", props.workspacePicker ? "top-14" : "top-5")} role="group" aria-label={t("welcome.appearance")}>
 				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
 					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
 						onClick={() => setTheme(mode)}

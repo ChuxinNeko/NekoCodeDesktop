@@ -560,11 +560,10 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 export function WorkStageDetails({ stage, active }: { stage: WorkStage; active: boolean }) {
 	return (
 		<div className="flex min-w-0 flex-col gap-2 pb-1 pt-2" data-work-stage-details="">
-			{stage.items.map(item => item.kind === "thinking" && item.cell.thinking.trim() ? <ThinkingStream key={item.id} text={item.cell.thinking} /> : null)}
-			{workUnits(stage.items.filter((item) => item.kind !== "thinking"), active).map((unit) => {
+			{workUnits(stage.items, active, { inlineThinking: true }).map((unit) => {
 				if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
 				const item = unit.item;
-				return item.kind === "thinking" ? null
+				return item.kind === "thinking" ? (item.cell.thinking.trim() ? <ThinkingStream key={item.id} text={item.cell.thinking} /> : null)
 					: item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} />
 					: item.kind === "message" ? <RemarkCell key={item.id} cell={item.cell} />
 					: <NoticeCell key={item.id} cell={item.cell} />;

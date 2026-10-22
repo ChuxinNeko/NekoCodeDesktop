@@ -20,6 +20,8 @@ import { AcpConnection, AcpRpcError, AUTH_REQUIRED, METHOD_NOT_FOUND, type AcpTr
 import { AcpProjection, diffPaths, MODE_CONFIG_ID, MODEL_CONFIG_ID, turnUsageFromAcp, type RawToolCall, type TextDiffer } from "./projection";
 import type { ShellChangeTracker } from "./workspace-changes";
 import { recordDiagnostic, diagnosticError } from "../diagnostic-log";
+import { DEFAULT_APP_PREFERENCES, isAutoRetryCount } from "../../shared/preferences";
+import { acpUsageModel } from "./model-settings";
 
 export const ACP_PROTOCOL_VERSION = 1;
 
@@ -41,6 +43,10 @@ export interface AcpToolServers {
 }
 
 export interface AcpSessionOptions {
+	/** Read per turn so an existing conversation uses newly saved settings. */
+	autoRetryCount?: () => number;
+	/** Backoff base; injectable so protocol tests need not wait seconds. */
+	retryDelayMs?: number;
 	id: string;
 	agent: AcpAgentDefinition;
 	cwd: string;
@@ -107,6 +113,14 @@ function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function retryableToolProtocolError(error: unknown): boolean {
+	const message = errorText(error);
+	return /\bbasispoints_tool_arguments_stalled\b/.test(message) ||
+		(/\bbasispoints_protocol_error\b/.test(message) && /no tool was executed/i.test(message));
+}
+
+const RETRY_CONTINUATION = "The previous attempt was interrupted by a tool-call protocol error. Continue the current task from where it stopped, correcting the failed tool call arguments. Check existing results first and do not repeat operations that already succeeded.";
+
 /** The files an edit tool call is about: its diffs, or where it says it acts. */
 function editedPaths(raw: Readonly<RawToolCall>): string[] {
 	const fromDiffs = diffPaths(raw);
@@ -134,6 +148,11 @@ export class AcpSession {
 	private promptPending = false;
 	private promptDispatched = false;
 	private queuedPromptCancelled = false;
+	private cancelRetryWait: (() => void) | null = null;
+	private modelMs: number | undefined;
+	/** Claude's SDK reports a session-wide counter, restored when resuming. */
+	private lastApiDurationMs: number | undefined;
+	private attemptApiDurationStart: number | undefined;
 	private configTail: Promise<void> = Promise.resolve();
 	private pendingConfig: Promise<void> | null = null;
 	private nextPermission = 1;
@@ -154,9 +173,10 @@ export class AcpSession {
 		this.agent = options.agent;
 		this.cwd = options.cwd;
 		this.now = options.now ?? Date.now;
+		this.lastApiDurationMs = options.resume ? undefined : 0;
 		this.createdAt = this.now();
 		this.updatedAt = this.createdAt;
-		this.projection = new AcpProjection(this.now);
+		this.projection = new AcpProjection(this.now, (model) => acpUsageModel(this.agent, model));
 	}
 
 	private changed(): void {
@@ -382,6 +402,7 @@ export class AcpSession {
 		recordDiagnostic("acp.sessionFailed", { sessionId: this.id, agentId: this.agent.id, message: message.slice(0, 2048) });
 		this.status = "error";
 		this.error = message;
+		this.cancelRetryWait?.();
 		// Nothing can call the tools any more; their token should not outlive that.
 		this.tools?.dispose();
 		this.tools = null;
@@ -392,6 +413,21 @@ export class AcpSession {
 	}
 
 	private handleNotification(method: string, params: unknown): void {
+		if (method === "_claude/sdkMessage") {
+			if (this.agent.id !== "claude" || !isObject(params) || params.sessionId !== this.agentSessionId) return;
+			const message = params.message;
+			if (!isObject(message) || message.type !== "result") return;
+			const duration = message.duration_api_ms;
+			if (typeof duration !== "number" || !Number.isFinite(duration) || duration < 1) return;
+			// A decreasing counter means the CLI reset its ledger (for example /clear).
+			if (this.lastApiDurationMs !== undefined && duration < this.lastApiDurationMs) this.attemptApiDurationStart = 0;
+			this.lastApiDurationMs = duration;
+			if (this.status === "prompting" && this.promptDispatched && this.attemptApiDurationStart !== undefined) {
+				const elapsed = duration - this.attemptApiDurationStart;
+				if (elapsed >= 1) this.modelMs = elapsed;
+			}
+			return;
+		}
 		if (method !== "session/update" || !isObject(params)) return;
 		if (this.agentSessionId && params.sessionId !== this.agentSessionId) return;
 		if (this.projection.apply(params.update)) this.changed();
@@ -503,6 +539,7 @@ export class AcpSession {
 		this.promptPending = true;
 		this.promptDispatched = false;
 		this.queuedPromptCancelled = false;
+		this.modelMs = undefined;
 		try {
 			await this.promptOnce(text, images);
 		} finally {
@@ -562,12 +599,53 @@ export class AcpSession {
 			void this.shell?.begin();
 			recordDiagnostic("acp.prompt", { sessionId: this.id, agentId: this.agent.id });
 			this.promptDispatched = true;
-			const result = await connection.request("session/prompt", { sessionId, prompt });
+			const configuredRetries = this.options.autoRetryCount?.() ?? DEFAULT_APP_PREFERENCES.autoRetryCount;
+			const maxRetries = isAutoRetryCount(configuredRetries) ? configuredRetries : DEFAULT_APP_PREFERENCES.autoRetryCount;
+			let result: unknown;
+			let retries = 0;
+			let nextPrompt = prompt;
+			while (true) {
+				try {
+					// Each ACP attempt has its own output-token total. Exclude prior
+					// turns and failed attempts from the matching timing denominator.
+					this.attemptApiDurationStart = this.lastApiDurationMs;
+					this.modelMs = undefined;
+					result = await connection.request("session/prompt", { sessionId, prompt: nextPrompt });
+					break;
+				} catch (error) {
+					if (this.gone()) return;
+					if (this.queuedPromptCancelled) {
+						result = { stopReason: "cancelled" };
+						break;
+					}
+					if (connection.closed || !retryableToolProtocolError(error) || retries >= maxRetries) throw error;
+					retries++;
+					this.projection.prepareRetry();
+					this.cancelPermissions();
+					const delayMs = Math.min((this.options.retryDelayMs ?? 1000) * 2 ** (retries - 1), 8000);
+					this.projection.addNotice("info", `工具调用协议异常，正在自动重试（${retries}/${maxRetries}）…`);
+					recordDiagnostic("acp.promptRetry", { sessionId: this.id, agentId: this.agent.id, attempt: retries, maxRetries, delayMs, ...diagnosticError(error) });
+					this.changed();
+					await this.waitForRetry(delayMs);
+					if (this.gone()) return;
+					if (this.queuedPromptCancelled) {
+						result = { stopReason: "cancelled" };
+						break;
+					}
+					// Continue within the agent's existing context instead of replaying
+					// the original task, whose earlier tool calls may already have run.
+					nextPrompt = [{ type: "text", text: RETRY_CONTINUATION }];
+				}
+			}
 			const response = isObject(result) ? result : {};
 			recordDiagnostic("acp.promptCompleted", {
 				sessionId: this.id, agentId: this.agent.id, stopReason: str(response.stopReason), durationMs: this.now() - startedAt,
 			});
-			const usage = turnUsageFromAcp(response.usage, this.now() - startedAt);
+			const usage = turnUsageFromAcp(response.usage, this.now() - startedAt, this.modelMs);
+			if (this.agent.id === "claude") recordDiagnostic("acp.turnTiming", {
+				sessionId: this.id, outputTokens: usage?.output, modelMs: this.modelMs,
+				apiDurationStart: this.attemptApiDurationStart, apiDurationEnd: this.lastApiDurationMs,
+			});
 			this.projection.finishTurn(
 				str(response.stopReason) ?? "end_turn",
 				usage,
@@ -594,8 +672,12 @@ export class AcpSession {
 
 	/** Ask the agent to stop the running turn; `prompt()` resolves once it has. */
 	async cancel(): Promise<void> {
+		this.queuedPromptCancelled = true;
+		if (this.cancelRetryWait) {
+			this.cancelRetryWait();
+			return;
+		}
 		if (this.promptPending && !this.promptDispatched) {
-			this.queuedPromptCancelled = true;
 			return;
 		}
 		if (this.status !== "prompting" || !this.connection || !this.agentSessionId) return;
@@ -603,6 +685,18 @@ export class AcpSession {
 		this.cancelPermissions();
 		this.changed();
 		await this.connection.notify("session/cancel", { sessionId: this.agentSessionId });
+	}
+
+	private waitForRetry(delayMs: number): Promise<void> {
+		return new Promise((resolve) => {
+			const done = () => {
+				clearTimeout(timer);
+				this.cancelRetryWait = null;
+				resolve();
+			};
+			const timer = setTimeout(done, delayMs);
+			this.cancelRetryWait = done;
+		});
 	}
 
 	setConfig(configId: string, value: string): Promise<void> {
@@ -644,6 +738,7 @@ export class AcpSession {
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.cancelRetryWait?.();
 		this.shell?.dispose();
 		this.shell = null;
 		this.tools?.dispose();

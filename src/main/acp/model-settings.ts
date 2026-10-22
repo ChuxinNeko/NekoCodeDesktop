@@ -1,4 +1,22 @@
-import type { AcpModelSettings } from "../../shared/acp";
+import type { AcpAgentConfig, AcpModelSettings } from "../../shared/acp";
+import { isRecord, parseProviderConfig } from "../../shared/acp-providers";
+
+/** Resolve Claude's picker aliases for usage labels, without changing ACP control values. */
+export function acpUsageModel(agent: Pick<AcpAgentConfig, "id" | "env" | "modelSettings" | "providerState">, model: string): string {
+	if (agent.id !== "claude") return model;
+	const profile = agent.providerState?.profiles.find((entry) => entry.id === agent.providerState?.activeId);
+	const config = profile ? parseProviderConfig("claude", profile.config) : {};
+	const env = { ...acpModelEnv("claude", agent.modelSettings), ...agent.env, ...profile?.env, ...(isRecord(config.env) ? config.env : {}) };
+	let current = model;
+	if (!current || current === "default") {
+		const configured = env.ANTHROPIC_MODEL || config.model;
+		if (typeof configured === "string" && configured.trim()) current = configured.trim();
+	}
+	const alias = /^(opus|sonnet|haiku)(?:\[(?:1m|200k)\])?$/i.exec(current);
+	if (!alias) return current;
+	const mapped = env[`ANTHROPIC_DEFAULT_${alias[1].toUpperCase()}_MODEL`];
+	return typeof mapped === "string" && mapped.trim() ? mapped.trim() : current;
+}
 
 export function validateAcpModelSettings(agentId: string, raw: unknown): AcpModelSettings {
 	if (agentId !== "codex" && agentId !== "claude") throw new Error("此代理请通过环境变量配置模型");

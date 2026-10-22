@@ -32,6 +32,8 @@ export interface AppPreferences {
 	 * started after.
 	 */
 	commandShell: CommandShellId;
+	/** Additional attempts for recoverable agent errors. Zero disables automatic turn retries. */
+	autoRetryCount: number;
 	/** The AI team used when the chat's model picker is set to Team. */
 	team: TeamSettings;
 }
@@ -60,5 +62,12 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
 	isolateBackgroundTasks: true,
 	computerUse: false,
 	commandShell: "auto",
+	autoRetryCount: 5,
 	team: DEFAULT_TEAM,
 };
+
+export const MAX_AUTO_RETRY_COUNT = 10;
+
+export function isAutoRetryCount(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_AUTO_RETRY_COUNT;
+}

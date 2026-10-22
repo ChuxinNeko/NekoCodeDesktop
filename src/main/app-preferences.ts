@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_APP_PREFERENCES, isCommandShellId, type AppPreferences } from "../shared/preferences";
+import { DEFAULT_APP_PREFERENCES, isAutoRetryCount, isCommandShellId, type AppPreferences } from "../shared/preferences";
 import { isTeamSettings } from "../shared/team";
 import { isUiScalePercent } from "../shared/display-scale";
 
@@ -11,6 +11,7 @@ const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPref
 	isolateBackgroundTasks: (value): value is boolean => typeof value === "boolean",
 	computerUse: (value): value is boolean => typeof value === "boolean",
 	commandShell: isCommandShellId,
+	autoRetryCount: isAutoRetryCount,
 	team: isTeamSettings,
 };
 

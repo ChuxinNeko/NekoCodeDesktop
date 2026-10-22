@@ -76,6 +76,7 @@ interface ChatViewProps {
 	mobile?: boolean;
 	/** Shown above the composer: the workspace picker, on the desktop. */
 	composerHeader?: React.ReactNode;
+	workspacePicker?: React.ReactNode;
 	/**
 	 * The transcript starts mid-session and older turns can still be fetched.
 	 * Only remote surfaces set this — a local session always holds all of it.
@@ -371,6 +372,7 @@ export function ChatView(props: ChatViewProps) {
 	if (!snapshot) {
 		return (
 			<WelcomeView
+				workspacePicker={props.workspacePicker}
 				composerHeader={props.composerHeader}
 				loadCommands={props.loadCommands}
 				loadMentions={props.loadMentions}
@@ -432,6 +434,7 @@ export function ChatView(props: ChatViewProps) {
 					)}
 				</div>
 
+				{props.workspacePicker}
 				{props.headerActions}
 			</header>
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ProxyStatus } from "../../../../shared/settings";
-import type { AppPreferences, CommandShellId, CommandShellOption } from "../../../../shared/preferences";
+import { DEFAULT_APP_PREFERENCES, MAX_AUTO_RETRY_COUNT, type AppPreferences, type CommandShellId, type CommandShellOption } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
 import { LANGUAGE_OPTIONS, useTranslation, type TranslationKey } from "../../i18n";
 import { cn, getNavigatorPlatform, isWindowsPlatform } from "../../lib/utils";
@@ -170,6 +170,21 @@ export function GeneralSettings() {
 
 			{/* The agent runs every command through this; it is picked before the rest is tuned. */}
 			<CommandShellRow value={preferences?.commandShell} onChange={(commandShell) => setPreference({ commandShell })} />
+
+			<SettingsRow hint={t("settings.autoRetryCountHint")} label={t("settings.autoRetryCount")}>
+				<Select
+					value={String(preferences?.autoRetryCount ?? DEFAULT_APP_PREFERENCES.autoRetryCount)}
+					disabled={!preferences}
+					onValueChange={(value) => { if (value !== null) setPreference({ autoRetryCount: Number(value) }); }}
+				>
+					<SelectTrigger size="sm" className="w-24" aria-label={t("settings.autoRetryCount")}><SelectValue /></SelectTrigger>
+					<SelectPopup surface="settings">
+						{Array.from({ length: MAX_AUTO_RETRY_COUNT + 1 }, (_, count) => (
+							<SelectItem key={count} value={String(count)}>{count}</SelectItem>
+						))}
+					</SelectPopup>
+				</Select>
+			</SettingsRow>
 
 			<SettingsRow hint={t("settings.notifyOnTaskFinishHint")} label={t("settings.notifyOnTaskFinish")}>
 				<Switch

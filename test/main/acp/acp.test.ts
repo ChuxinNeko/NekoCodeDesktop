@@ -9,9 +9,11 @@ import { AcpSession } from "../../../src/main/acp/session";
 import type { AcpSessionSnapshot } from "../../../src/shared/acp";
 import { AcpService, parseHistoryPage } from "../../../src/main/acp/service";
 import { AcpConfigStore } from "../../../src/main/acp/config-store";
+import { AcpNativeConfig } from "../../../src/main/acp/native-config";
 import { agentProxyEnv, BUILTIN_ACP_AGENTS, type AcpAgentDefinition } from "../../../src/main/acp/agents";
 import type { AcpAuthPlan } from "../../../src/main/acp/auth";
 import { TokenStatsService } from "../../../src/main/token-stats";
+import { usageStats } from "../../../src/shared/usage";
 
 type Message = Record<string, unknown>;
 
@@ -313,15 +315,15 @@ const AGENT: AcpAgentDefinition = {
 };
 
 /** A scripted agent: answers the handshake and lets each test drive the turn. */
-function startSession(options: { authRequired?: boolean; onUsage?: (usage: TurnUsage, timestamp: number) => void } = {}) {
+function startSession(options: { agent?: AcpAgentDefinition; resume?: { sessionId: string }; authRequired?: boolean; onUsage?: (usage: TurnUsage, timestamp: number) => void; autoRetryCount?: () => number; retryDelayMs?: number } = {}) {
 	const transport = new FakeTransport();
 	let changes = 0;
 	const prompts: Message[] = [];
 	transport.responder = (message) => {
 		const { id, method } = message;
 		if (method === "initialize") {
-			transport.reply(id, { protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: true } }, authMethods: [{ id: "api-key", name: "API Key" }] });
-		} else if (method === "session/new") {
+			transport.reply(id, { protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: true }, ...(options.resume ? { loadSession: true } : {}) }, authMethods: [{ id: "api-key", name: "API Key" }] });
+		} else if (method === "session/new" || method === "session/load") {
 			if (options.authRequired) {
 				transport.deliver({ jsonrpc: "2.0", id, error: { code: AUTH_REQUIRED, message: "Authentication required" } });
 			} else {
@@ -335,18 +337,135 @@ function startSession(options: { authRequired?: boolean; onUsage?: (usage: TurnU
 	};
 	const session = new AcpSession({
 		id: "local-1",
-		agent: AGENT,
+		agent: options.agent ?? AGENT,
 		cwd: "/project",
 		clientVersion: "0.0.0",
 		createTransport: () => transport,
 		onChange: () => changes++,
 		onUsage: options.onUsage,
+		autoRetryCount: options.autoRetryCount,
+		retryDelayMs: options.retryDelayMs,
+		resume: options.resume,
 		now: () => 1000,
 	});
 	return { session, transport, prompts, changes: () => changes };
 }
 
 describe("AcpSession", () => {
+	const stalled = "basispoints_tool_arguments_stalled: Tool arguments stopped making progress: consecutive whitespace outside JSON strings";
+	const corrected = "basispoints_protocol_error: basispoints tool transport correction changed an operation; no tool was executed";
+	const rejectPrompt = (transport: FakeTransport, prompt: Message, message: string) => {
+		transport.deliver({ jsonrpc: "2.0", id: prompt.id, error: { code: -32603, message: "Internal error", data: { details: message } } });
+	};
+	const waitForPrompts = async (prompts: Message[], count: number) => {
+		for (let i = 0; i < 100 && prompts.length < count; i++) await tick();
+		expect(prompts).toHaveLength(count);
+	};
+
+	for (const message of [stalled, corrected]) {
+		test(`continues in the same conversation after ${message.split(":")[0]}`, async () => {
+			const { session, transport, prompts } = startSession({ autoRetryCount: () => 2, retryDelayMs: 1 });
+			try {
+				await session.start();
+				const turn = session.prompt("complete the task");
+				await waitForPrompts(prompts, 1);
+				transport.update("agent-1", { sessionUpdate: "tool_call", toolCallId: "done", status: "completed", kind: "execute", title: "first command" });
+				rejectPrompt(transport, prompts[0], message);
+				await waitForPrompts(prompts, 2);
+				expect(prompts[1].params).toMatchObject({ sessionId: "agent-1", prompt: [{ type: "text", text: expect.stringContaining("do not repeat operations") }] });
+				expect(session.snapshot().status).toBe("prompting");
+				expect(session.snapshot().cells.some((cell) => cell.type === "notice" && cell.level === "error")).toBe(false);
+				transport.reply(prompts[1].id, { stopReason: "end_turn" });
+				await turn;
+				expect(session.snapshot().cells.filter((cell) => cell.type === "user")).toHaveLength(1);
+				expect(session.snapshot().cells.find((cell) => cell.type === "tool")).toMatchObject({ status: "done" });
+				expect(session.snapshot().status).toBe("ready");
+			} finally { session.dispose(); }
+		});
+	}
+
+	test("stops at the configured number of additional attempts and exposes the last error", async () => {
+		const { session, transport, prompts } = startSession({ autoRetryCount: () => 2, retryDelayMs: 1 });
+		try {
+			await session.start();
+			const turn = session.prompt("task");
+			for (let i = 0; i < 3; i++) {
+				await waitForPrompts(prompts, i + 1);
+				rejectPrompt(transport, prompts[i], stalled);
+			}
+			await turn;
+			expect(prompts).toHaveLength(3);
+			expect(session.snapshot().cells.at(-1)).toMatchObject({ type: "notice", level: "error", text: expect.stringContaining(stalled) });
+		} finally { session.dispose(); }
+	});
+
+	test("zero disables retries and preference changes apply to an already-open session", async () => {
+		let count = 0;
+		const { session, transport, prompts } = startSession({ autoRetryCount: () => count, retryDelayMs: 1 });
+		try {
+			await session.start();
+			const first = session.prompt("first");
+			await waitForPrompts(prompts, 1);
+			rejectPrompt(transport, prompts[0], stalled);
+			await first;
+			expect(prompts).toHaveLength(1);
+			count = 1;
+			const second = session.prompt("second");
+			await waitForPrompts(prompts, 2);
+			rejectPrompt(transport, prompts[1], corrected);
+			await waitForPrompts(prompts, 3);
+			transport.reply(prompts[2].id, { stopReason: "end_turn" });
+			await second;
+		} finally { session.dispose(); }
+	});
+
+	for (const message of ["Unauthorized (401)", "Unknown tool error", "basispoints_protocol_error: operation outcome is unknown"]) {
+		test(`does not retry an unrelated or ambiguous failure: ${message}`, async () => {
+			const { session, transport, prompts } = startSession({ autoRetryCount: () => 3, retryDelayMs: 1 });
+			try {
+				await session.start();
+				const turn = session.prompt("task");
+				await waitForPrompts(prompts, 1);
+				rejectPrompt(transport, prompts[0], message);
+				await turn;
+				expect(prompts).toHaveLength(1);
+			} finally { session.dispose(); }
+		});
+	}
+
+	for (const action of ["cancel", "dispose"] as const) {
+		test(`${action} interrupts retry backoff without dispatching another request`, async () => {
+			const { session, transport, prompts } = startSession({ autoRetryCount: () => 3, retryDelayMs: 10_000 });
+			try {
+				await session.start();
+				const turn = session.prompt("task");
+				await waitForPrompts(prompts, 1);
+				rejectPrompt(transport, prompts[0], stalled);
+				await tick();
+				expect(session.snapshot().cells.at(-1)).toMatchObject({ type: "notice", level: "info", text: expect.stringContaining("1/3") });
+				await session[action]();
+				await turn;
+				expect(prompts).toHaveLength(1);
+				if (action === "cancel") expect(session.snapshot().cells.at(-1)).toMatchObject({ type: "notice", text: "已停止" });
+			} finally { session.dispose(); }
+		});
+	}
+
+	test("a process exit during retry backoff releases the turn and preserves the crash error", async () => {
+		const { session, transport, prompts } = startSession({ autoRetryCount: () => 3, retryDelayMs: 10_000 });
+		try {
+			await session.start();
+			const turn = session.prompt("task");
+			await waitForPrompts(prompts, 1);
+			rejectPrompt(transport, prompts[0], stalled);
+			await tick();
+			transport.die("adapter crashed");
+			await turn;
+			expect(prompts).toHaveLength(1);
+			expect(session.snapshot()).toMatchObject({ status: "error", error: "adapter crashed" });
+		} finally { session.dispose(); }
+	});
+
 	test("a prompt waits for an in-flight config change before reaching the agent", async () => {
 		const { session, transport, prompts } = startSession();
 		await session.start();
@@ -433,6 +552,113 @@ describe("AcpSession", () => {
 			expect(prompts).toHaveLength(0);
 			expect(session.snapshot().status).toBe("ready");
 			expect(JSON.stringify(session.snapshot().cells)).toContain("mode unavailable");
+		} finally { session.dispose(); }
+	});
+
+	test("footer usage and persisted usage use mapped model names while ACP picker values remain aliases", async () => {
+		const recorded: TurnUsage[] = [];
+		const agent = { ...AGENT, id: "claude", name: "Claude Agent", modelSettings: { mode: "custom" as const, baseUrl: "https://gateway.test", apiKey: "test", model: "opus", opus: "deepseek-reasoner", sonnet: "deepseek-chat" } };
+		const { session, transport, prompts } = startSession({ agent, onUsage: (usage) => recorded.push(usage) });
+		try {
+			await session.start();
+			for (const [index, alias] of ["opus", "sonnet"].entries()) {
+				transport.update("agent-1", { sessionUpdate: "config_option_update", configOptions: [{ id: "model", name: "Model", currentValue: alias, options: [{ value: "opus", name: "Opus" }, { value: "sonnet", name: "Sonnet" }] }] });
+				const turn = session.prompt(`turn ${index}`);
+				await waitForPrompts(prompts, index + 1);
+				transport.update("agent-1", { sessionUpdate: "agent_message_chunk", messageId: `answer-${index}`, content: { type: "text", text: "done" } });
+				transport.reply(prompts[index].id, { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } });
+				await turn;
+				expect(session.snapshot().configOptions.find((entry) => entry.id === "model")?.currentValue).toBe(alias);
+			}
+			expect(recorded.map((usage) => usage.model)).toEqual(["deepseek-reasoner", "deepseek-chat"]);
+			const replies = session.snapshot().cells.filter((cell) => cell.type === "assistant");
+			expect(replies.map((cell) => cell.usage?.model)).toEqual(["deepseek-reasoner", "deepseek-chat"]);
+			expect(replies[0].usage?.provider).toBe("Claude Agent");
+		} finally { session.dispose(); }
+	});
+
+	test("Claude generation speed uses SDK API duration and resets it for the next turn", async () => {
+		const recorded: TurnUsage[] = [];
+		const agent = BUILTIN_ACP_AGENTS.find((entry) => entry.id === "claude")!;
+		const { session, transport, prompts } = startSession({ agent, onUsage: (usage) => recorded.push(usage) });
+		try {
+			await session.start();
+			expect(transport.sent.find((message) => message.method === "session/new")).toMatchObject({ params: { _meta: { claudeCode: { emitRawSDKMessages: [{ type: "result" }] } } } });
+			const first = session.prompt("first");
+			await waitForPrompts(prompts, 1);
+			transport.update("agent-1", { sessionUpdate: "agent_message_chunk", messageId: "timed-answer", content: { type: "text", text: "done" } });
+			const result = { type: "result", uuid: "result-1", duration_ms: 120_000, duration_api_ms: 2000 };
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: result } });
+			// A duplicate result is a reading, not another model call to add.
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: result } });
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "another-session", message: { ...result, duration_api_ms: 999_000 } } });
+			transport.reply(prompts[0].id, { stopReason: "end_turn", usage: { outputTokens: 100, totalTokens: 100 } });
+			await first;
+			expect(recorded[0].modelMs).toBe(2000);
+			expect(usageStats(recorded[0]).tokensPerSecond).toBe(50);
+			const answer = session.snapshot().cells.find((cell) => cell.type === "assistant");
+			expect(answer?.type === "assistant" && answer.usage?.modelMs).toBe(2000);
+			const second = session.prompt("second");
+			await waitForPrompts(prompts, 2);
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: { ...result, uuid: "result-2", duration_api_ms: 4000 } } });
+			transport.reply(prompts[1].id, { stopReason: "end_turn", usage: { outputTokens: 100, totalTokens: 100 } });
+			await second;
+			expect(recorded[1].modelMs).toBe(2000);
+			expect(usageStats(recorded[1]).tokensPerSecond).toBe(50);
+			const reset = session.prompt("after /clear");
+			await waitForPrompts(prompts, 3);
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: { ...result, uuid: "result-3", duration_api_ms: 750 } } });
+			transport.reply(prompts[2].id, { stopReason: "end_turn", usage: { outputTokens: 75, totalTokens: 75 } });
+			await reset;
+			expect(recorded[2].modelMs).toBe(750);
+			expect(usageStats(recorded[2]).tokensPerSecond).toBe(100);
+			const missing = session.prompt("missing timing");
+			await waitForPrompts(prompts, 4);
+			for (const duration_api_ms of [0, -1, Infinity, "2000"]) {
+				transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: { ...result, duration_api_ms } } });
+			}
+			transport.reply(prompts[3].id, { stopReason: "end_turn", usage: { outputTokens: 100, totalTokens: 100 } });
+			await missing;
+			expect(recorded[3].modelMs).toBeUndefined();
+			expect(usageStats(recorded[3]).tokensPerSecond).toBeNull();
+		} finally { session.dispose(); }
+	});
+
+	test("Claude retry throughput excludes API time spent in the failed attempt", async () => {
+		const recorded: TurnUsage[] = [];
+		const agent = BUILTIN_ACP_AGENTS.find((entry) => entry.id === "claude")!;
+		const { session, transport, prompts } = startSession({ agent, autoRetryCount: () => 1, retryDelayMs: 1, onUsage: (usage) => recorded.push(usage) });
+		try {
+			await session.start();
+			const turn = session.prompt("task");
+			await waitForPrompts(prompts, 1);
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: { type: "result", duration_api_ms: 30_000 } } });
+			rejectPrompt(transport, prompts[0], stalled);
+			await waitForPrompts(prompts, 2);
+			transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: { type: "result", duration_api_ms: 32_000 } } });
+			transport.reply(prompts[1].id, { stopReason: "end_turn", usage: { outputTokens: 100, totalTokens: 100 } });
+			await turn;
+			expect(recorded[0].modelMs).toBe(2000);
+			expect(usageStats(recorded[0]).tokensPerSecond).toBe(50);
+		} finally { session.dispose(); }
+	});
+
+	test("resumed Claude sessions establish a baseline rather than dividing by restored historical API time", async () => {
+		const recorded: TurnUsage[] = [];
+		const agent = BUILTIN_ACP_AGENTS.find((entry) => entry.id === "claude")!;
+		const { session, transport, prompts } = startSession({ agent, resume: { sessionId: "agent-1" }, onUsage: (usage) => recorded.push(usage) });
+		try {
+			await session.start();
+			for (const [index, duration_api_ms] of [90_000, 92_000].entries()) {
+				const turn = session.prompt(`turn ${index}`);
+				await waitForPrompts(prompts, index + 1);
+				transport.deliver({ jsonrpc: "2.0", method: "_claude/sdkMessage", params: { sessionId: "agent-1", message: { type: "result", duration_api_ms } } });
+				transport.reply(prompts[index].id, { stopReason: "end_turn", usage: { outputTokens: 100, totalTokens: 100 } });
+				await turn;
+			}
+			expect(recorded[0].modelMs).toBeUndefined();
+			expect(recorded[1].modelMs).toBe(2000);
+			expect(usageStats(recorded[1]).tokensPerSecond).toBe(50);
 		} finally { session.dispose(); }
 	});
 
@@ -939,6 +1165,36 @@ describe("AcpService", () => {
 			expect(service.snapshot(warm.id)).toBeNull();
 			expect(service.snapshot(conversation.id)).not.toBeNull();
 			const next = service.create({ agentId: "codex", cwd: tmpdir(), warm: true }, "a");
+			expect(next.id).not.toBe(warm.id);
+		} finally { service.dispose(); rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	test("native-file provider activation updates disk before reconnecting an unsent ACP composer", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "acp-native-service-"));
+		const store = new AcpConfigStore(join(dir, "app"), new AcpNativeConfig({ homeDir: join(dir, "home"), env: {} }));
+		const transports: FakeTransport[] = [];
+		const factory = historyAgent(transports);
+		const service = new AcpService({ nativeConfig: true, clientVersion: "0", store, emitState: () => {}, emitSnapshot: () => {}, createTransport: (agent) => {
+			expect(agent.env.CODEX_CONFIG).toBeUndefined();
+			expect(agent.env.MODEL_PROVIDER).toBeUndefined();
+			return factory();
+		} });
+		try {
+			const warm = service.create({ agentId: "codex", cwd: tmpdir(), warm: true }, "window");
+			await until(() => service.snapshot(warm.id)?.status === "ready");
+			const agent = store.find("codex")!;
+			const profile = { id: "custom", name: "Custom", category: "custom", websiteUrl: "", notes: "", config: 'model_provider = "custom"\nmodel = "native-model"\n[model_providers.custom]\nbase_url = "https://native.test/v1"\nwire_api = "responses"', apiKey: "native-test-key", env: {} };
+			const state = { ...agent.providerState!, profiles: [...agent.providerState!.profiles, profile] };
+			service.saveAgent({ ...agent, providerState: state });
+			expect(service.snapshot(warm.id)).not.toBeNull();
+			service.saveAgent({ ...store.find("codex")!, providerState: { ...state, activeId: profile.id } });
+			expect(service.snapshot(warm.id)).toBeNull();
+			const { readFileSync } = await import("node:fs");
+			const written = readFileSync(join(dir, "home", ".codex", "config.toml"), "utf8");
+			expect(written).toContain('model = "native-model"');
+			expect(written).toContain('experimental_bearer_token = "native-test-key"');
+			const next = service.create({ agentId: "codex", cwd: tmpdir(), warm: true }, "window");
+			await until(() => service.snapshot(next.id)?.status === "ready");
 			expect(next.id).not.toBe(warm.id);
 		} finally { service.dispose(); rmSync(dir, { recursive: true, force: true }); }
 	});

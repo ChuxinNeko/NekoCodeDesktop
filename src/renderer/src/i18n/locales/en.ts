@@ -3,6 +3,8 @@
  * locale must provide exactly these keys.
  */
 export const en = {
+	"settings.autoRetryCount": "Automatic retry count",
+	"settings.autoRetryCountHint": "Additional attempts: 0–10; 0 disables retries. NekoLocal retries recoverable model errors; external agents continue after tool argument stalls or transport correction errors. Applies to the next message.",
 	"selection.chat.title": "Explain selection",
 	"selection.chat.close": "Close",
 	"selection.chat.source": "Selected passage",
@@ -1971,12 +1973,12 @@ export const en = {
 	"acpProviders.add": "Add provider",
 	"acpProviders.edit": "Edit provider",
 	"acpProviders.back": "Back to providers",
-	"acpProviders.listHint": "Save multiple provider configurations. The enabled provider is used for new ACP sessions.",
+	"acpProviders.listHint": "Enabling or editing the active provider updates the client's native configuration files. Applies to new ACP sessions and the next client launch.",
 	"acpProviders.pickHint": "Step 1: Select a preset",
 	"acpProviders.formHint": "Enter provider details and model settings",
 	"acpProviders.search": "Search providers…",
 	"acpProviders.copySuffix": "copy",
-	"acpProviders.saved": "Provider configuration saved. Applies to new sessions.",
+	"acpProviders.saved": "Provider saved and synchronized to the client's native configuration files. Start a new conversation to use it.",
 	"acpProviders.deleteTitle": "Delete provider",
 	"acpProviders.deleteDescription": "Delete “{name}”? This removes the saved provider configuration.",
 	"acpModels.workspace": "Workspace",

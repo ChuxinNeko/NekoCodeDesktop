@@ -5,6 +5,8 @@ import { PromptPredictionService } from "./prompt-prediction";
 import { TaskManager } from "./task-manager";
 import { TaskNotifier } from "./task-notifier";
 import { AppPreferencesStore } from "./app-preferences";
+import { AcpNativeConfig } from "./acp/native-config";
+import { configureAgentRetry, currentAutoRetryCount } from "./agent-retry";
 import { ModelPricingService } from "./model-pricing";
 import { WorktreeService, type PreparedWorkspace } from "./worktree-service";
 import { McpService } from "./mcp/service";
@@ -857,6 +859,7 @@ function createWindow(): void {
 	// Read per session, so a change applies to the next one without a restart.
 	configureCommandShell(() => preferences?.get().commandShell ?? "auto");
 	configureTeamSettings(() => preferences?.get().team);
+	configureAgentRetry(() => preferences?.get().autoRetryCount);
 	// The account search engines borrow the model sign-ins; see native-search.ts.
 	const codexSearchAuth = async (): Promise<CodexSearchAuth | null> => {
 		const runtime = await taskManager?.active.getModelRuntime();
@@ -1464,7 +1467,9 @@ function registerIpc(): void {
 	const acp = (): AcpService =>
 		(acpService ??= new AcpService({
 			clientVersion: app.getVersion(),
-			store: new AcpConfigStore(app.getPath("userData")),
+			autoRetryCount: currentAutoRetryCount,
+			store: new AcpConfigStore(app.getPath("userData"), new AcpNativeConfig()),
+			nativeConfig: true,
 			usageDir: join(app.getPath("userData"), "acp-usage"),
 			appRoot: app.getAppPath(),
 			toolServers: acpToolServers,

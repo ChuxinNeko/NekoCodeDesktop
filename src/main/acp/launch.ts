@@ -1,4 +1,5 @@
 import { acpProviderEnv } from "./providers";
+import { nativeConfigEnvironment, nativeConfigEnvKey, ownsNativeRouting } from "./native-config";
 /**
  * Turning an agent definition into a process to start.
  *
@@ -22,9 +23,12 @@ export interface AgentLaunch {
 	env: Record<string, string>;
 	/** A user-given command may be a shell script (`npx`); the bundled launch never is. */
 	shell: boolean;
+	unsetEnv?: string[];
 }
 
 export interface LaunchContext {
+	/** Routing is synchronized to the CLI's own files, rather than session overrides. */
+	nativeConfig?: boolean;
 	/** The Electron binary, which doubles as Node. */
 	execPath: string;
 	/** `app.getAppPath()`: the project root in development, `…/app.asar` when packaged. */
@@ -96,10 +100,12 @@ export function nativeLaunch(agent: AcpAgentDefinition & { native: NativeAgentCl
 }
 
 export function agentLaunch(agent: AcpAgentDefinition, context: LaunchContext): AgentLaunch {
-	agent = { ...agent, env: { ...agent.env, ...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)) } };
+	const nativeConfig = context.nativeConfig && (agent.id === "codex" || agent.id === "claude");
+	const unsetEnv = nativeConfig && ownsNativeRouting(agent) ? Object.keys({ ...context.baseEnv, ...agent.env }).filter((key) => nativeConfigEnvKey(agent.id, key)) : [];
+	agent = { ...agent, env: nativeConfig ? nativeConfigEnvironment(agent) : { ...agent.env, ...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)) } };
 	if (usesNativeCli(agent)) return nativeLaunch(agent, context);
 	if (!usesBundledAdapter(agent)) {
-		return { command: agent.command, args: [...agent.args], env: { ...agent.env }, shell: context.platform === "win32" };
+		return { command: agent.command, args: [...agent.args], env: { ...agent.env }, shell: context.platform === "win32", ...(nativeConfig ? { unsetEnv } : {}) };
 	}
 	const adapter = agent.bundled;
 	const entry = adapterEntryPath(context.appRoot, adapter);
@@ -118,5 +124,6 @@ export function agentLaunch(agent: AcpAgentDefinition, context: LaunchContext): 
 		args: ["--input-type=module", "-e", bootstrapScript(entry)],
 		env: { ...agent.env, ELECTRON_RUN_AS_NODE: "1", [adapter.binaryEnv]: cli },
 		shell: false,
+		...(nativeConfig ? { unsetEnv } : {}),
 	};
 }

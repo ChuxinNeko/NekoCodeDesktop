@@ -5,6 +5,8 @@ import type { TranslationKey } from "./en";
  * exactly; the Record type makes a missing key a compile error.
  */
 export const zhCN: Record<TranslationKey, string> = {
+	"settings.autoRetryCount": "自动重试次数",
+	"settings.autoRetryCountHint": "额外重试 0–10 次，0 为关闭。NekoLocal 重试可恢复的模型错误；外部代理在工具参数停滞或传输纠正错误后自动继续。下一条消息起生效。",
 	"selection.chat.title": "解释选中内容",
 	"selection.chat.close": "关闭",
 	"selection.chat.source": "选中原文",
@@ -1948,12 +1950,12 @@ export const zhCN: Record<TranslationKey, string> = {
 	"acpProviders.add": "添加供应商",
 	"acpProviders.edit": "编辑供应商",
 	"acpProviders.back": "返回供应商列表",
-	"acpProviders.listHint": "管理多套供应商配置，启用后用于新建 ACP 会话。",
+	"acpProviders.listHint": "启用或编辑当前供应商时，直接同步到客户端原始配置文件；新建 ACP 会话和客户端下次启动时生效。",
 	"acpProviders.pickHint": "第 1 步：选择预设",
 	"acpProviders.formHint": "填写供应商信息和模型配置",
 	"acpProviders.search": "搜索供应商…",
 	"acpProviders.copySuffix": "副本",
-	"acpProviders.saved": "供应商配置已保存，新建会话时生效。",
+	"acpProviders.saved": "供应商配置已保存并同步到客户端配置文件；请新建会话使用。",
 	"acpProviders.deleteTitle": "删除供应商",
 	"acpProviders.deleteDescription": "确定删除「{name}」？此操作会移除这套供应商配置。",
 	"acpModels.workspace": "工作区",

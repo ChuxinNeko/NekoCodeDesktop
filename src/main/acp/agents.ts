@@ -102,7 +102,12 @@ export const BUILTIN_ACP_AGENTS: readonly AcpAgentDefinition[] = [
 			cliName: "Claude Code",
 			installHint: "按 https://code.claude.com 的说明安装 Claude Code（原生安装器），然后运行 claude 登录",
 			// claude-agent-acp appends this to Claude Code's own system prompt.
-			sessionMeta: { systemPrompt: { append: CLAUDE_FILE_TOOLS_PROMPT } },
+			sessionMeta: {
+				systemPrompt: { append: CLAUDE_FILE_TOOLS_PROMPT },
+				// ACP usage omits model time. Request only terminal SDK results,
+				// which carry duration_api_ms, rather than duplicating the text stream.
+				claudeCode: { emitRawSDKMessages: [{ type: "result" }] },
+			},
 		},
 	},
 	{

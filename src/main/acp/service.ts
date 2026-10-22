@@ -1,5 +1,6 @@
 import { acpProviderEnv, acpProviderSessionMeta } from "./providers";
 import { acpModelEnv } from "./model-settings";
+import { nativeConfigEnvironment } from "./native-config";
 /**
  * The external agents a user has set up and the conversations open with them,
  * plus the push channel to the window.
@@ -53,10 +54,12 @@ const MAX_HISTORY_PAGES = 8;
 const MAX_IDLE_SESSIONS = 4;
 
 export interface AcpServiceOptions {
+	nativeConfig?: boolean;
+	autoRetryCount?: () => number;
 	/** Durable prompt usage, read by the settings token dashboard. */
 	usageDir?: string;
 	clientVersion: string;
-	store: Pick<AcpConfigStore, "list" | "find" | "save" | "remove">;
+	store: Pick<AcpConfigStore, "list" | "find" | "save" | "remove"> & Partial<Pick<AcpConfigStore, "syncNative">>;
 	emitState: (state: AcpState) => void;
 	emitSnapshot: (snapshot: AcpSessionSnapshot) => void;
 	/** An agent's history may have changed: a turn ended, so a title or time moved. */
@@ -145,6 +148,7 @@ export class AcpService {
 	 */
 	private launch(agent: AcpAgentDefinition): AgentLaunch {
 		return agentLaunch(agent, {
+			nativeConfig: this.options.nativeConfig,
 			execPath: process.execPath,
 			appRoot: this.options.appRoot ?? process.cwd(),
 			platform: process.platform,
@@ -207,7 +211,11 @@ export class AcpService {
 	saveAgent(request: AcpSaveAgentRequest): AcpAgentInfo[] {
 		const previous = request.id ? this.options.store.find(request.id) : undefined;
 		const saved = this.options.store.save(request);
-		const routing = (agent: AcpAgentDefinition) => JSON.stringify({
+		const routing = (agent: AcpAgentDefinition) => this.options.nativeConfig ? JSON.stringify({
+			env: agent.env,
+			profile: agent.providerState?.profiles.find((profile) => profile.id === agent.providerState?.activeId),
+			modelSettings: agent.modelSettings,
+		}) : JSON.stringify({
 			env: {
 				...agent.env,
 				...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)),
@@ -238,6 +246,8 @@ export class AcpService {
 		const agent = this.options.store.find(agentId);
 		if (!agent) throw new Error(`未知的代理：${agentId}`);
 		if (!agent.enabled) throw new Error(`${agent.name} 已在设置中停用`);
+		if (this.options.nativeConfig) this.options.store.syncNative?.(agentId);
+		if (this.options.nativeConfig && (agentId === "claude" || agentId === "codex")) return { ...agent, env: nativeConfigEnvironment(agent) };
 		return { ...agent, ...(agent.bundled ? { bundled: { ...agent.bundled, sessionMeta: acpProviderSessionMeta(agent.id, agent.providerState, agent.bundled.sessionMeta) } } : {}), env: {
 			...agent.env,
 			...(agent.providerState ? acpProviderEnv(agent.id, agent.providerState) : acpModelEnv(agent.id, agent.modelSettings)),
@@ -248,7 +258,7 @@ export class AcpService {
 		if (this.options.createTransport) return this.options.createTransport(agent, cwd);
 		const launch = this.launch(agent);
 		const env = { ...agentProxyEnv(this.options.proxyUrl?.(), process.env), ...launch.env };
-		return new StdioTransport({ command: launch.command, args: launch.args, env, cwd, shell: launch.shell });
+		return new StdioTransport({ command: launch.command, args: launch.args, env, unsetEnv: launch.unsetEnv, cwd, shell: launch.shell });
 	}
 
 	private start(
@@ -263,6 +273,7 @@ export class AcpService {
 			agent,
 			cwd,
 			clientVersion: this.options.clientVersion,
+			autoRetryCount: this.options.autoRetryCount,
 			createTransport: (target, dir) => this.transport(target, dir),
 			onChange: () => this.markDirty(id),
 			onUsage: (usage, timestamp) => this.usageStore?.record(session.summary(), usage, timestamp),

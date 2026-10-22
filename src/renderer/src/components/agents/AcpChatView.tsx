@@ -206,7 +206,9 @@ interface AcpChatViewProps {
 	error: string | null;
 	/** The agent could not list its own history. */
 	historyError: string | null;
-	composerHeader: React.ReactNode;
+	composerHeader?: React.ReactNode;
+	/** Workspace switcher at the right end of the conversation header. */
+	workspacePicker?: React.ReactNode;
 	onDismissError: () => void;
 	onPickProject: () => void;
 	onSend: (request: SendPromptRequest) => void;
@@ -301,13 +303,16 @@ export function AcpChatView(props: AcpChatViewProps) {
 								{snapshot.cwd}
 							</span>
 						)}
-						{compact ? null : <span className="shrink-0">{t(STATUS_KEYS[snapshot.status])}</span>}
+						{compact || props.workspacePicker ? null : <span className="shrink-0">{t(STATUS_KEYS[snapshot.status])}</span>}
 					</div>
 				) : props.loadingSession ? (
 					<div className="min-w-0 flex-1" />
 				) : (
-					<ProjectPicker cwd={props.cwd} onPickProject={props.onPickProject} />
+					<div className="min-w-0 flex-1">
+						<ProjectPicker cwd={props.cwd} onPickProject={props.onPickProject} />
+					</div>
 				)}
+				{props.workspacePicker}
 				{props.headerActions}
 			</header>
 			{error ? (

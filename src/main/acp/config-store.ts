@@ -8,10 +8,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { AcpModelSettings, AcpProviderState, AcpSaveAgentRequest } from "../../shared/acp";
 import { validateAcpProviderState } from "./providers";
 import { validateAcpModelSettings } from "./model-settings";
 import { BUILTIN_ACP_AGENTS, type AcpAgentDefinition } from "./agents";
+import type { AcpNativeConfig } from "./native-config";
 
 interface StoredOverride {
 	modelSettings?: AcpModelSettings;
@@ -99,7 +101,7 @@ export class AcpConfigStore {
 	private readonly filePath: string;
 	private file: StoredFile | null = null;
 
-	constructor(private readonly userDataDir: string) {
+	constructor(private readonly userDataDir: string, private readonly nativeConfig?: AcpNativeConfig) {
 		this.filePath = join(userDataDir, "acp-agents.json");
 	}
 
@@ -135,17 +137,40 @@ export class AcpConfigStore {
 			return override ? { ...agent, ...override, builtin: true } : agent;
 		});
 		const custom = file.custom.map((entry) => ({ ...entry, description: "自定义 ACP 代理", builtin: false }));
-		return [...builtins, ...custom];
+		return [...builtins, ...custom].map((agent) => {
+			if (!this.nativeConfig) return agent;
+			if (agent.providerState) {
+				if (!agent.providerState.profiles.some((profile) => profile.category === "current" && !profile.config.trim())) return agent;
+				const imported = this.nativeConfig.importCurrent(agent)?.profiles[0];
+				if (!imported) return agent;
+				return { ...agent, providerState: { ...agent.providerState, profiles: agent.providerState.profiles.map((profile) => profile.category === "current" && !profile.config.trim() ? { ...profile, config: imported.config, apiKey: imported.apiKey } : profile) } };
+			}
+			if (agent.modelSettings && agent.modelSettings.mode !== "inherit") return agent;
+			const providerState = this.nativeConfig.importCurrent(agent);
+			return providerState ? { ...agent, providerState } : agent;
+		});
 	}
 
 	find(id: string): AcpAgentDefinition | undefined {
 		return this.list().find((agent) => agent.id === id);
 	}
 
+	/** Also migrate saved selections made before native-file synchronization existed. */
+	syncNative(id: string): void {
+		const agent = this.find(id);
+		if (!agent || !this.nativeConfig) return;
+		const stored = this.load().builtins.find((entry) => entry.id === id);
+		// Capture the original configuration before applying an older release's
+		// already-selected provider, so the imported card can still restore it.
+		if (agent.providerState && !isDeepStrictEqual(stored?.providerState, agent.providerState)) this.save(agent);
+		this.nativeConfig.apply(agent);
+	}
+
 	save(request: AcpSaveAgentRequest): AcpAgentDefinition {
 		const name = request.name.trim();
 		const command = request.command.trim();
 		const builtin = BUILTIN_ACP_AGENTS.find((agent) => agent.id === request.id);
+		const previous = request.id ? this.find(request.id) : undefined;
 		if (!name) throw new Error("请填写代理名称");
 		// A built-in agent without a command runs its bundled adapter or its own CLI.
 		if (!command && !builtin?.bundled && !builtin?.native) throw new Error("请填写启动命令");
@@ -154,10 +179,11 @@ export class AcpConfigStore {
 		const providerState = request.providerState === undefined ? this.find(request.id ?? "")?.providerState : validateAcpProviderState(request.id ?? "", request.providerState);
 		const fields = { ...(providerState ? { providerState } : {}), ...(modelSettings ? { modelSettings } : {}), name, command, args: command ? [...request.args] : [], env: { ...request.env }, enabled: request.enabled };
 		if (builtin) {
-			this.persist({
+			const rollback = this.nativeConfig?.apply({ ...builtin, ...fields }, previous);
+			try { this.persist({
 				...file,
 				builtins: [...file.builtins.filter((entry) => entry.id !== builtin.id), { id: builtin.id, ...fields }],
-			});
+			}); } catch (error) { rollback?.(); throw error; }
 		} else {
 			const id = request.id && file.custom.some((entry) => entry.id === request.id) ? request.id : `custom-${randomUUID()}`;
 			this.persist({ ...file, custom: [...file.custom.filter((entry) => entry.id !== id), { id, ...fields }] });

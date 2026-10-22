@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acpModelEnv, validateAcpModelSettings } from "../../../src/main/acp/model-settings";
+import { acpModelEnv, acpUsageModel, validateAcpModelSettings } from "../../../src/main/acp/model-settings";
+import { profileFromPreset, updateProviderFields } from "../../../src/shared/acp-providers";
 import { AcpConfigStore } from "../../../src/main/acp/config-store";
 import { agentLaunch } from "../../../src/main/acp/launch";
 import { BUILTIN_ACP_AGENTS } from "../../../src/main/acp/agents";
@@ -11,6 +12,23 @@ import type { AcpModelSettings } from "../../../src/shared/acp";
 const custom: AcpModelSettings = { mode: "custom", baseUrl: "https://gateway.example/v1", apiKey: "test-secret", model: "custom-model", reasoning: "high" };
 
 describe("ACP model routing", () => {
+	test("usage resolves Claude model aliases through the active provider's mappings", () => {
+		const profile = { ...updateProviderFields("claude", profileFromPreset("claude"), { baseUrl: "https://gateway.test", model: "opus", opus: "deepseek-reasoner", sonnet: "deepseek-chat", haiku: "small-model" }), id: "selected" };
+		const agent = { id: "claude", env: {}, providerState: { activeId: profile.id, profiles: [{ ...profile, id: "inactive", config: profile.config.replaceAll("deepseek-reasoner", "wrong-model") }, profile] } };
+		expect(acpUsageModel(agent, "opus")).toBe("deepseek-reasoner");
+		expect(acpUsageModel(agent, "opus[1m]")).toBe("deepseek-reasoner");
+		expect(acpUsageModel(agent, "sonnet")).toBe("deepseek-chat");
+		expect(acpUsageModel(agent, "haiku")).toBe("small-model");
+		expect(acpUsageModel(agent, "default")).toBe("deepseek-reasoner");
+		expect(acpUsageModel(agent, "claude-opus-explicit")).toBe("claude-opus-explicit");
+		expect(acpUsageModel({ ...agent, id: "codex" }, "opus")).toBe("opus");
+	});
+
+	test("usage supports legacy settings and keeps unmapped aliases intact", () => {
+		expect(acpUsageModel({ id: "claude", env: {}, modelSettings: { ...custom, opus: "deepseek-v4" } }, "opus")).toBe("deepseek-v4");
+		expect(acpUsageModel({ id: "claude", env: {} }, "opus")).toBe("opus");
+	});
+
 	test("custom Codex launches with Responses routing and a process-only API key", () => {
 		const agent = { ...BUILTIN_ACP_AGENTS.find((entry) => entry.id === "codex")!, modelSettings: custom, env: { MODEL_PROVIDER: "old", CODEX_CONFIG: "{}", KEEP: "yes" } };
 		const launch = agentLaunch(agent, { execPath: "/electron", appRoot: "/app", platform: "linux", baseEnv: {}, findCli: () => "/codex", fileExists: () => true });

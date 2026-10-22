@@ -26,13 +26,16 @@ export class StdioTransport implements AcpTransport {
 		command: string;
 		args: string[];
 		env: Record<string, string>;
+		unsetEnv?: string[];
 		cwd: string;
 		/** Defaults to a shell on Windows; an absolute executable needs none. */
 		shell?: boolean;
 	}) {
+		const env = { ...process.env, ...options.env };
+		for (const key of options.unsetEnv ?? []) delete env[key];
 		this.child = spawn(options.command, options.args, {
 			cwd: options.cwd,
-			env: { ...process.env, ...options.env },
+			env,
 			stdio: ["pipe", "pipe", "pipe"],
 			// Agents are commonly `npx …`, which on Windows is a shell script.
 			shell: options.shell ?? process.platform === "win32",

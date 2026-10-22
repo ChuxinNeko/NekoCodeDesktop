@@ -1028,7 +1028,7 @@ export type WorkUnit =
  * of a live run is held there too, since the next action is what it is usually
  * about — it goes back to the group if something else follows instead.
  */
-export function workUnits(items: WorkItem[], active: boolean): WorkUnit[] {
+export function workUnits(items: WorkItem[], active: boolean, options: { inlineThinking?: boolean } = {}): WorkUnit[] {
 	const units: WorkUnit[] = [];
 	let held: Extract<WorkItem, { kind: "thinking" }>[] = [];
 	const flush = () => {
@@ -1049,7 +1049,7 @@ export function workUnits(items: WorkItem[], active: boolean): WorkUnit[] {
 			}
 			continue;
 		}
-		if (item.kind === "thinking" && group?.kind === "computer") {
+		if (item.kind === "thinking" && group?.kind === "computer" && !options.inlineThinking) {
 			held.push(item);
 			continue;
 		}
