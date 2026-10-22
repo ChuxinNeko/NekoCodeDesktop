@@ -10,7 +10,7 @@ import {
 import { formatKeyValueLines, parseKeyValueLines } from "../../../../shared/mcp";
 import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
-import { ArrowLeftIcon, PlusIcon } from "../../lib/icons";
+import { PlusIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -18,6 +18,7 @@ import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopupBase, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
+import { SettingsDialog } from "./SettingsDialog";
 
 const muted = "text-xs leading-relaxed text-muted-foreground";
 const border = "border-[color:var(--app-surface-divider)]";
@@ -234,7 +235,7 @@ export function AcpProviderForm({ agentId, initial, preset, editing, busy, onCha
 	</form>;
 }
 
-/** CC Switch-style saved provider list and two-step add/edit pages. */
+/** CC Switch-style saved provider list with a two-step add/edit dialog. */
 export function AcpModelSettings({ agent }: { agent: AcpAgentInfo }) {
 	const { t } = useTranslation();
 	const [state, setState] = useState(() => getAcpProviderState(agent));
@@ -270,25 +271,28 @@ export function AcpModelSettings({ agent }: { agent: AcpAgentInfo }) {
 	};
 	return <section className="flex flex-col gap-4">
 		<div className="flex items-center gap-2">
-			{page !== "list" ? <Button size="icon-xs" variant="ghost" disabled={busy} aria-label={t("acpProviders.back")} onClick={() => { setPage("list"); setError(null); }}><ArrowLeftIcon className="size-4" /></Button> : null}
-			<div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{page === "list" ? `${agent.name} · ${t("providers.tab")}` : t(editing ? "acpProviders.edit" : "acpProviders.add")}</h2>
-				<p className={cn(muted, "mt-1")}>{t(page === "list" ? "acpProviders.listHint" : page === "pick" ? "acpProviders.pickHint" : "acpProviders.formHint")}</p>
+			<div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{agent.name} · {t("providers.tab")}</h2>
+				<p className={cn(muted, "mt-1")}>{t("acpProviders.listHint")}</p>
 			</div>
-			{page === "list" ? <Button size="sm" variant="subtle" disabled={busy} onClick={() => { setEditing(false); setPage("pick"); setMessage(null); setError(null); }}><PlusIcon className="size-3.5" />{t("acpProviders.add")}</Button> : null}
+			<Button size="sm" variant="subtle" disabled={busy} onClick={() => { setEditing(false); setPage("pick"); setMessage(null); setError(null); }}><PlusIcon className="size-3.5" />{t("acpProviders.add")}</Button>
 		</div>
-		{error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+		{error && page === "list" ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
 		{message && page === "list" ? <p role="status" className={muted}>{message}</p> : null}
-		{page === "list" ? <>
-			<Input aria-label={t("acpProviders.search")} placeholder={t("acpProviders.search")} value={query} onChange={(event) => setQuery(event.target.value)} />
-			<AcpProviderList agentId={agent.id} state={state} query={query} busy={busy} onActivate={(profile) => run(() => saveState({ ...state, activeId: profile.id }))} onEdit={edit}
-				onDuplicate={(profile) => run(() => saveState({ ...state, profiles: [...state.profiles, { ...profile, id: newId(), name: `${profile.name} ${t("acpProviders.copySuffix")}` }] }))}
-				onDelete={setPendingDelete} onMove={move} />
-		</> : page === "pick" ? <AcpPresetPicker agentId={agent.id} onPick={pick} /> : draft ? <AcpProviderForm key={`${draft.id}-${draft.presetId}`} agentId={agent.id} initial={draft} preset={preset} editing={editing} busy={busy}
-			onChangePreset={() => setPage("pick")} onCancel={() => setPage("list")} onSave={async (profile) => {
-				const savedProfile = { ...profile, id: profile.id || newId() };
-				await saveState({ ...state, profiles: editing ? state.profiles.map((entry) => entry.id === profile.id ? savedProfile : entry) : [...state.profiles, savedProfile] });
-				setPage("list");
-			}} /> : null}
+		<Input aria-label={t("acpProviders.search")} placeholder={t("acpProviders.search")} value={query} onChange={(event) => setQuery(event.target.value)} />
+		<AcpProviderList agentId={agent.id} state={state} query={query} busy={busy} onActivate={(profile) => run(() => saveState({ ...state, activeId: profile.id }))} onEdit={edit}
+			onDuplicate={(profile) => run(() => saveState({ ...state, profiles: [...state.profiles, { ...profile, id: newId(), name: `${profile.name} ${t("acpProviders.copySuffix")}` }] }))}
+			onDelete={setPendingDelete} onMove={move} />
+		{page !== "list" ? <SettingsDialog wide title={t(editing ? "acpProviders.edit" : "acpProviders.add")}
+			description={t(page === "pick" ? "acpProviders.pickHint" : "acpProviders.formHint")}
+			onClose={() => { if (!busy) { setPage("list"); setError(null); } }}
+			footer={page === "pick" ? <Button size="sm" variant="ghost" onClick={() => setPage("list")}>{t("common.cancel")}</Button> : null}>
+			{page === "pick" ? <AcpPresetPicker agentId={agent.id} onPick={pick} /> : draft ? <AcpProviderForm key={`${draft.id}-${draft.presetId}`} agentId={agent.id} initial={draft} preset={preset} editing={editing} busy={busy}
+				onChangePreset={() => setPage("pick")} onCancel={() => setPage("list")} onSave={async (profile) => {
+					const savedProfile = { ...profile, id: profile.id || newId() };
+					await saveState({ ...state, profiles: editing ? state.profiles.map((entry) => entry.id === profile.id ? savedProfile : entry) : [...state.profiles, savedProfile] });
+					setPage("list");
+				}} /> : null}
+		</SettingsDialog> : null}
 		<ConfirmDialog open={!!pendingDelete} onOpenChange={(open) => { if (!open && !busy) setPendingDelete(null); }} title={t("acpProviders.deleteTitle")} description={pendingDelete ? t("acpProviders.deleteDescription", { name: pendingDelete.name }) : ""}
 			footer={<><Button size="sm" variant="ghost" disabled={busy} onClick={() => setPendingDelete(null)}>{t("common.cancel")}</Button><Button size="sm" variant="destructive-outline" disabled={busy} onClick={() => run(async () => { if (!pendingDelete || pendingDelete.id === state.activeId) return; await saveState({ ...state, profiles: state.profiles.filter((entry) => entry.id !== pendingDelete.id) }); setPendingDelete(null); })}>{t("acpProviders.delete")}</Button></>} />
 	</section>;
