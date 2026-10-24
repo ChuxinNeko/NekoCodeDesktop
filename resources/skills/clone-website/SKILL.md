@@ -12,10 +12,11 @@ Read `references/workflow.md` completely before starting; it is the procedure. T
 ## Tools
 
 - `browser_navigate` — open an http(s) URL in the visible browser panel and bind it to this session. Navigating to the URL already open reloads it; use that to load a rebuilt page.
-- `browser_viewport` — set the CSS viewport (1440×900, 768×900, 390×844). It holds for every later call, across navigations, until changed.
+- `browser_viewport` — set the real page's CSS viewport (1440×900, 768×900, 390×844). The preview scales to fit the panel; DOM geometry and input coordinates remain in the requested CSS pixels. It holds across calls and navigations. Call with `{ "reset": true }` only to restore the actual panel viewport before delivery.
 - `browser_extract` — the fixed extractor: named elements → rects, own text, attributes, non-default computed styles (colors normalized), pseudo-elements, small inline SVGs. Use it for all structural evidence.
 - `browser_evaluate` — arbitrary read-only JavaScript for what the extractor does not cover (asset inventories, stylesheet rules, library detection). It must never navigate: no `location.reload()`, no assigning `location.href`, no form submits.
 - `browser_action` — click, hover, scroll, type, wait. Scroll before clicking. Never type secrets or submit forms that change anything.
+- `browser_check` — record real-page layout and element assertions with URL, viewport and measured pass/fail evidence in the acceptance center. Use after interactions and at each viewport, including the restored natural panel size. This does not prove complete visual fidelity.
 - `website_clone_compare` — diff two saved extractions: `match: "text"` for source vs clone, `match: "path"` for two states of one page.
 - `browser_screenshot` — only when the user explicitly requests screenshots or image comparison; never part of default QA. Its result says whether the image is attached for the active model.
 - `website_clone_scaffold` — copy the bundled Next.js template into a new workspace child directory.

@@ -7,7 +7,14 @@
  */
 import { DEFAULT_TEAM, type TeamSettings } from "./team";
 
+export type WindowCloseBehavior = "quit" | "tray";
+export function isWindowCloseBehavior(value: unknown): value is WindowCloseBehavior {
+	return value === "quit" || value === "tray";
+}
+
 export interface AppPreferences {
+	/** Close the application, or hide its window while tasks continue in the tray. */
+	closeBehavior: WindowCloseBehavior;
 	/** null follows the current display; a percentage overrides app zoom. */
 	uiScalePercent: number | null;
 	/** Announce a task finishing when it is not the one on screen. */
@@ -57,6 +64,7 @@ export interface CommandShellOption {
 }
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
+	closeBehavior: "tray",
 	uiScalePercent: null,
 	notifyOnTaskFinish: true,
 	isolateBackgroundTasks: true,

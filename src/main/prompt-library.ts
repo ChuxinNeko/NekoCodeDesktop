@@ -419,6 +419,15 @@ export function buildModePrompt(context: PromptContext): string {
 		tools.includes("browser_action")
 			? "浏览器交互验收使用 browser_action：它在右侧浏览器显示鼠标移动、点击、拖拽和输入过程，通过浏览器原生输入触发真实事件。按钮、表单、悬停、滚动、拖动和按键测试优先用它；不要用 browser_evaluate 调用 click()、直接写入 value 或派发合成事件来代替用户操作。browser_evaluate 用于读取页面状态并验证操作结果。坐标使用页面 CSS 像素，优先使用选择器定位；遇到遮挡、禁用或不可见目标先检查原因，不绕过目标状态。"
 			: "",
+		tools.includes("acceptance_check")
+			? "验收中心：编码任务有明确验收要求时，使用 acceptance_check 先登记关键验收项（pending），完成后复用相同 id 更新。通过或失败必须引用本轮真实验证命令或 browser_check 的 evidenceToolCallIds；跳过或未验证须说明原因。不要把工具调用成功、打开预览、模型自述当作功能通过。源码修改后的旧证据需要重跑；最终回复如实列出尚未验证项。"
+			: "",
+		tools.includes("browser_check")
+			? "浏览器验收使用 browser_check 记录真实 URL、视口、横向溢出以及元素可见性、文本和启用状态；先用 browser_action 完成交互再检查结果。browser_evaluate 用于调查，不能单凭执行成功宣称验收通过。响应式检查和恢复面板实际尺寸后都运行 browser_check。"
+			: "",
+		tools.includes("browser_viewport")
+			? "响应式验收必须在真实顶层预览页面上使用 browser_viewport 设置桌面和移动端尺寸，并读取 innerWidth/innerHeight 确认生效，比较文档 scrollWidth/clientWidth、检查关键元素边界和溢出容器。模拟视口会缩放显示以适应侧栏，但 DOM 和输入坐标仍是所请求的 CSS 像素。不要用临时 iframe、复制 DOM 或注入样式代替真实页面验收；工具失败时说明未验证，不宣称通过。修复源代码中的布局原因，不用隐藏页面溢出来掩盖裁切。交付前调用 browser_viewport({reset:true}) 恢复实际面板尺寸，再检查该尺寸的布局和横向溢出，保持用户可直接浏览的预览状态。"
+			: "",
 		!readOnly && !context.child && !context.headless
 			? "浏览器预览：成功编辑独立 HTML 后界面会自动预览。若任务需要启动前端开发服务，使用实际命令并保持服务运行，从启动输出或日志中取得完整本地 URL；运行时验证后自动打开右侧浏览器，不猜测端口。自动预览不等于已完成元素验证。"
 			: "",

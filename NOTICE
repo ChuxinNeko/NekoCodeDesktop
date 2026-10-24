@@ -1,0 +1,11 @@
+NekoCode Desktop team workspace
+
+Team interaction design and tool capabilities are adapted from:
+DS Bot (https://github.com/Fei2411/DeepSeek-Bot)
+Copyright 2026 Fei2411 and the DS Bot contributors
+Licensed under the Apache License, Version 2.0.
+The license is included in licenses/DeepSeek-Bot-LICENSE.txt.
+
+The NekoCode implementation uses the PI runtime, TypeScript and React in place
+of the original DSH plugin runtime. It includes independent team navigation,
+member management, private/group conversations, work status and scoped memory.

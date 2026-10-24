@@ -1,3 +1,4 @@
+import { useShortcuts } from "../hooks/useShortcuts";
 import type { SessionSummary } from "../../../shared/agent";
 import type { AcpAgentInfo } from "../../../shared/acp";
 import { projectLabel } from "../../../shared/paths";
@@ -37,7 +38,7 @@ interface SidebarProps {
 	onNewWorkspaceSession: (cwd: string) => void;
 	onOpenSession: (session: SessionSummary) => void;
 	onRenameSession: (session: SessionSummary, title: string) => void;
-	onDeleteSession: (session: SessionSummary) => void;
+	onDeleteSession: (session: SessionSummary, deleteFromCli?: boolean) => Promise<boolean | void>;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -56,6 +57,7 @@ export function Sidebar(props: SidebarProps) {
 		onDeleteSession,
 	} = props;
 	const { t } = useTranslation();
+	const { label: shortcutLabel } = useShortcuts();
 
 	return (
 		<aside
@@ -98,6 +100,7 @@ export function Sidebar(props: SidebarProps) {
 					type="button"
 					disabled={!cwd || busy}
 					onClick={onNewSession}
+					title={[t("sidebar.newSession"), shortcutLabel("app.newSession")].filter(Boolean).join(" · ")}
 					className={cn(
 						SIDEBAR_HEADER_ROW_CLASS_NAME,
 						SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,

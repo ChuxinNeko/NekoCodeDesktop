@@ -78,6 +78,7 @@ const MODE_LABEL_KEYS: Record<ExecutionMode, TranslationKey> = {
 };
 
 interface ComposerPickersProps {
+	section?: "all" | "session" | "model";
 	models: ModelOption[];
 	modelKey: string | null;
 	fusion?: FusionConfig | null;
@@ -164,6 +165,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 
 	return (
 		<>
+			{props.section !== "model" ? <>
 			<Menu>
 				<MenuTrigger
 					disabled={props.disabled}
@@ -231,8 +233,10 @@ export function ComposerPickers(props: ComposerPickersProps) {
 				</ComposerPickerMenuPopup>
 			</Menu>
 
-			<div className="flex-1" />
+			</> : null}
+			{props.section === undefined || props.section === "all" ? <div className="flex-1" /> : null}
 
+			{props.section !== "session" ?
 			<Menu
 				open={modelMenuOpen}
 				onOpenChange={(open) => {
@@ -242,7 +246,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 				}}
 				keepOpenOnSubmenuInteraction
 			>
-				<MenuTrigger render={trigger(triggerLabel + triggerSuffix, <ZapIcon className="size-3.5" />)} />
+				<MenuTrigger render={trigger(triggerLabel + triggerSuffix, props.section === "model" ? null : <ZapIcon className="size-3.5" />)} />
 				<ComposerPickerMenuPopup
 					align="end"
 					side="top"
@@ -335,7 +339,7 @@ export function ComposerPickers(props: ComposerPickersProps) {
 						</>
 					)}
 				</ComposerPickerMenuPopup>
-			</Menu>
+			</Menu> : null}
 		</>
 	);
 }

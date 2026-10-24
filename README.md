@@ -85,6 +85,7 @@ bun run build && ./node_modules/electron/dist/electron out/main/index.js /path/t
 | **GitHub** | 多仓库客户端：Issue 查看/回复/开关状态，PR 创建/差异/检查/合并，文件浏览与编辑提交，提交记录，以及 Actions 任务、日志、重跑、取消和手动触发 |
 | **Automations** | 定时/周期运行提示词，支持 interval / daily / cron，带运行历史 |
 | **Browser** | 内嵌浏览器（标签页、地址栏、前进后退），`target=_blank` 会开成新标签页 |
+| **验收中心** | 会话顶部查看实际检查、退出码、浏览器断言和过期状态，支持筛选、复制报告与请求重新验收；见 [使用说明](docs/acceptance.md) |
 | **Terminal** | node-pty + xterm 的真实 PTY（底部抽屉） |
 | **Settings** | Appearance（主题）、Models（自定义端点）、GitHub 授权、About |
 

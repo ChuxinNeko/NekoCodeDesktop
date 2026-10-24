@@ -1,3 +1,4 @@
+import { useShortcuts } from "../hooks/useShortcuts";
 import { api } from "../api";
 import { useTranslation } from "../i18n";
 import { PanelLeftIcon, PanelRightCloseIcon } from "../lib/icons";
@@ -29,8 +30,10 @@ export function TitleBar({
 	onToggleSidebar: () => void;
 	dockOpen: boolean;
 	onToggleDock: () => void;
+	onOpenTeam: () => void;
 }) {
 	const { t } = useTranslation();
+	const { label: shortcutLabel } = useShortcuts();
 	return (
 		<header
 			className="app-titlebar flex shrink-0 select-none items-center gap-1.5"
@@ -41,7 +44,7 @@ export function TitleBar({
 				aria-pressed={sidebarOpen}
 				label={t("sidebar.toggleSidebar")}
 				onClick={onToggleSidebar}
-				tooltip={t("sidebar.toggleSidebar")}
+				tooltip={[t("sidebar.toggleSidebar"), shortcutLabel("app.sidebar")].filter(Boolean).join(" · ")}
 				tooltipSide="bottom"
 			>
 				<PanelLeftIcon className="size-3.5" />
@@ -65,7 +68,7 @@ export function TitleBar({
 				aria-pressed={dockOpen}
 				label={t("dock.toggle")}
 				onClick={onToggleDock}
-				tooltip={t("dock.toggle")}
+				tooltip={[t("dock.toggle"), shortcutLabel("app.dock")].filter(Boolean).join(" · ")}
 				tooltipSide="bottom"
 			>
 				<PanelRightCloseIcon className="size-3.5" />

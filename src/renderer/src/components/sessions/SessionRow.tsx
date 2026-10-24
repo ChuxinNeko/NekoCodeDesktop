@@ -17,6 +17,7 @@ import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "../ui/menu";
 
 export interface SessionRowProps {
 	hideActions?: boolean;
+	hideRename?: boolean;
 	compact?: boolean;
 	disabled?: boolean;
 	/** The row can be carried to the chat area to open beside what is there. */
@@ -29,26 +30,17 @@ export interface SessionRowProps {
 	running: boolean;
 	now: number;
 	renaming: boolean;
-	confirmingDelete: boolean;
 	onOpen: () => void;
 	onStartRename: () => void;
 	onRename: (title: string) => void;
 	onCancelRename: () => void;
 	onStartDelete: () => void;
-	onDelete: () => void;
-	onCancelDelete: () => void;
 }
 
-/**
- * One session in the sidebar list.
- *
- * Rename and delete confirmation happen inside the row rather than in a dialog:
- * both are reversible, both are about this one row, and keeping them here means
- * the list never loses its scroll position or keyboard focus to a modal.
- */
+/** One sidebar session, with inline renaming and a menu that opens deletion confirmation. */
 export function SessionRow(props: SessionRowProps) {
 	const { t } = useTranslation();
-	const { session, active, running, renaming, confirmingDelete } = props;
+	const { session, active, running, renaming } = props;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [menuOpen, setMenuOpen] = useState(false);
 	// Until the model has named a new session, `title` is only its opening
@@ -98,29 +90,6 @@ export function SessionRow(props: SessionRowProps) {
 		);
 	}
 
-	if (confirmingDelete) {
-		return (
-			<div className="flex flex-col gap-1 rounded-md bg-destructive/6 px-2 py-1.5">
-				<span className="truncate text-[length:var(--app-font-size-ui-sm,11px)] text-foreground/80">
-					{t("sessions.deleteConfirm", { title })}
-				</span>
-				<div className="flex items-center gap-1">
-					<Button className="flex-1" onClick={props.onCancelDelete} size="xs" variant="subtle">
-						{t("common.cancel")}
-					</Button>
-					<Button
-						autoFocus
-						className="flex-1 bg-destructive/12 text-destructive hover:bg-destructive/20"
-						onClick={props.onDelete}
-						size="xs"
-						variant="ghost"
-					>
-						{t("common.delete")}
-					</Button>
-				</div>
-			</div>
-		);
-	}
 
 	return (
 		<div
@@ -205,10 +174,10 @@ export function SessionRow(props: SessionRowProps) {
 					    rounded-* tokens up): two short rows at the picker radii read as
 					    pills. Options sit 4px in, so 8px − 4px keeps the corners concentric. */}
 					<ComposerPickerMenuPopup align="end" className="min-w-28 rounded-[8px] bg-popover" side="bottom">
-						<MenuItem className="rounded-[4px]" onClick={props.onStartRename}>
+						{!props.hideRename ? <><MenuItem className="rounded-[4px]" onClick={props.onStartRename}>
 							{t("sessions.rename")}
 						</MenuItem>
-						<MenuSeparator />
+						<MenuSeparator /></> : null}
 						<MenuItem className="rounded-[4px]" onClick={props.onStartDelete} variant="destructive">
 							{t("common.delete")}
 						</MenuItem>

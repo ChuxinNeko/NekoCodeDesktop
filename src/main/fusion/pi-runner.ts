@@ -17,6 +17,8 @@ export interface PiFusionStage {
 	signal?: AbortSignal;
 	onToolEvent?: ExecuteRequest["onToolEvent"];
 	onStreamPart?: ExecuteRequest["onStreamPart"];
+	/** One model message, including text sent before a tool call. */
+	onAssistantMessage?: (text: string, interrupted: boolean) => void;
 	/** Model-step cap; defaults to 1 for plan/compact and 20 otherwise. */
 	maxSteps?: number;
 	/**
@@ -32,9 +34,10 @@ export interface PiFusionStage {
 	thinkingLevel?: import("../../shared/agent").ThinkingLevel;
 	/** Reuse one actor across stages so a follow-up keeps its cached context. Release with driver.release(). */
 	actor?: PiFusionActorHandle;
+	teamMemberId?: string;
 }
 /** A persistent non-parent actor; the driver fills session and transform on first use. */
-export interface PiFusionActorHandle { session?: AgentSession; transform?: AgentSession["agent"]["transformContext"] }
+export interface PiFusionActorHandle { session?: AgentSession; transform?: AgentSession["agent"]["transformContext"]; extraToolNames?: Set<string> }
 export type PiFusionStageResult = AgentTurn & { plan?: unknown; submitted?: unknown; steps?: number };
 
 /** PI transport adapter for the reference AiSdkAgentRunner's four operations and prompts. */

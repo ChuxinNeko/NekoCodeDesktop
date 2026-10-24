@@ -1,3 +1,4 @@
+import { useShortcuts } from "../../hooks/useShortcuts";
 import { useEffect, useRef, useState } from "react";
 import { VscClose, VscDiff } from "react-icons/vsc";
 import { useTranslation } from "../../i18n";
@@ -27,6 +28,7 @@ export function EditorTabs({
 	actions?: React.ReactNode;
 }) {
 	const { t } = useTranslation();
+	const { label: shortcutLabel } = useShortcuts();
 	const [menu, setMenu] = useState<ContextMenuState | null>(null);
 	const [dragging, setDragging] = useState<string | null>(null);
 	const stripRef = useRef<HTMLDivElement | null>(null);
@@ -51,7 +53,7 @@ export function EditorTabs({
 			x: event.clientX,
 			y: event.clientY,
 			items: [
-				{ label: t("ide.tabs.close"), shortcut: "Ctrl+W", onSelect: () => onRequestClose([tab.id]) },
+				{ label: t("ide.tabs.close"), shortcut: shortcutLabel("ide.closeTab"), onSelect: () => onRequestClose([tab.id]) },
 				{ label: t("ide.tabs.closeOthers"), disabled: others.length === 0, onSelect: () => onRequestClose(others) },
 				{ label: t("ide.tabs.closeRight"), disabled: right.length === 0, onSelect: () => onRequestClose(right) },
 				{ label: t("ide.tabs.closeSaved"), disabled: saved.length === 0, onSelect: () => onRequestClose(saved) },

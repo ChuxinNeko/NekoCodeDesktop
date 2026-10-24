@@ -7,6 +7,7 @@
  * dies on its own leaves the session in `error` with the agent's last stderr.
  */
 import type { PromptImageAttachment, TurnUsage } from "../../shared/agent";
+import { buildAcceptanceReport } from "../../shared/acceptance";
 import type {
 	AcpPermissionOptionKind,
 	AcpPermissionRequest,
@@ -22,6 +23,7 @@ import type { ShellChangeTracker } from "./workspace-changes";
 import { recordDiagnostic, diagnosticError } from "../diagnostic-log";
 import { DEFAULT_APP_PREFERENCES, isAutoRetryCount } from "../../shared/preferences";
 import { acpUsageModel } from "./model-settings";
+import { CodexContextReader, codexContextHome } from "./codex-context";
 
 export const ACP_PROTOCOL_VERSION = 1;
 
@@ -43,6 +45,9 @@ export interface AcpToolServers {
 }
 
 export interface AcpSessionOptions {
+	/** Remembered user selections; never override a resumed conversation. */
+	initialConfig?: Record<string, string>;
+	onConfigApplied?: (configId: string, value: string) => void;
 	/** Read per turn so an existing conversation uses newly saved settings. */
 	autoRetryCount?: () => number;
 	/** Backoff base; injectable so protocol tests need not wait seconds. */
@@ -140,7 +145,12 @@ export class AcpSession {
 	private error: string | undefined;
 	private connection: AcpConnection | null = null;
 	private agentSessionId: string | null = null;
+	private codexContext: CodexContextReader | undefined;
+	private contextTimer: ReturnType<typeof setTimeout> | undefined;
+	private contextRead: Promise<void> = Promise.resolve();
 	private supportsImages = false;
+	private supportsDelete = false;
+	private deleting = false;
 	private authMethods: string[] = [];
 	private disposed = false;
 	private readonly projection: AcpProjection;
@@ -213,8 +223,9 @@ export class AcpSession {
 			...this.summary(),
 			...(this.error ? { error: this.error } : {}),
 			cells: this.projection.cells,
+			acceptance: buildAcceptanceReport(this.projection.cells, this.status === "prompting"),
 			streaming: this.status === "prompting",
-			...(this.projection.context ? { context: this.projection.context } : {}),
+			...(this.projection.context ? { context: { ...this.projection.context, source: "acp" as const } } : {}),
 			configOptions: this.projection.configOptions(),
 			commands: this.projection.commands,
 			permissions: [...this.permissions.values()].map((pending) => pending.request),
@@ -275,6 +286,7 @@ export class AcpSession {
 			}
 
 			const capabilities = isObject(init) && isObject(init.agentCapabilities) ? init.agentCapabilities : {};
+			this.supportsDelete = isObject(capabilities.sessionCapabilities) && isObject(capabilities.sessionCapabilities.delete);
 			const auth = this.agent.native?.auth;
 			let authenticated = false;
 			const authenticate = async () => {
@@ -323,8 +335,14 @@ export class AcpSession {
 			const sessionId = this.options.resume?.sessionId ?? (isObject(setup) ? str(setup.sessionId) : undefined);
 			if (!sessionId) throw new Error(`${this.agent.name} 没有返回会话 ID`);
 			this.agentSessionId = sessionId;
+			if (this.agent.id === "codex") {
+				this.codexContext = new CodexContextReader(codexContextHome({ ...process.env, ...this.options.env, ...this.agent.env }), sessionId);
+				await this.refreshCodexContext();
+			}
 			this.projection.applySessionSetup(setup);
 			if (this.disposed) return;
+			if (!this.options.resume) await this.restoreConfig();
+			if (this.disposed || this.status === "error") return;
 			this.status = "ready";
 			this.changed();
 		} catch (error) {
@@ -431,7 +449,27 @@ export class AcpSession {
 		if (method !== "session/update" || !isObject(params)) return;
 		if (this.agentSessionId && params.sessionId !== this.agentSessionId) return;
 		if (this.projection.apply(params.update)) this.changed();
+		if (isObject(params.update) && params.update.sessionUpdate === "usage_update" && this.codexContext && !this.contextTimer) {
+			this.contextTimer = setTimeout(() => {
+				this.contextTimer = undefined;
+				void this.refreshCodexContext();
+			}, 250);
+		}
 		this.watchShell(params.update);
+	}
+
+	private refreshCodexContext(): Promise<void> {
+		this.contextRead = this.contextRead.then(async () => {
+			if (this.disposed || !this.codexContext) return;
+			const reported = this.projection.context;
+			const context = await this.codexContext.read(reported);
+			// Never overwrite a newer usage notification with an older asynchronous read.
+			if (!this.disposed && context && this.projection.context === reported) {
+				this.projection.context = context;
+				this.changed();
+			}
+		}).catch(() => { /* Local history is optional; ACP totals remain usable. */ });
+		return this.contextRead;
 	}
 
 	/**
@@ -519,6 +557,7 @@ export class AcpSession {
 	}
 
 	private requireReady(): { connection: AcpConnection; sessionId: string } {
+		if (this.deleting) throw new Error("此会话正在删除");
 		if (this.status === "starting") throw new Error(`${this.agent.name} 还在启动`);
 		if (this.status === "error" || !this.connection || !this.agentSessionId) {
 			throw new Error(this.error ?? `${this.agent.name} 不可用`);
@@ -664,10 +703,26 @@ export class AcpSession {
 			this.projection.failTurn(errorText(error));
 		}
 		void this.shell?.end();
+		await this.refreshCodexContext();
 		if (this.gone()) return;
 		this.cancelPermissions();
 		this.status = "ready";
 		this.changed();
+	}
+
+	/** Delete on the owning connection so the adapter tears down its writers first. */
+	async deleteHistory(): Promise<void> {
+		await this.started;
+		if (!this.supportsDelete) throw new Error(`${this.agent.name} 不支持删除 CLI 会话，可取消勾选后仅从 NekoCode 移除`);
+		const { connection, sessionId } = this.requireReady();
+		this.deleting = true;
+		try {
+			await this.cancel();
+			await withTimeout(connection.request("session/delete", { sessionId }), STARTUP_TIMEOUT_MS, `${this.agent.name} 删除 CLI 会话超时，请刷新历史后重试`);
+		} catch (error) {
+			this.deleting = false;
+			throw error;
+		}
 	}
 
 	/** Ask the agent to stop the running turn; `prompt()` resolves once it has. */
@@ -701,7 +756,10 @@ export class AcpSession {
 
 	setConfig(configId: string, value: string): Promise<void> {
 		if (this.promptPending || this.status === "prompting") return Promise.reject(new Error("请等待当前运行结束后再修改配置"));
-		const change = this.configTail.then(() => this.applyConfig(configId, value));
+		const change = this.configTail.then(async () => {
+			await this.applyConfig(configId, value);
+			this.options.onConfigApplied?.(configId, this.projection.configOptions().find((option) => option.id === configId)?.currentValue ?? value);
+		});
 		this.pendingConfig = change;
 		this.configTail = change.catch(() => undefined);
 		const clear = () => { if (this.pendingConfig === change) this.pendingConfig = null; };
@@ -718,8 +776,27 @@ export class AcpSession {
 		return change;
 	}
 
-	private async applyConfig(configId: string, value: string): Promise<void> {
-		const { connection, sessionId } = this.requireReady();
+	private async restoreConfig(): Promise<void> {
+		// Model changes may replace the reasoning choices: read options again each time.
+		const entries = Object.entries(this.options.initialConfig ?? {});
+		entries.sort(([a], [b]) => Number(b === MODEL_CONFIG_ID || b === "model") - Number(a === MODEL_CONFIG_ID || a === "model"));
+		for (const [configId, value] of entries) {
+			if (this.disposed) return;
+			const option = this.projection.configOptions().find((entry) => entry.id === configId);
+			if (!option || option.currentValue === value || !option.options.some((entry) => entry.value === value)) continue;
+			try {
+				await this.applyConfig(configId, value, true);
+			} catch (error) {
+				// Adapter upgrades or provider changes must not prevent starting a chat.
+				recordDiagnostic("acp.configRestoreFailed", { sessionId: this.id, agentId: this.agent.id, configId, ...diagnosticError(error) });
+			}
+		}
+	}
+
+	private async applyConfig(configId: string, value: string, restoring = false): Promise<void> {
+		const { connection, sessionId } = restoring && this.connection && this.agentSessionId
+			? { connection: this.connection, sessionId: this.agentSessionId }
+			: this.requireReady();
 		if (configId === MODE_CONFIG_ID) {
 			await connection.request("session/set_mode", { sessionId, modeId: value });
 			this.projection.setCurrentMode(value);
@@ -738,6 +815,7 @@ export class AcpSession {
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
+		if (this.contextTimer) clearTimeout(this.contextTimer);
 		this.cancelRetryWait?.();
 		this.shell?.dispose();
 		this.shell = null;

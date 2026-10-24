@@ -18,6 +18,7 @@ import { mergeActiveSession, workspaceKey } from "../../shared/sessions";
 import { api, errorMessage } from "./api";
 import { AutomationsPage } from "./components/automations/AutomationsPage";
 import { TasksPage } from "./components/tasks/TasksPage";
+import { TeamPage } from "./components/team/TeamPage";
 import { activeTaskCount } from "../../shared/task-board";
 import { useTaskBoard } from "./hooks/useTaskBoard";
 import { AcpChatView } from "./components/agents/AcpChatView";
@@ -54,6 +55,7 @@ import { startSessionDrag, type DraggedSession } from "./lib/sessionDrag";
 import type { DropPlan } from "./lib/splitLayout";
 import { DragHandleIcon, Maximize2, XIcon } from "./lib/icons";
 import { IconButton } from "./components/ui/icon-button";
+import { useShortcutHandlers } from "./hooks/useShortcuts";
 import { useLayoutMode } from "./hooks/useLayoutMode";
 import type { InlineEditRequest } from "./components/ide/EditorArea";
 import { Spinner } from "./components/ui/spinner";
@@ -88,7 +90,7 @@ const DEFAULT_DOCK_WIDTH = 460;
 const MIN_DOCK_WIDTH = 320;
 const MIN_CHAT_WIDTH = 480;
 
-export type WorkspaceView = "chat" | "tasks" | "review" | "pull-requests" | "automations" | "settings";
+export type WorkspaceView = "chat" | "team" | "tasks" | "review" | "pull-requests" | "automations" | "settings";
 
 function readStored(key: string): string | null {
 	try {
@@ -324,7 +326,7 @@ export default function App() {
 
 	// Agent or IDE. The IDE is a desktop feature: the WebUI and the phone app
 	// never offer it.
-	const { layoutMode } = useLayoutMode();
+	const { layoutMode, setLayoutMode } = useLayoutMode();
 	const ideVisible = layoutMode === "ide" && view === "chat";
 	/** Mounted on first use and then kept, hidden, so its tabs and edits survive switching back. */
 	const [ideMounted, setIdeMounted] = useState(layoutMode === "ide");
@@ -423,34 +425,6 @@ export default function App() {
 			setDockActive(dockTabs[dockTabs.length - 1] ?? null);
 	}, [dockTabs, dockActive]);
 
-	// Codex-style dock shortcuts, advertised next to each level-1 menu row.
-	useEffect(() => {
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (layoutMode === "ide") return;
-			if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-			const tool: DockTool | null =
-				event.code === "Backquote" && !event.shiftKey
-					? "terminal"
-					: event.code === "KeyT" && !event.shiftKey && browserAvailable
-						? "browser"
-						: event.code === "KeyP" && !event.shiftKey
-							? "files"
-							: event.code === "KeyG" && event.shiftKey
-								? "review"
-								: event.code === "KeyH" && event.shiftKey
-									? "checkpoints"
-									: event.code === "KeyA" && event.shiftKey
-										? "agentmap"
-										: event.code === "KeyD" && event.shiftKey && api.runtime !== "web"
-											? "desktop"
-											: null;
-			if (!tool) return;
-			event.preventDefault();
-			toggleDockTool(tool);
-		};
-		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
-	});
 
 	// A session that has just been started is not on disk yet, so the list from
 	// main does not have it. Joining its snapshot in is what puts the row —
@@ -1105,7 +1079,7 @@ export default function App() {
 		else panes.drop(session, plan);
 	};
 
-	const hideWorkspaceSidebar = view === "settings" || view === "pull-requests" || view === "review";
+	const hideWorkspaceSidebar = view === "team" || view === "settings" || view === "pull-requests" || view === "review";
 
 	const startDockDrag = (event: React.PointerEvent<HTMLElement>) => {
 		setDockResizing(true);
@@ -1127,12 +1101,63 @@ export default function App() {
 		});
 	};
 
+	const focusComposer = () => {
+		setView("chat");
+		if (layoutMode === "ide") setIdeChatOpenStored(true);
+		requestAnimationFrame(() => {
+			const host = chatHosts.current.get(panes.focused);
+			const composer = host?.querySelector<HTMLTextAreaElement>("textarea[data-chat-composer]");
+			if (composer) composer.focus();
+			else [...document.querySelectorAll<HTMLTextAreaElement>("textarea[data-chat-composer]")]
+				.find((input) => input.getClientRects().length && !input.closest("[inert], .layout-hidden"))?.focus();
+		});
+	};
+	useShortcutHandlers({
+		"app.newSession": () => {
+			if (busy || !cwd) return false;
+			setView("chat");
+			if (acpActive) acp.startNew();
+			else void createSession();
+		},
+		"app.openProject": () => { if (busy) return false; void pickProject(); },
+		"app.settings": () => selectView("settings"),
+		"app.shortcuts": () => { setSettingsSection("shortcuts"); setView("settings"); },
+		"app.chat": () => selectView("chat"),
+		"app.tasks": () => selectView("tasks"),
+		"app.review": () => selectView("review"),
+		"app.github": () => selectView("pull-requests"),
+		"app.automations": () => selectView("automations"),
+		"app.sidebar": () => {
+			if (ideVisible) setIdeSideOpenStored(!ideSideOpen);
+			else { setSidebarOpen(!sidebarOpen); writeStored(SIDEBAR_OPEN_STORAGE_KEY, sidebarOpen ? "0" : "1"); }
+		},
+		"app.dock": () => { if (ideVisible) setIdeChatOpenStored(!ideChatOpen); else setDockOpenStored(!dockOpen); },
+		"app.focusComposer": focusComposer,
+		"app.stop": () => {
+			if (view !== "chat" || !streamingNow) return false;
+			if (acpActive) acp.cancel();
+			else void (panes.split && snapshot ? api.agentAbortTask(snapshot.session.id) : api.agentAbort()).catch((cause) => setError(errorMessage(cause)));
+		},
+		"app.layout": () => { if (api.runtime !== "electron") return false; setLayoutMode(layoutMode === "ide" ? "agent" : "ide"); setView("chat"); },
+		"app.theme": () => setTheme(resolvedTheme === "dark" ? "light" : "dark"),
+	});
+	useShortcutHandlers({
+		"agent.terminal": () => toggleDockTool("terminal"),
+		"agent.browser": () => { if (!browserAvailable) return false; toggleDockTool("browser"); },
+		"agent.files": () => toggleDockTool("files"),
+		"agent.review": () => toggleDockTool("review"),
+		"agent.checkpoints": () => toggleDockTool("checkpoints"),
+		"agent.agentmap": () => toggleDockTool("agentmap"),
+		"agent.desktop": () => { if (!browserAvailable) return false; toggleDockTool("desktop"); },
+	}, view === "chat" && !ideVisible);
+
 	return (
 		<LinkOpenerContext.Provider value={openLink}>
 		<div className="app-window-backdrop relative flex h-dvh min-h-0 w-full flex-col overflow-hidden text-foreground">
 			<WallpaperBackdrop />
 			<CommunityAmbient />
 			<TitleBar
+				onOpenTeam={() => selectView("team")}
 				projectLabel={cwd ? projectLabel(cwd, api.homeDir) : null}
 				sidebarOpen={ideVisible ? ideSideOpen : sidebarOpen}
 				onToggleSidebar={() => {
@@ -1201,10 +1226,14 @@ export default function App() {
 						onRenameSession={(session, title) => {
 							if (!session.agentId) void sessions.rename(session, title);
 						}}
-						onDeleteSession={(session) => {
-							if (session.agentId) return;
+						onDeleteSession={async (session, deleteFromCli) => {
+							if (session.agentId) {
+								const removed = await acp.remove(session, deleteFromCli);
+								if (removed) panes.forget(session.id);
+								return removed;
+							}
+							await sessions.remove(session);
 							panes.forget(session.id);
-							void sessions.remove(session);
 						}}
 					/>
 					</div>
@@ -1228,12 +1257,15 @@ export default function App() {
 					<ViewErrorBoundary resetKey={`${view}:${snapshot?.session.id ?? ""}`}>
 					{view === "settings" ? (
 						<SettingsPage
+							onOpenTeam={() => selectView("team")}
 							initialSection={settingsSection}
 							key={settingsSection ?? "default"}
 							onClose={() => setView("chat")}
 							cwd={snapshot?.session.cwd ?? cwd}
 							projects={workspaces}
 						/>
+					) : view === "team" ? (
+						<TeamPage cwd={cwd} onOpenSession={(session) => { setWorkspace(NEKO_LOCAL_WORKSPACE); void openSession(session); }} />
 					) : view === "tasks" ? (
 						<TasksPage
 							cwd={cwd}
@@ -1346,6 +1378,7 @@ export default function App() {
 						}
 					>
 						<IdeLayout
+							onOpenTeam={() => selectView("team")}
 							cwd={cwd}
 							visible={ideVisible}
 							dark={resolvedTheme === "dark"}

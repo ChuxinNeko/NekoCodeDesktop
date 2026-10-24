@@ -29,7 +29,7 @@ describe("getStatusDotClassName", () => {
 });
 
 describe("TaskCard default collapsed and summary line", () => {
-	test("defaults to collapsed and does not render expanded detail region or result", () => {
+	test("collapsed transcript shows a brief result while workflow rows avoid repeating it", () => {
 		const task: WorkflowTask = {
 			id: "t1",
 			kind: "worker",
@@ -39,12 +39,14 @@ describe("TaskCard default collapsed and summary line", () => {
 			startedAt: 1000,
 			endedAt: 5000,
 			steps: [],
-			result: "All tests passed with flying colors",
+			result: "## Done\nAll tests passed with flying colors\nLong implementation details stay in the detail view",
 		};
 		const html = render(<TaskCard task={task} />);
 		expect(html).toContain("Execute unit test migrations");
-		expect(html).not.toContain("All tests passed with flying colors");
+		expect(html).toContain("All tests passed with flying colors");
+		expect(html).not.toContain("Long implementation details stay in the detail view");
 		expect(html).not.toContain("src/a.ts");
+		expect(render(<TaskCard task={task} variant="workflow" />)).not.toContain("All tests passed with flying colors");
 	});
 
 	test("running state when collapsed shows starting placeholder if steps are empty", () => {

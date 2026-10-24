@@ -14,6 +14,7 @@ const guest: WebsiteCloneGuest = {
 	capturePage: () =>
 		Promise.resolve({ toPNG: () => PNG, getSize: () => ({ width: 800, height: 600 }) }),
 	enableDeviceEmulation: () => undefined,
+	disableDeviceEmulation: () => undefined,
 	sendInputEvent: () => undefined,
 	debugger: {
 		isAttached: () => true,
@@ -112,6 +113,31 @@ describe("browser_screenshot", () => {
 });
 
 describe("browser_viewport", () => {
+	test("browser checks preserve assertion failures as structured evidence", async () => {
+		const evidence = { title: "Mobile overflow", status: "failed", url: "https://example.com", viewport: { width: 390, height: 844 }, horizontalOverflow: 900 };
+		const run = toolsFor({ ...guest, executeJavaScript: async () => evidence });
+		const result = await run("browser_check", { title: "Mobile overflow" });
+		expect(result.details).toEqual({ acceptanceEvidence: evidence });
+		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining('"failed"') });
+	});
+	test("restores the real panel and stops reapplying emulation on later calls", async () => {
+		const { page, state } = emulatedPage();
+		let resets = 0;
+		page.disableDeviceEmulation = () => { resets++; state.width = 540; state.height = 600; };
+		const run = toolsFor(page);
+		await run("browser_viewport", { width: 1440, height: 900 });
+		await run("browser_viewport", { reset: true });
+		await run("browser_evaluate", { expression: "innerWidth" });
+		expect(resets).toBe(1);
+		expect(state.emulations).toBe(1);
+		expect(state.width).toBe(540);
+	});
+
+	test("rejects incomplete and mixed viewport requests", async () => {
+		const run = toolsFor(guest);
+		await expect(run("browser_viewport", { width: 390 })).rejects.toThrow("both width and height");
+		await expect(run("browser_viewport", { reset: true, width: 390, height: 844 })).rejects.toThrow("without width");
+	});
 	test("keeps the emulated size on the page for every later call", async () => {
 		const emulated: number[] = [];
 		let width = 1024;

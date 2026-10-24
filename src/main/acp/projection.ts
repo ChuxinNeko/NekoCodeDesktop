@@ -211,7 +211,10 @@ export function mapToolCalls(raw: RawToolCall, differ?: TextDiffer, liveOutput =
 
 	switch (raw.kind) {
 		case "execute":
-			return [{ toolName: "bash", args: { command: commandOf(rawInput) ?? title }, output, status }];
+			return [{ toolName: "bash", args: { command: commandOf(rawInput) ?? title }, output, status,
+				...(isObject(raw.rawOutput) && typeof (raw.rawOutput.exit_code ?? raw.rawOutput.exitCode) === "number" ?
+					{ details: { execution: { exitCode: raw.rawOutput.exit_code ?? raw.rawOutput.exitCode } } } : {}),
+			}];
 		case "read": {
 			const path = firstLocation(raw) ?? str(input.path) ?? str(input.file_path);
 			if (path) return [{ toolName: "read", args: { path }, output, status }];
@@ -463,8 +466,8 @@ export class AcpProjection {
 			case "usage_update": {
 				const used = update.used;
 				const size = update.size;
-				if (typeof used !== "number" || typeof size !== "number" || size <= 0) return false;
-				this.context = { used, window: size };
+				if (typeof used !== "number" || typeof size !== "number" || !Number.isFinite(used) || !Number.isFinite(size) || used < 0 || size <= 0) return false;
+				this.context = { used, window: size, source: "acp" };
 				return true;
 			}
 			default:

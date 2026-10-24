@@ -5,6 +5,7 @@ import { PromptPredictionService } from "./prompt-prediction";
 import { TaskManager } from "./task-manager";
 import { TaskNotifier } from "./task-notifier";
 import { AppPreferencesStore } from "./app-preferences";
+import { BackgroundMode } from "./background-mode";
 import { AcpNativeConfig } from "./acp/native-config";
 import { configureAgentRetry, currentAutoRetryCount } from "./agent-retry";
 import { ModelPricingService } from "./model-pricing";
@@ -38,7 +39,7 @@ import type { TaskBoardEntry } from "../shared/task-board";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
 import { registerWallpaperIpc } from "./wallpaper/host";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, screen, session, shell, utilityProcess } from "electron";
+import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, safeStorage, screen, session, shell, Tray, utilityProcess } from "electron";
 import { initialWindowSize } from "../shared/display-scale";
 import { installDisplayScale } from "./display-scale";
 import { existsSync, mkdirSync, statSync } from "node:fs";
@@ -144,6 +145,9 @@ import type {
 import type { AppPreferences, CommandShellOption } from "../shared/preferences";
 import { configureCommandShell, listCommandShells } from "./command-shell";
 import { configureTeamSettings } from "./team-settings";
+import { configureTeamWorkspace, TeamWorkspaceStore } from "./team-workspace-store";
+import { TeamWorkspaceService } from "./team-workspace-service";
+import type { TeamWorkspaceAction, TeamSendRequest } from "../shared/team-workspace";
 import { listSystemFonts } from "./system-fonts";
 import type { SystemFont } from "../shared/font-names";
 import { configureWebTools, createWebTools, webToolsEnabled } from "./web-tools";
@@ -182,6 +186,7 @@ import type { McpSnapshot, SaveMcpServerRequest } from "../shared/mcp";
 import type {
 	AcpCreateSessionRequest,
 	AcpOpenSessionRequest,
+	AcpDeleteSessionRequest,
 	AcpPermissionResponse,
 	AcpPromptRequest,
 	AcpSaveAgentRequest,
@@ -249,6 +254,8 @@ let taskManager: TaskManager | null = null;
 let taskNotifier: TaskNotifier | null = null;
 /** Outlives the window: preferences are read again when one is reopened. */
 let preferences: AppPreferencesStore | null = null;
+let teamWorkspaceStore: TeamWorkspaceStore | null = null;
+let teamWorkspaceService: TeamWorkspaceService | null = null;
 let webToolsStore: WebToolsStore | null = null;
 let promptStore: PromptStore | null = null;
 function prompts(): PromptStore {
@@ -757,6 +764,8 @@ function captionOverlay(scale = 1) {
 /** How long a new window may stay hidden waiting for its first paint. */
 const WINDOW_REVEAL_TIMEOUT_MS = 2000;
 const displayScaleRefreshers = new Set<() => void>();
+let mainWindow: BrowserWindow | null = null;
+let backgroundMode: BackgroundMode | null = null;
 
 function createWindow(): void {
 	preferences ??= new AppPreferencesStore(app.getPath("userData"));
@@ -794,11 +803,14 @@ function createWindow(): void {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
+			// The hidden window still serves the WebUI bridge and running conversations.
+			backgroundThrottling: false,
 			// The browser panel hosts its pages in renderer-owned <webview> guests;
 			// installBrowserGuards() pins their web preferences.
 			webviewTag: true,
 		},
 	});
+	mainWindow = win;
 	const refreshDisplayScale = installDisplayScale(win, () => preferences?.get().uiScalePercent ?? null, (scale) => {
 		if (process.platform === "win32") win.setTitleBarOverlay(captionOverlay(scale));
 	}, screen);
@@ -815,6 +827,13 @@ function createWindow(): void {
 	};
 	revealTimer = setTimeout(reveal, WINDOW_REVEAL_TIMEOUT_MS);
 	win.once("ready-to-show", reveal);
+	win.on("close", (event) => {
+		clearTimeout(revealTimer);
+		win.removeListener("ready-to-show", reveal);
+		backgroundMode?.handleClose(event);
+	});
+	// Windows shutdown/logoff must never turn into a hide-to-tray request.
+	win.on("query-session-end", () => backgroundMode?.beginQuit());
 
 	// Start loading the page now rather than after the services below: the
 	// renderer fetches and parses the bundle in parallel with them, and the boot
@@ -858,7 +877,23 @@ function createWindow(): void {
 	preferences ??= new AppPreferencesStore(app.getPath("userData"));
 	// Read per session, so a change applies to the next one without a restart.
 	configureCommandShell(() => preferences?.get().commandShell ?? "auto");
-	configureTeamSettings(() => preferences?.get().team);
+	configureTeamSettings(() => preferences?.get().team, team => { preferences!.update({ team }); teamWorkspaceStore?.reconcileRoster(); });
+	if (!teamWorkspaceStore) {
+		teamWorkspaceStore = new TeamWorkspaceStore(app.getPath("userData"));
+		configureTeamWorkspace(teamWorkspaceStore);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		teamWorkspaceStore.subscribe(() => {
+			if (timer) return;
+			timer = setTimeout(() => {
+				timer = undefined;
+				for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("team:changed");
+			}, 100);
+		});
+		teamWorkspaceService = new TeamWorkspaceService(teamWorkspaceStore, () => {
+			if (!taskManager) throw new Error("Agent service unavailable");
+			return taskManager;
+		});
+	}
 	configureAgentRetry(() => preferences?.get().autoRetryCount);
 	// The account search engines borrow the model sign-ins; see native-search.ts.
 	const codexSearchAuth = async (): Promise<CodexSearchAuth | null> => {
@@ -1022,6 +1057,7 @@ function createWindow(): void {
 	// skip every shutdown step below it.
 	const contents = win.webContents;
 	win.on("closed", () => {
+		if (mainWindow === win) mainWindow = null;
 		webUiBridgeGone(contents);
 		oauthService?.close();
 		terminalService?.killAll();
@@ -1092,6 +1128,9 @@ function registerIpc(): void {
 		}
 		if (!browserInspector) throw new Error("Browser automation is unavailable");
 		return browserInspector.bindAutomation(event.sender, requestId, guestId);
+	});
+	ipcMain.handle("browser:resize", (event, guestId: number, width: number, height: number) => {
+		return browserInspector?.resizeGuest(event.sender, guestId, width, height);
 	});
 	ipcMain.handle("app:initialProjectDir", () => initialProjectDirectory());
 
@@ -1471,6 +1510,7 @@ function registerIpc(): void {
 			store: new AcpConfigStore(app.getPath("userData"), new AcpNativeConfig()),
 			nativeConfig: true,
 			usageDir: join(app.getPath("userData"), "acp-usage"),
+			userDataDir: app.getPath("userData"),
 			appRoot: app.getAppPath(),
 			toolServers: acpToolServers,
 			// The same line diff NekoLocal's edit tool shows.
@@ -1507,6 +1547,7 @@ function registerIpc(): void {
 	ipcMain.handle("acp:cancel", (_e, sessionId: string) => acp().cancel(sessionId));
 	ipcMain.handle("acp:setConfig", (_e, req: AcpSetConfigRequest) => acp().setConfig(req));
 	ipcMain.handle("acp:permission", (_e, res: AcpPermissionResponse) => acp().respondPermission(res));
+	ipcMain.handle("acp:delete", (_e, req: AcpDeleteSessionRequest) => acp().deleteSession(req));
 	ipcMain.handle("acp:close", (_e, sessionId: string) => acp().close(sessionId));
 
 	ipcMain.handle("qqbot:status", (): QqBotStatus => {
@@ -1587,13 +1628,30 @@ function registerIpc(): void {
 		preferences ??= new AppPreferencesStore(app.getPath("userData"));
 		return preferences.get();
 	});
+	ipcMain.handle("team:snapshot", () => teamWorkspaceStore?.snapshot());
+	ipcMain.handle("team:action", (_event, action: TeamWorkspaceAction) => {
+		if (!action || typeof action !== "object") throw new Error("Invalid team action");
+		return teamWorkspaceStore?.action(action);
+	});
+	ipcMain.handle("team:send", (_event, request: TeamSendRequest) => teamWorkspaceService?.send(request));
+	ipcMain.handle("team:stop", (_event, roomId: string, memberId?: string) => teamWorkspaceService?.stop(roomId, memberId));
 	ipcMain.handle("preferences:update", (_e, patch: Partial<AppPreferences>): AppPreferences => {
 		preferences ??= new AppPreferencesStore(app.getPath("userData"));
-		const next = preferences.update(patch);
+		const previous = preferences.get();
+		let next: AppPreferences;
+		try {
+			if (patch.closeBehavior === "tray") backgroundMode?.ensureTray();
+			next = preferences.update(patch);
+			backgroundMode?.setBehavior(next.closeBehavior);
+		} catch (error) {
+			backgroundMode?.loadBehavior(previous.closeBehavior);
+			throw error;
+		}
 		if (Object.hasOwn(patch, "uiScalePercent")) {
 			for (const refresh of displayScaleRefreshers) refresh();
 		}
 		taskNotifier?.setEnabled(next.notifyOnTaskFinish);
+		if (Object.hasOwn(patch, "team")) teamWorkspaceStore?.reconcileRoster();
 		// Switching it off should also end an action already under way, not only
 		// keep the tools out of the next session.
 		if (!next.computerUse) computerUse?.stop();
@@ -2056,7 +2114,14 @@ function registerIpc(): void {
 /** How long startup waits for the proxy before showing a window regardless. */
 const PROXY_STARTUP_TIMEOUT_MS = 3000;
 
-app.whenReady().then(async () => {
+// Launching again while hidden restores the running workspace rather than
+// starting another set of agents, service ports and automation timers.
+const ownsInstance = app.requestSingleInstanceLock();
+if (!ownsInstance) app.quit();
+app.on("second-instance", () => backgroundMode?.showWindow());
+nativeAutoUpdater.on("before-quit-for-update", () => backgroundMode?.beginQuit());
+
+if (ownsInstance) app.whenReady().then(async () => {
 	// Before anything touches safeStorage: over remote desktop the keyring
 	// Chromium picked is often unreachable, and only a relaunch can switch.
 	const keyring = settleLinuxKeyring(safeStorage, app);
@@ -2124,6 +2189,33 @@ app.whenReady().then(async () => {
 		shell: { material: "opaque", materials: ["opaque"], titleBarHeight: TITLE_BAR_HEIGHT },
 		invoke: webUiInvoke,
 	});
+	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	backgroundMode = new BackgroundMode({
+		getWindow: () => mainWindow,
+		createWindow,
+		quit: () => app.quit(),
+		onTrayError: (error) => console.error("Could not create the system tray icon:", error),
+		createTray: ({ show, quit }) => {
+			const icon = nativeImage.createFromPath(process.platform === "win32" ? appIconIco : appIconPng)
+				.resize({ width: process.platform === "darwin" ? 16 : 24, height: process.platform === "darwin" ? 16 : 24 });
+			if (icon.isEmpty()) throw new Error("Could not load the NekoCode tray icon");
+			const tray = new Tray(icon);
+			try {
+				const chinese = app.getLocale().toLowerCase().startsWith("zh");
+				tray.setToolTip("NekoCode Desktop");
+				tray.setContextMenu(Menu.buildFromTemplate([
+					{ label: chinese ? "显示 NekoCode" : "Show NekoCode", click: show },
+					{ type: "separator" },
+					{ label: chinese ? "退出 NekoCode" : "Quit NekoCode", click: quit },
+				]));
+				tray.on("click", show);
+				tray.on("double-click", show);
+				return tray;
+			} catch (error) { tray.destroy(); throw error; }
+		},
+	});
+	backgroundMode.loadBehavior(preferences.get().closeBehavior);
+	powerMonitor.on("shutdown", () => backgroundMode?.beginQuit());
 	createWindow();
 	void webUiService.startConfigured().catch((error: unknown) =>
 		console.error("Could not start the WebUI server:", error),
@@ -2132,11 +2224,12 @@ app.whenReady().then(async () => {
 	modelPricingService().start();
 
 	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow();
+		backgroundMode?.showWindow();
 	});
 });
 
 app.on("before-quit", () => {
+	backgroundMode?.beginQuit();
 	githubLogin?.cancel();
 	void webUiService?.stop();
 	modelPricing?.stop();

@@ -2,6 +2,8 @@ import type { ThinkingLevel } from "./agent";
 
 /** Parent decisions stay on Lead; helpers default to Sidekick and may escalate. */
 export interface FusionConfig {
+	/** Persistent team workspace conversation, independent of the selected desktop chat. */
+	teamRoomId?: string;
 	/** Public configurations use the shared engine; old literals support internal legacy tests. */
 	orchestration?: "engine" | "parallel" | "inline";
 	/**
@@ -33,6 +35,7 @@ export function isFusionConfig(value: unknown): value is FusionConfig {
 	if (!value || typeof value !== "object") return false;
 	const config = value as FusionConfig;
 	return typeof config.leadModelKey === "string" && !!config.leadModelKey &&
+		(config.teamRoomId === undefined || (typeof config.teamRoomId === "string" && !!config.teamRoomId)) &&
 		typeof config.sidekickModelKey === "string" && !!config.sidekickModelKey &&
 		levels.has(config.leadThinkingLevel) && levels.has(config.sidekickThinkingLevel) &&
 		(config.adaptiveRouting === undefined || typeof config.adaptiveRouting === "boolean") &&

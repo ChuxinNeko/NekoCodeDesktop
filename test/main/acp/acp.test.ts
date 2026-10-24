@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCell, TurnUsage } from "../../../src/shared/agent";
@@ -269,7 +269,7 @@ describe("AcpProjection", () => {
 		projection.apply({ sessionUpdate: "session_info_update", title: "Probe" });
 		projection.apply({ sessionUpdate: "available_commands_update", availableCommands: [{ name: "review", description: "Review", input: { hint: "instructions" } }] });
 		projection.apply({ sessionUpdate: "config_option_update", configOptions: [{ id: "mode", name: "Mode", type: "select", currentValue: "read-only", options: [{ value: "agent", name: "Agent" }, { value: "read-only", name: "Read only" }] }] });
-		expect(projection.context).toEqual({ used: 17156, window: 828400 });
+		expect(projection.context).toEqual({ used: 17156, window: 828400, source: "acp" });
 		expect(projection.title).toBe("Probe");
 		expect(projection.commands).toEqual([{ name: "review", description: "Review", hint: "instructions" }]);
 		expect(projection.configOptions()).toEqual([
@@ -883,6 +883,103 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe("AcpService", () => {
+	test("remembers successful picker changes across restarts, isolates agents and preserves history settings", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "acp-picker-defaults-"));
+		const transports: FakeTransport[] = [];
+		const services: AcpService[] = [];
+		const createService = () => {
+			const service = new AcpService({
+				userDataDir: directory, store: memoryStore([AGENT, { ...AGENT, id: "other" }]),
+				clientVersion: "0", emitState: () => {}, emitSnapshot: () => {}, shellChanges: async () => null,
+				createTransport: () => {
+					const transport = new FakeTransport();
+					transports.push(transport);
+					let model = "small";
+					let reasoning = "low";
+					const configOptions = () => [
+						{ id: "model", name: "Model", type: "select", currentValue: model, options: [{ value: "small", name: "Small" }, { value: "large", name: "Large" }] },
+						{ id: "reasoning", name: "Reasoning", type: "select", currentValue: reasoning, options: (model === "large" ? ["low", "high"] : ["low"]).map((value) => ({ value, name: value })) },
+					];
+					transport.responder = ({ id, method, params }) => {
+						if (method === "initialize") transport.reply(id, { protocolVersion: 1, agentCapabilities: { loadSession: true } });
+						if (method === "session/new" || method === "session/load") transport.reply(id, { sessionId: "picker", configOptions: configOptions() });
+						if (method === "session/set_config_option") {
+							const config = params as Message;
+							if (config.value === "rejected") {
+								transport.deliver({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid value" } });
+								return;
+							}
+							if (config.configId === "model") model = String(config.value);
+							if (config.configId === "reasoning") reasoning = String(config.value);
+							transport.reply(id, { configOptions: configOptions() });
+						}
+					};
+					return transport;
+				},
+			});
+			services.push(service);
+			return service;
+		};
+		try {
+			let service = createService();
+			const first = service.create({ agentId: AGENT.id, cwd: directory });
+			await until(() => service.snapshot(first.id)?.status === "ready");
+			await service.setConfig({ sessionId: first.id, configId: "model", value: "large" });
+			await service.setConfig({ sessionId: first.id, configId: "reasoning", value: "high" });
+			await expect(service.setConfig({ sessionId: first.id, configId: "model", value: "rejected" })).rejects.toThrow("Invalid value");
+			service.dispose();
+			service = createService();
+			const next = service.create({ agentId: AGENT.id, cwd: directory });
+			await until(() => service.snapshot(next.id)?.status === "ready");
+			expect(service.snapshot(next.id)?.configOptions.map((option) => option.currentValue)).toEqual(["large", "high"]);
+			expect(transports.at(-1)?.sent.filter((message) => message.method === "session/set_config_option").map((message) => message.params)).toEqual([
+				{ sessionId: "picker", configId: "model", value: "large" }, { sessionId: "picker", configId: "reasoning", value: "high" },
+			]);
+			const other = service.create({ agentId: "other", cwd: directory });
+			await until(() => service.snapshot(other.id)?.status === "ready");
+			expect(service.snapshot(other.id)?.configOptions.map((option) => option.currentValue)).toEqual(["small", "low"]);
+			const history = service.openHistory({ agentId: AGENT.id, sessionId: "old-picker", cwd: directory });
+			await until(() => service.snapshot(history.id)?.status === "ready");
+			expect(service.snapshot(history.id)?.configOptions.map((option) => option.currentValue)).toEqual(["small", "low"]);
+		} finally {
+			for (const service of services) service.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("restores legacy mode selections and skips unavailable or rejected defaults", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "acp-picker-legacy-"));
+		writeFileSync(join(directory, "acp-session-defaults.json"), JSON.stringify([[AGENT.id, { missing: "gone", __model: "removed", __mode: "plan" }]]));
+		let reject = false;
+		const service = new AcpService({
+			userDataDir: directory, store: memoryStore([AGENT]), clientVersion: "0", emitState: () => {}, emitSnapshot: () => {}, shellChanges: async () => null,
+			createTransport: () => {
+				const transport = new FakeTransport();
+				transport.responder = ({ id, method }) => {
+					if (method === "initialize") transport.reply(id, { protocolVersion: 1 });
+					if (method === "session/new") transport.reply(id, { sessionId: "legacy", modes: { currentModeId: "agent", availableModes: [{ id: "agent", name: "Agent" }, { id: "plan", name: "Plan" }] } });
+					if (method === "session/set_mode") {
+						if (reject) transport.deliver({ jsonrpc: "2.0", id, error: { code: -32602, message: "Unavailable" } });
+						else transport.reply(id, {});
+					}
+				};
+				return transport;
+			},
+		});
+		try {
+			const first = service.create({ agentId: AGENT.id, cwd: directory });
+			await until(() => service.snapshot(first.id)?.status === "ready");
+			expect(service.snapshot(first.id)?.configOptions[0].currentValue).toBe("plan");
+			reject = true;
+			const second = service.create({ agentId: AGENT.id, cwd: directory });
+			await until(() => service.snapshot(second.id)?.status === "ready");
+			expect(service.snapshot(second.id)?.configOptions[0].currentValue).toBe("agent");
+		} finally {
+			service.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	test("long ACP histories are windowed for reads and pushes, and can be paged without losing messages", async () => {
 		const transport = new FakeTransport();
 		transport.responder = ({ id, method }) => {
@@ -1052,6 +1149,120 @@ describe("AcpService", () => {
 		service.dispose();
 		expect(transports[0].closed).toBe(true);
 	});
+
+	test("sidebar deletion closes live sessions, survives restart, and stays scoped to its agent", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "acp-deleted-"));
+		const changed: string[] = [];
+		const transports: FakeTransport[] = [];
+		const options = {
+			clientVersion: "0", userDataDir: directory,
+			store: memoryStore([AGENT, { ...AGENT, id: "other" }]),
+			emitState: () => {}, emitSnapshot: () => {},
+			emitHistoryChanged: (id: string) => { changed.push(id); },
+			createTransport: historyAgent(transports),
+		};
+		let service = new AcpService(options);
+		try {
+			const opened = service.openHistory({ agentId: "fake", sessionId: "new", cwd: tmpdir() });
+			await until(() => service.snapshot(opened.id)?.status === "ready");
+			await service.deleteSession({ agentId: "fake", localSessionId: opened.id });
+			expect(service.snapshot(opened.id)).toBeNull();
+			expect(transports[0].closed).toBe(true);
+			expect(changed).toContain("fake");
+			expect((await service.history("fake")).entries.map((entry) => entry.sessionId)).toEqual(["old"]);
+			expect(() => service.openHistory({ agentId: "fake", sessionId: "new", cwd: tmpdir() })).toThrow("已从 NekoCode 删除");
+			service.dispose();
+			service = new AcpService(options);
+			expect((await service.history("fake")).entries.map((entry) => entry.sessionId)).toEqual(["old"]);
+			expect((await service.history("other")).entries.map((entry) => entry.sessionId)).toEqual(["new", "old"]);
+			// History-only rows can be removed without opening their transcript.
+			await service.deleteSession({ agentId: "fake", sessionId: "old" });
+			expect((await service.history("fake")).entries).toEqual([]);
+		} finally {
+			service.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("a failed deletion write and a mismatched agent leave the live session open", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "acp-delete-failure-"));
+		const transports: FakeTransport[] = [];
+		const service = new AcpService({
+			clientVersion: "0", userDataDir: directory, store: memoryStore([AGENT]),
+			emitState: () => {}, emitSnapshot: () => {}, createTransport: historyAgent(transports),
+		});
+		try {
+			const opened = service.openHistory({ agentId: "fake", sessionId: "new", cwd: tmpdir() });
+			await until(() => service.snapshot(opened.id)?.status === "ready");
+			await expect(service.deleteSession({ agentId: "other", localSessionId: opened.id })).rejects.toThrow("不属于");
+			// Replace the directory with a file so persistence must fail.
+			rmSync(directory, { recursive: true });
+			writeFileSync(directory, "blocked");
+			await expect(service.deleteSession({ agentId: "fake", localSessionId: opened.id })).rejects.toThrow();
+			expect(service.snapshot(opened.id)?.status).toBe("ready");
+			expect(transports[0].closed).toBe(false);
+			expect((await service.history("fake")).entries.map((entry) => entry.sessionId)).toContain("new");
+		} finally {
+			service.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	for (const fromHistory of [false, true]) {
+		test(`deletes CLI history through ACP for ${fromHistory ? "history-only" : "live"} sessions`, async () => {
+			const transports: FakeTransport[] = [];
+			const factory = historyAgent(transports);
+			const service = new AcpService({
+				clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {}, emitSnapshot: () => {},
+				createTransport: () => {
+					const transport = factory();
+					const respond = transport.responder!;
+					transport.responder = (message) => {
+						if (message.method === "initialize") transport.reply(message.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, delete: {} } } });
+						else if (message.method === "session/delete") transport.reply(message.id, {});
+						else respond(message);
+					};
+					return transport;
+				},
+			});
+			try {
+				const opened = fromHistory ? null : service.openHistory({ agentId: "fake", sessionId: "new", cwd: tmpdir() });
+				if (opened) await until(() => service.snapshot(opened.id)?.status === "ready");
+				await service.deleteSession({ agentId: "fake", sessionId: "new", deleteFromCli: true });
+				expect(transports[0].sent.filter((message) => message.method === "session/delete")).toMatchObject([{ params: { sessionId: "new" } }]);
+				if (opened) expect(service.snapshot(opened.id)).toBeNull();
+				expect((await service.history("fake")).entries.map((entry) => entry.sessionId)).toEqual(["old"]);
+				// Live deletion must use the owning connection, without spawning another writer.
+				expect(transports).toHaveLength(fromHistory ? 1 : 2);
+			} finally { service.dispose(); }
+		});
+	}
+
+	for (const capability of [undefined, null, {}]) {
+		test(`CLI deletion failure keeps history visible (capability ${JSON.stringify(capability)})`, async () => {
+			const transports: FakeTransport[] = [];
+			const factory = historyAgent(transports);
+			const service = new AcpService({
+				clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {}, emitSnapshot: () => {},
+				createTransport: () => {
+					const transport = factory();
+					const respond = transport.responder!;
+					transport.responder = (message) => {
+						if (message.method === "initialize") transport.reply(message.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, delete: capability } } });
+						else if (message.method === "session/delete") transport.deliver({ jsonrpc: "2.0", id: message.id, error: { code: -32603, message: "CLI denied deletion" } });
+						else respond(message);
+					};
+					return transport;
+				},
+			});
+			try {
+				await expect(service.deleteSession({ agentId: "fake", sessionId: "new", deleteFromCli: true })).rejects.toThrow(capability ? "CLI denied deletion" : "不支持");
+				expect((await service.history("fake")).entries.map((entry) => entry.sessionId)).toContain("new");
+				await service.deleteSession({ agentId: "fake", sessionId: "new" });
+				expect((await service.history("fake")).entries.map((entry) => entry.sessionId)).not.toContain("new");
+			} finally { service.dispose(); }
+		});
+	}
 
 	test("reports a history failure instead of throwing", async () => {
 		const service = new AcpService({

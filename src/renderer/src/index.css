@@ -1278,7 +1278,6 @@ label:has(> select#reasoning-effort) select {
 .agent-map-node { cursor: grab; }
 .agent-map-canvas[data-dragging] .agent-map-node { cursor: grabbing; }
 .agent-map-card {
-  background: color-mix(in srgb, var(--popover) 88%, transparent);
   border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
   box-shadow: 0 3px 12px color-mix(in srgb, var(--foreground) 5%, transparent), 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
   -webkit-backdrop-filter: blur(12px);
@@ -3309,6 +3308,94 @@ diffs-container {
   );
 }
 
+/* Conversation-only capsule. Welcome cards keep the shared composer's original layout. */
+.follow-up-composer {
+  --composer-radius: 28px;
+  container-type: inline-size;
+  padding-bottom: 6px;
+}
+
+.follow-up-composer .chat-composer-surface {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto 28px;
+  grid-template-areas:
+    "images images images images"
+    "error error error error"
+    "attach editor model submit";
+  align-items: center;
+  column-gap: 8px;
+  min-height: 40px;
+  padding: 5px 8px;
+  box-shadow: none;
+  border-color: color-mix(in srgb, var(--foreground) 9%, transparent);
+  background: color-mix(in srgb, var(--popover) 88%, transparent);
+}
+
+.follow-up-composer [data-slot="composer-footer"] { display: contents; }
+.follow-up-composer [data-composer-attachments="hidden"] { grid-template-columns: 0 minmax(0, 1fr) auto 28px; column-gap: 6px; }
+.follow-up-composer [data-slot="composer-images"] { grid-area: images; padding: 0 2px 8px; }
+.follow-up-composer [data-slot="composer-image-error"] { grid-area: error; padding: 0 2px 8px; }
+.follow-up-composer [data-slot="composer-editor"] { grid-area: editor; min-width: 0; padding: 0; }
+.follow-up-composer [data-chat-composer] {
+  min-height: 22px;
+  max-height: 240px;
+  font-size: var(--app-font-size-ui, 14px);
+  line-height: 22px;
+  scrollbar-width: thin;
+}
+.follow-up-composer [data-chat-composer]::placeholder { color: var(--muted-foreground); opacity: 0.85; }
+.follow-up-composer [data-composer-control="attach"] {
+  grid-area: attach;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow: none;
+  color: var(--muted-foreground);
+}
+.follow-up-composer [data-composer-control="attach"] > svg { width: 18px; height: 18px; }
+.follow-up-composer [data-slot="composer-inline-toolbar"] {
+  grid-area: model;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(19rem, 38cqw);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.follow-up-composer [data-slot="composer-inline-toolbar"] button {
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  padding-inline: 4px;
+  font-size: var(--app-font-size-ui, 12px);
+  color: var(--muted-foreground);
+}
+.follow-up-composer [data-composer-control="submit"] {
+  grid-area: submit;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--foreground);
+  color: var(--background);
+  box-shadow: none;
+}
+.follow-up-composer [data-composer-control="submit"] > svg { width: 17px; height: 17px; }
+.follow-up-composer [data-slot="composer-meta"] { min-height: 24px; margin-top: 4px; }
+.follow-up-composer [data-slot="composer-meta"] button { color: var(--muted-foreground); }
+
+/* Team content uses the same quiet surfaces and centered conversation column as chat. */
+.team-overview > div { max-width: 64rem; margin-inline: auto; }
+.team-overview article { transition: border-color 160ms, background-color 160ms; }
+.team-overview article:hover { border-color: color-mix(in srgb, var(--foreground) 16%, transparent); }
+.team-workspace > aside button { outline-offset: 2px; }
+.team-workspace > aside button:focus-visible { outline: 2px solid var(--ring); }
+.team-composer [data-slot="composer-inline-toolbar"] { max-width: min(18rem, 34cqw); }
+
 /* Wallpaper settings controls share the composer's glass, not an independent
    approximation. The wallpaper renderer owns data-wallpaper: removing/turning
    off the wallpaper restores all original control styles automatically.
@@ -3972,7 +4059,8 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
    shows through the field instead of a flat fill. Review commit fields share
    this material so their tint and blur stay in sync with the welcome input. */
 .welcome-composer-card,
-.review-commit-field {
+.review-commit-field,
+.follow-up-composer .chat-composer-surface {
   --composer-glass-opacity: 22%;
   --composer-glass-filter: blur(16px);
   background: color-mix(
@@ -4028,7 +4116,8 @@ main:has(> .community-art) .split-grid:not(.split-grid-split) > .split-pane {
   box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 4%, transparent);
 }
 
-.welcome-composer .chat-composer-surface::before {
+.welcome-composer .chat-composer-surface::before,
+.follow-up-composer .chat-composer-surface::before {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }

@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuGroupLabel, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { ComposerPickerMenuPopup } from "../chat/ComposerPickerMenuPopup";
-import { COMPOSER_FLOATING_CONTROL_CLASS_NAME, COMPOSER_PICKER_MENU_OPTION_CLASS_NAME } from "../chat/composerPickerStyles";
+import { COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME, COMPOSER_PICKER_MENU_OPTION_CLASS_NAME } from "../chat/composerPickerStyles";
 import { AgentIcon } from "./AgentIcon";
 
 /** The display name of a workspace id. */
@@ -18,7 +18,7 @@ export function workspaceName(workspace: string, agents: readonly AcpAgentInfo[]
  * Which agent the conversation is with: NekoLocal — NekoCode's own agent on the
  * models configured in settings — or an external agent reached over ACP.
  *
- * Sits at the right end of the conversation header; the sidebar follows it
+ * Sits in the toolbar below the input; the sidebar follows it
  * because each workspace has a history of its own.
  */
 export function WorkspacePicker({
@@ -44,7 +44,7 @@ export function WorkspacePicker({
 					disabled={disabled}
 					render={
 						<Button
-							className={cn(COMPOSER_FLOATING_CONTROL_CLASS_NAME, "h-8 gap-1.5 px-3 text-[length:var(--app-font-size-ui-sm,11px)]")}
+							className={cn(COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME, "h-6 border-transparent")}
 							disabled={disabled}
 							size="chip"
 							title={t("workspace.pickerHint")}
@@ -56,7 +56,7 @@ export function WorkspacePicker({
 						</Button>
 					}
 				/>
-				<ComposerPickerMenuPopup align="end" side="bottom">
+				<ComposerPickerMenuPopup align="start" side="top">
 					<MenuRadioGroup onValueChange={(next) => onChange(next as string)} value={value}>
 						<MenuGroupLabel>{t("workspace.label")}</MenuGroupLabel>
 						<MenuRadioItem className={COMPOSER_PICKER_MENU_OPTION_CLASS_NAME} value={NEKO_LOCAL_WORKSPACE}>

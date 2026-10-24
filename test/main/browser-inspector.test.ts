@@ -8,6 +8,8 @@ function fakeGuest(id: number) {
 		id,
 		isDestroyed: () => false,
 		getZoomFactor: () => 1.5,
+		enableDeviceEmulation: mock(() => undefined),
+		disableDeviceEmulation: mock(() => undefined),
 		debugger: Object.assign(new EventEmitter(), { isAttached: () => false }),
 	});
 	return guest as unknown as WebContents & EventEmitter;
@@ -19,6 +21,30 @@ function fakeWindow() {
 }
 
 describe("BrowserInspector automation", () => {
+	test("fits a desktop viewport into the panel, refits on resize and restores natural size", async () => {
+		const { win, webContents } = fakeWindow();
+		const inspector = new BrowserInspector(win);
+		const guest = fakeGuest(7);
+		inspector.register(guest);
+		const host = inspector.automationHost("a");
+		const bound = host.requestAutomation("req", () => undefined);
+		inspector.bindAutomation(webContents as never, "req", 7);
+		await bound;
+		inspector.resizeGuest(webContents as never, 7, 540, 600);
+		host.setAutomationViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+		expect(guest.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({ viewSize: { width: 2160, height: 1350 }, scale: 0.5 }));
+		host.updateAutomationPointer({ x: 1200, y: 100, phase: "move" });
+		expect(webContents.send).toHaveBeenLastCalledWith("browser:automationPointer", expect.objectContaining({ x: 1200, scale: 0.375 }));
+		inspector.resizeGuest(webContents as never, 7, 1080, 300);
+		expect(guest.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({ scale: 300 / 675 }));
+		host.setAutomationViewport(null);
+		expect(guest.disableDeviceEmulation).toHaveBeenCalledTimes(1);
+		const calls = (guest.enableDeviceEmulation as ReturnType<typeof mock>).mock.calls.length;
+		inspector.resizeGuest(webContents as never, 7, 500, 600);
+		expect(guest.enableDeviceEmulation).toHaveBeenCalledTimes(calls);
+		expect(() => inspector.resizeGuest({} as never, 7, 500, 600)).toThrow("Invalid browser owner");
+		expect(() => inspector.resizeGuest(webContents as never, 7, NaN, 600)).toThrow("Invalid browser size");
+	});
 	test("routes pointer updates to the bound guest and accounts for app zoom", async () => {
 		const { win, webContents } = fakeWindow();
 		const inspector = new BrowserInspector(win);

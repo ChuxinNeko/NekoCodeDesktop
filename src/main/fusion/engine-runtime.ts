@@ -136,12 +136,13 @@ export class FusionEngineRuntime {
 		}
 	}
 	private teamEngine(config: FusionConfig): FusionTeamEngine {
-		const key = JSON.stringify([config.leadModelKey, config.contextMessageLimit]);
+		const key = JSON.stringify([config.leadModelKey, config.contextMessageLimit, config.teamRoomId]);
 		if (this.team?.key === key) return this.team.engine;
 		this.dropTeam();
 		const engine = new FusionTeamEngine({ run: request => this.driver.run(request), release: handle => this.driver.release(handle),
 			appendFinal: (text, modelKey) => { this.teamFinal = text; return this.appendLeadMessage(text, modelKey); }, store: this.store,
 			team: () => currentTeamSettings(), defaultModelKey: config.leadModelKey,
+			roomId: config.teamRoomId, models: () => this.host.parent.modelRuntime.getAvailableSnapshot().map(model => `${model.provider}/${model.id}`),
 			...(this.host.instructions ? { instructions: this.host.instructions } : {}),
 			...(config.contextMessageLimit ? { contextMessageLimit: config.contextMessageLimit } : {}) });
 		this.team = { engine, key };

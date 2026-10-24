@@ -97,6 +97,7 @@ export function useSessions(): SessionsState {
 			} catch (cause) {
 				setError(errorMessage(cause));
 				refresh();
+				throw cause;
 			}
 		},
 		[refresh],

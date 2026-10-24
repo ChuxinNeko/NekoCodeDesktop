@@ -65,13 +65,20 @@ function projectTeamThread(events: FusionEvent[], final?: string): { items: Team
 	let direct = false;
 	let sequence = 0;
 	const adminBubble = () => {
-		if (!adminMessage) {
+		if (!adminMessage || adminMessage.status === "done") {
 			adminMessage = { kind: "message", id: `admin:${++sequence}`, member: admin, text: "", status: "running", tools: [], ...(adminModel ? { model: adminModel } : {}) };
 			items.push(adminMessage);
 		}
 		return adminMessage;
 	};
-	const owner = (event: FusionEvent) => "workerId" in event && event.workerId ? workers.get(event.workerId) : "role" in event && event.role === "main" ? adminBubble() : undefined;
+	const workerBubble = (workerId: string) => {
+		const previous = workers.get(workerId);
+		if (!previous || previous.status !== "done") return previous;
+		const item = { ...previous, id: `${workerId}:message:${++sequence}`, text: "", status: "running" as const, tools: [], error: undefined };
+		workers.set(workerId, item); items.push(item);
+		return item;
+	};
+	const owner = (event: FusionEvent) => "workerId" in event && event.workerId ? workerBubble(event.workerId) : "role" in event && event.role === "main" ? adminBubble() : undefined;
 	for (const event of events) {
 		switch (event.type) {
 			case "plan.completed":
@@ -89,14 +96,20 @@ function projectTeamThread(events: FusionEvent[], final?: string): { items: Team
 				adminBubble().text += event.delta;
 				break;
 			case "task.output.delta": {
-				const item = event.workerId ? workers.get(event.workerId) : undefined;
+				const item = event.workerId ? workerBubble(event.workerId) : undefined;
 				if (item) item.text += event.delta;
+				break;
+			}
+			case "team.message.completed": {
+				if (!event.text.trim()) break;
+				const item = owner(event);
+				if (item) { item.text = event.text; item.status = event.interrupted ? "failed" : "done"; }
 				break;
 			}
 			case "task.completed": {
 				if (event.role === "main") { for (const item of items) if (item.kind === "message" && item.member === admin && item.status === "running") item.status = "done"; break; }
 				const item = event.workerId ? workers.get(event.workerId) : undefined;
-				if (item) { item.text = event.text || item.text; item.status = "done"; }
+				if (item) { if (item.status !== "done") item.text = event.text || item.text; item.status = "done"; }
 				break;
 			}
 			case "task.failed": {
@@ -105,9 +118,10 @@ function projectTeamThread(events: FusionEvent[], final?: string): { items: Team
 				break;
 			}
 			case "tool.started": {
-				if (event.toolName === "team_assign") {
+				if (event.toolName === "team_assign" || event.toolName === "message_bot") {
 					const from = event.workerId ? workers.get(event.workerId)?.member ?? "" : admin;
-					const wanted = (event.input as { assignments?: { member?: unknown; task?: unknown }[] } | undefined)?.assignments ?? [];
+					const input = event.input as { assignments?: { member?: unknown; task?: unknown }[]; to?: unknown; message?: unknown } | undefined;
+					const wanted = event.toolName === "message_bot" ? [{ member: input?.to, task: input?.message }] : input?.assignments ?? [];
 					// Text after a hand-off is a new message, as in a chat.
 					if (!event.workerId) adminMessage = undefined;
 					wanted.forEach((assignment, index) => {

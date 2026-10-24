@@ -1,3 +1,4 @@
+import { useShortcutHandlers } from "../../hooks/useShortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { VscClose, VscExtensions, VscFiles, VscHistory, VscSearch, VscSettingsGear, VscSourceControl } from "react-icons/vsc";
 import type { SessionSummary } from "../../../../shared/agent";
@@ -140,6 +141,7 @@ export interface IdeLayoutProps {
 	onAddToChat: (text: string) => void;
 	onInlineEdit: (request: InlineEditRequest) => Promise<void>;
 	onOpenSettings: () => void;
+	onOpenTeam: () => void;
 	onPickProject: () => void;
 }
 
@@ -308,58 +310,36 @@ function IdeWorkbench({
 		[chatOpen, onChatOpenChange, onInlineEdit],
 	);
 
-	// Workbench shortcuts. Keys the editor handles never get here — Monaco stops
-	// them — so these are the ones that work from anywhere in the layout.
-	useEffect(() => {
-		if (!visible) return;
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.defaultPrevented) return;
-			const mod = event.ctrlKey || event.metaKey;
-			if (!mod) return;
-			const key = event.key.toLowerCase();
-			const run = (action: () => void) => {
-				event.preventDefault();
-				event.stopPropagation();
-				action();
-			};
-			if (event.shiftKey && !event.altKey) {
-				if (key === "p") run(() => editorRef.current?.commandPalette());
-				else if (key === "e") run(() => showSide("explorer"));
-				else if (key === "f")
-					run(() => {
-						const text = editorRef.current?.selectionText() ?? "";
-						if (text) setSearchSeed({ text, nonce: Date.now() });
-						showSide("search");
-						setSearchFocus((value) => value + 1);
-					});
-				else if (key === "g") run(() => showSide("scm"));
-				else if (key === "x") run(() => showSide("extensions"));
-				else if (event.code === "Tab") run(() => cycleTab(-1));
-				return;
-			}
-			if (event.altKey) {
-				if (key === "b") run(() => onChatOpenChange(!chatOpen));
-				else if (key === "s") run(() => void ws.saveAll());
-				return;
-			}
-			if (key === "p") run(() => setQuickOpen(true));
-			else if (key === "b") run(() => onSideOpenChange(!sideOpen));
-			else if (event.code === "Backquote") run(() => setTerminalOpen((open) => !open));
-			else if (key === "i") run(focusChat);
-			else if (key === "s") run(() => void editorRef.current?.save());
-			else if (key === "w") run(() => ws.activeId && editorRef.current?.requestClose([ws.activeId]));
-			else if (key === "l") run(() => editorRef.current?.addSelectionToChat());
-			else if (event.code === "Tab") run(() => cycleTab(1));
-		};
-		const cycleTab = (step: number) => {
-			if (ws.tabs.length < 2) return;
-			const at = ws.tabs.findIndex((tab) => tab.id === ws.activeId);
-			const next = ws.tabs[(at + step + ws.tabs.length) % ws.tabs.length];
-			if (next) ws.activate(next.id);
-		};
-		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
-	});
+	const cycleTab = (step: number) => {
+		if (ws.tabs.length < 2) return;
+		const at = ws.tabs.findIndex((tab) => tab.id === ws.activeId);
+		const next = ws.tabs[(at + step + ws.tabs.length) % ws.tabs.length];
+		if (next) ws.activate(next.id);
+	};
+	useShortcutHandlers({
+		"ide.palette": () => editorRef.current?.commandPalette(),
+		"ide.explorer": () => showSide("explorer"),
+		"ide.search": () => {
+			const text = editorRef.current?.selectionText() ?? "";
+			if (text) setSearchSeed({ text, nonce: Date.now() });
+			showSide("search");
+			setSearchFocus((value) => value + 1);
+		},
+		"ide.scm": () => showSide("scm"),
+		"ide.extensions": () => showSide("extensions"),
+		"ide.quickOpen": () => setQuickOpen(true),
+		"ide.terminal": () => setTerminalOpen((open) => !open),
+		"ide.focusChat": focusChat,
+		"ide.toggleChat": () => onChatOpenChange(!chatOpen),
+		"ide.save": () => { void editorRef.current?.save(); },
+		"ide.saveAll": () => { void ws.saveAll(); },
+		"ide.closeTab": () => { if (!ws.activeId) return false; editorRef.current?.requestClose([ws.activeId]); },
+		"ide.addToChat": () => editorRef.current?.addSelectionToChat(),
+		"ide.inlineEdit": () => editorRef.current?.openInlineEdit(),
+		"ide.wordWrap": () => editorRef.current?.toggleWordWrap(),
+		"ide.nextTab": () => cycleTab(1),
+		"ide.previousTab": () => cycleTab(-1),
+	}, visible);
 
 	const startSideDrag = useDrag(sideWidth, setSideWidth, {
 		axis: "x",

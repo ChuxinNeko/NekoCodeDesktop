@@ -3,6 +3,7 @@ import type { BrowserPointerUpdate } from "../shared/browser";
 export interface BrowserInputPage {
 	executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 	isDestroyed(): boolean;
+	getZoomFactor?(): number;
 	debugger: {
 		isAttached(): boolean;
 		attach(version?: string): void;
@@ -36,6 +37,8 @@ export async function performBrowserInput(page: BrowserInputPage, action: Browse
 	onPointer: (update: BrowserPointerUpdate) => void;
 	onDispatched?: () => void;
 	platform?: string;
+	/** Electron device emulation scales CDP mouse coordinates into the displayed view. */
+	inputScale?: () => number;
 }): Promise<void> {
 	if (busy.has(page)) throw new Error("This browser tab is already performing an interaction");
 	busy.add(page);
@@ -71,9 +74,17 @@ export async function performBrowserInput(page: BrowserInputPage, action: Browse
 		return result;
 	};
 	const command = (method: string, params: Record<string, unknown>) => cancellable(() => page.debugger.sendCommand(method, params));
-	const mouse = (type: string, extra: Record<string, unknown> = {}) => command("Input.dispatchMouseEvent", {
-		type, ...point, button: held ?? "none", buttons: held === "left" ? 1 : held === "right" ? 2 : held === "middle" ? 4 : 0, ...extra,
-	});
+	const mouseParameters = (type: string, extra: Record<string, unknown> = {}) => {
+		const scale = options.inputScale?.() ?? 1;
+		return {
+			type, x: point.x * scale, y: point.y * scale,
+			button: held ?? "none", buttons: held === "left" ? 1 : held === "right" ? 2 : held === "middle" ? 4 : 0, ...extra,
+			// Wheel distances are DIPs, unaffected by device-emulation display scale.
+			...(typeof extra.deltaX === "number" ? { deltaX: extra.deltaX * (page.getZoomFactor?.() ?? 1) } : {}),
+			...(typeof extra.deltaY === "number" ? { deltaY: extra.deltaY * (page.getZoomFactor?.() ?? 1) } : {}),
+		};
+	};
+	const mouse = (type: string, extra: Record<string, unknown> = {}) => command("Input.dispatchMouseEvent", mouseParameters(type, extra));
 	const move = async (target: { x: number; y: number }, steps = 12) => {
 		const from = { ...point };
 		for (let step = 1; step <= steps; step++) {
@@ -239,7 +250,7 @@ export async function performBrowserInput(page: BrowserInputPage, action: Browse
 				try {
 					await Promise.race([
 						(async () => {
-							if (held) await page.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: held, buttons: 0, clickCount: 1 });
+							if (held) await page.debugger.sendCommand("Input.dispatchMouseEvent", mouseParameters("mouseReleased", { button: held, buttons: 0, clickCount: 1 }));
 							if (keyHeld) await page.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...keyHeld, text: undefined });
 						})(),
 						new Promise(resolve => { timer = setTimeout(resolve, 250); }),

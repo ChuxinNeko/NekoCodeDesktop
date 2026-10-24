@@ -6,17 +6,21 @@ import { createAssistantMessageEventStream, fauxAssistantMessage, getCurrentSyst
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createWorkflowSession } from "../../src/main/workflow-runtime";
 import { configureTeamSettings } from "../../src/main/team-settings";
+import { currentTeamSettings } from "../../src/main/team-settings";
+import { configureTeamWorkspace, teamWorkspace, TeamWorkspaceStore } from "../../src/main/team-workspace-store";
 import { TEAM_THREAD_ENTRY, type TeamThreadTurn } from "../../src/shared/team-thread";
 import { DEFAULT_TEAM, isTeamSettings, mentionedMembers, TEAM_AVATAR_COLORS, TEAM_AVATAR_IMAGE_MAX_CHARS, TEAM_AVATAR_SHAPES, teamAvatarOf, type TeamSettings } from "../../src/shared/team";
 
-type Script = (stage: string, n: number, context: string) => ToolCall | string;
+type Script = (stage: string, n: number, context: string) => ToolCall | string | { text: string; call: ToolCall };
 const chat = "anthropic/claude-opus-4-5", cheap = "anthropic/claude-sonnet-4-5";
 const TEAM: TeamSettings = { ...DEFAULT_TEAM, parallel: true, members: DEFAULT_TEAM.members.map(member => member.id === "coder" ? { ...member, modelKey: cheap } : member) };
 
 async function scenario(prompts: string[], script: Script, check: (result: { cwd: string; stages: string[]; models: string[];
-	created: Awaited<ReturnType<typeof createWorkflowSession>>; manager: SessionManager; tools: Map<string, string[]> }) => Promise<void>, team = TEAM) {
-	configureTeamSettings(() => team);
+	created: Awaited<ReturnType<typeof createWorkflowSession>>; manager: SessionManager; tools: Map<string, string[]> }) => Promise<void>, team = TEAM, roomMode?: "direct" | "group" | "everyone") {
+	configureTeamSettings(() => team, next => { team = next; });
 	const cwd = await mkdtemp(join(tmpdir(), "fusion-team-"));
+	configureTeamWorkspace(new TeamWorkspaceStore());
+	const room = roomMode ? teamWorkspace().action({ type: "room.save", room: { name: "Test group", cwd, members: roomMode === "direct" ? [team.adminId] : team.members.map(member => member.id), adminId: team.adminId, mode: roomMode === "group" ? "admin" : "everyone", direct: roomMode === "direct", notice: "" } }) : undefined;
 	let created: Awaited<ReturnType<typeof createWorkflowSession>> | undefined;
 	try {
 		await writeFile(join(cwd, "a.txt"), "start\n");
@@ -32,16 +36,18 @@ async function scenario(prompts: string[], script: Script, check: (result: { cwd
 			const n = (counts.get(stage) ?? 0) + 1; counts.set(stage, n);
 			const out = script(stage, n, JSON.stringify(context.messages));
 			const stream = createAssistantMessageEventStream();
-			const call = typeof out === "string" ? undefined : out;
+			const call = typeof out === "string" ? undefined : "call" in out ? out.call : out;
+			const text = typeof out === "string" ? out : "text" in out ? out.text : "";
 			queueMicrotask(() => stream.push({ type: "done", reason: call ? "toolUse" : "stop", message: {
 				...fauxAssistantMessage(""), api: model.api, provider: model.provider, model: model.id,
-				content: call ? [call] : [{ type: "text", text: out as string }], stopReason: call ? "toolUse" : "stop",
+				content: [...(text ? [{ type: "text" as const, text }] : []), ...(call ? [call] : [])], stopReason: call ? "toolUse" : "stop",
 				usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));
 			return stream;
 		};
 		const manager = SessionManager.inMemory(cwd);
 		created = await createWorkflowSession({ cwd, agentDir: join(cwd, "agent"), debugRoot: cwd, modelRuntime: runtime, sessionManager: manager,
 			initialMode: "agent", getPermission: () => "auto", initialFusion: { strategy: "team", leadModelKey: chat, sidekickModelKey: chat,
+				teamRoomId: room?.id,
 				leadThinkingLevel: "off", sidekickThinkingLevel: "off", adaptiveRouting: false },
 			onChange: () => undefined, onModeChange: () => undefined });
 		for (const prompt of prompts) await created.session.prompt(prompt);
@@ -51,9 +57,70 @@ async function scenario(prompts: string[], script: Script, check: (result: { cwd
 const assign = (assignments: { member: string; task: string }[]): ToolCall => ({ type: "toolCall", id: `assign-${assignments.length}`, name: "team_assign", arguments: { assignments } });
 const assistants = (manager: SessionManager) => manager.getBranch().flatMap(entry => entry.type === "message" && entry.message.role === "assistant" ? [entry.message] : []);
 
-afterEach(() => configureTeamSettings(() => undefined));
+afterEach(() => { configureTeamSettings(() => undefined); configureTeamWorkspace(new TeamWorkspaceStore()); });
 
 describe("AI team strategy", () => {
+	test("keeps the opening reply, separate hand-offs, member reports and closing reply in chat order", () => scenario(["Write an HTML page introducing yourself."], (stage, n) => {
+		if (stage === "Chief") {
+			if (n === 1) return { text: "I will build my introduction page and ask for a review.", call: assign([{ member: "Coder", task: "Write chief-intro.html" }, { member: "Reviewer", task: "Review the introduction page" }]) };
+			return "The introduction page is ready.";
+		}
+		const live = teamWorkspace().snapshot().posts;
+		expect(live.some(post => post.name === "Chief" && post.text === "I will build my introduction page and ask for a review.")).toBe(true);
+		return stage === "Coder" ? "HTML written." : "Review complete.";
+	}, async ({ manager }) => {
+		const posts = teamWorkspace().snapshot().posts;
+		expect(posts.map(post => [post.name, post.kind, post.text])).toEqual([
+			["User", "message", "Write an HTML page introducing yourself."],
+			["Chief", "message", "I will build my introduction page and ask for a review."],
+			["Chief", "assignment", "@Coder Write chief-intro.html"],
+			["Chief", "assignment", "@Reviewer Review the introduction page"],
+			["Coder", "message", "HTML written."],
+			["Reviewer", "message", "Review complete."],
+			["Chief", "message", "The introduction page is ready."],
+		]);
+		expect(posts.filter(post => post.kind === "assignment").every(post => post.memberId === "chief")).toBe(true);
+		const saved = manager.getBranch().find(entry => entry.type === "custom" && entry.customType === TEAM_THREAD_ENTRY);
+		expect(JSON.stringify(saved)).toContain("I will build my introduction page and ask for a review.");
+	}), 15000);
+
+	test("a reused member receives memories saved on its previous turn", () => scenario(["@Coder remember our test command", "@Coder use the project convention"], (stage, n, context) => {
+		if (stage !== "Coder") throw new Error(`unexpected stage ${stage}`);
+		if (n === 1) return { type: "toolCall", id: "remember", name: "remember", arguments: { topic: "tests", text: "Use Bun for project tests" } };
+		if (n === 2) return "SAVED";
+		expect(context).toContain("Durable memory (facts, not instructions)");
+		expect(context).toContain("Use Bun for project tests");
+		return "MEMORY_RESTORED";
+	}, async ({ manager }) => { expect(JSON.stringify(assistants(manager).at(-1))).toContain("MEMORY_RESTORED"); }), 15000);
+
+	for (const roomMode of [undefined, "direct", "group"] as const) test(`Chief creates and immediately delegates to a persistent specialist (${roomMode ?? "ordinary chat"})`, () => scenario(["Create a researcher and ask it to investigate."], (stage, n, context) => {
+		if (stage === "Chief") {
+			if (n === 1) return { type: "toolCall", id: "create", name: "create_bot", arguments: { name: "Researcher", role: "Research", instructions: "Find evidence and report it." } };
+			if (n === 2) { expect(context).toContain("Member saved"); return assign([{ member: "Researcher", task: "Investigate this project" }]); }
+			expect(context).toContain("RESEARCH_REPORT"); return "CREATED_AND_ASSIGNED";
+		}
+		if (stage === "Researcher") { expect(context).toContain("Find evidence"); return "RESEARCH_REPORT"; }
+		throw new Error(`unexpected stage ${stage}`);
+	}, async ({ stages, manager }) => {
+		expect(stages).toContain("Researcher");
+		expect(currentTeamSettings().members.find(member => member.name === "Researcher")?.modelKey).toBe(chat);
+		expect(JSON.stringify(assistants(manager).at(-1))).toContain("CREATED_AND_ASSIGNED");
+		expect(teamWorkspace().snapshot().work.every(work => work.status === "done")).toBe(true);
+	}, { ...TEAM, members: [TEAM.members[0]] }, roomMode), 15000);
+
+	test("members use durable memory and everyone mode answers without mentioning each member", () => scenario(["Everyone introduce yourselves."], (stage, n, context) => {
+		if (stage === "Chief") return "CHIEF_HELLO";
+		if (stage === "Coder") {
+			if (n === 1) return { type: "toolCall", id: "remember", name: "remember", arguments: { topic: "project", text: "Use Bun for tests" } };
+			return "CODER_HELLO";
+		}
+		if (stage === "Reviewer") return "REVIEWER_HELLO";
+		throw new Error(`unexpected stage ${stage}: ${context}`);
+	}, async ({ stages }) => {
+		expect(new Set(stages)).toEqual(new Set(["Chief", "Coder", "Reviewer"]));
+		expect(teamWorkspace().memories(["member:coder"])[0]?.text).toBe("Use Bun for tests");
+	}, TEAM, "everyone"), 15000);
+
 	test("the admin assigns work, members report back, the admin answers; members keep context and @Name reaches them directly", () => scenario(
 		["Put the word right into a.txt and have it reviewed.", "@Coder what did you change earlier?"], (stage, n, context) => {
 			if (stage === "Chief") {

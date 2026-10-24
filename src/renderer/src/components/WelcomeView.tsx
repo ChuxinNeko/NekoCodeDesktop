@@ -71,12 +71,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 	return (
 		<div className="welcome-view relative flex min-h-0 flex-1 flex-col overflow-y-auto">
 			{wallpaperOn ? null : <AsciiWaveBackground />}
-			{props.workspacePicker ? (
-				<header className="relative flex h-11 shrink-0 items-center justify-end px-3">
-					{props.workspacePicker}
-				</header>
-			) : null}
-			<div className={cn("welcome-theme-toggle absolute right-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 p-1 shadow-xs sm:flex", props.workspacePicker ? "top-14" : "top-5")} role="group" aria-label={t("welcome.appearance")}>
+			<div className="welcome-theme-toggle absolute right-5 top-5 z-10 hidden flex-col gap-1 rounded-full border border-border/70 p-1 shadow-xs sm:flex" role="group" aria-label={t("welcome.appearance")}>
 				{([{ mode: "light", Icon: SunIcon }, { mode: "dark", Icon: MoonIcon }] as const).map(({ mode, Icon }) => (
 					<button key={mode} type="button" aria-label={t(`theme.${mode}`)} aria-pressed={resolvedTheme === mode}
 						onClick={() => setTheme(mode)}
@@ -100,6 +95,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 				</h1>
 				<div className="welcome-composer-card rounded-[20px] p-[3px]">
 					<ComposerShell
+						followUp={false}
 						className="welcome-composer"
 						insertion={props.insertion ?? quickInsertion}
 						onInsertionConsumed={(id) => {
@@ -142,7 +138,7 @@ export function WelcomeView(props: WelcomeViewProps) {
 					/>
 					<div className="flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1">
 						<div className="min-w-0 max-w-full"><ProjectPicker cwd={cwd} disabled={busy} onPickProject={props.onPickProject} /></div>
-						{props.composerHeader ? <div className="welcome-workspace min-w-0">{props.composerHeader}</div> : null}
+						<div className="welcome-workspace flex min-w-0 flex-wrap items-center gap-2">{props.composerHeader}{props.workspacePicker}</div>
 					</div>
 				</div>
 				<div className="mt-4 flex flex-col items-center gap-2" role="group" aria-label={t("welcome.quickStarts")}>

@@ -363,7 +363,7 @@ export function MobileApp() {
 					<div className="mb-2 flex items-center gap-2 px-2 text-xs text-muted-foreground"><FolderOpenIcon className="size-3.5" /><span className="truncate">{projectLabel(cwd)}</span></div>
 					{tasks.map((task) => <div key={task.id}>
 						{task.agentId && <div className="px-3 pt-2 text-[10px] text-muted-foreground">{acpState.agents.find((agent) => agent.id === task.agentId)?.name ?? task.agentId}</div>}
-						<SessionRow hideActions session={task} active={isActive(task)} running={!!task.running} now={Date.now()} disabled={busy || !online} renaming={false} confirmingDelete={false} onOpen={() => { task.agentId ? openAcp(task) : open(task); }} onStartRename={noop} onRename={noop} onCancelRename={noop} onStartDelete={noop} onDelete={noop} onCancelDelete={noop} />
+						<SessionRow hideActions session={task} active={isActive(task)} running={!!task.running} now={Date.now()} disabled={busy || !online} renaming={false} onOpen={() => { task.agentId ? openAcp(task) : open(task); }} onStartRename={noop} onRename={noop} onCancelRename={noop} onStartDelete={noop} />
 					</div>)}
 				</section>)}
 			</div>}

@@ -2,6 +2,7 @@ import type { GoalState } from "./goal";
 import type { AgentPhase, WorkMode, WorkflowSnapshot } from "./workflow";
 import type { CheckpointSummary } from "./checkpoints";
 import type { FusionConfig } from "./fusion";
+import type { AcceptanceReport } from "./acceptance";
 
 export type ExecutionMode = "read-only" | "auto" | "full-access";
 export type ThinkingLevel =
@@ -210,6 +211,8 @@ export interface AgentDefaults {
 	agentPhase: AgentPhase;
 }
 
+export type ContextCategory = "system" | "tools" | "rules" | "skills" | "mcp" | "subagents" | "conversation";
+
 export interface ContextUsage {
 	/**
 	 * What the conversation occupied at the last model call: the whole prompt it
@@ -219,9 +222,16 @@ export interface ContextUsage {
 	used: number;
 	/** The active model's context window. */
 	window: number;
+	/** Category estimates, reconciled to the reported total; absent when the provider exposes no breakdown. */
+	breakdown?: Partial<Record<ContextCategory, number>>;
+	breakdownEstimated?: boolean;
+	breakdownSource?: "codex-rollout";
+	source?: "acp";
 }
 
 export interface AgentSnapshot {
+	/** Computed from the complete transcript before pagination. */
+	acceptance?: AcceptanceReport;
 	fusion?: FusionConfig | null;
 	session: SessionSummary;
 	cells: AgentCell[];

@@ -107,6 +107,21 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 	const webviews = useRef(new Map<string, WebviewTag>());
 	const stripRef = useRef<HTMLDivElement | null>(null);
 	const hostRef = useRef<HTMLDivElement | null>(null);
+	const reportGuestSize = useCallback(async (element: WebviewTag) => {
+		const host = hostRef.current;
+		if (host) await api.browserResize(element.getWebContentsId(), host.clientWidth, host.clientHeight);
+	}, []);
+	useEffect(() => {
+		const host = hostRef.current;
+		if (!host) return;
+		const observer = new ResizeObserver(() => {
+			for (const element of webviews.current.values()) {
+				void reportGuestSize(element).catch(() => { /* Guest not attached yet. */ });
+			}
+		});
+		observer.observe(host);
+		return () => observer.disconnect();
+	}, [reportGuestSize]);
 	const [automationPointer, setAutomationPointer] = useState<(BrowserAutomationPointer & { tabId: string; pulse: number }) | null>(null);
 	useEffect(() => {
 		const unsubscribe = api.onBrowserAutomationPointer((pointer) => {
@@ -295,11 +310,13 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 				setError(t("browser.loadFailed", { url: event.validatedURL, reason: event.errorDescription }));
 			};
 			const onDomReady = () => {
+				const sized = reportGuestSize(element);
+				void sized.catch((cause) => setError(String(cause)));
 				for (const [requestId, pendingTabId] of pendingAutomation.current) {
 					if (pendingTabId !== tabId) continue;
 					pendingAutomation.current.delete(requestId);
-					void api
-						.browserBindAutomation(requestId, element.getWebContentsId())
+					void sized
+						.then(() => api.browserBindAutomation(requestId, element.getWebContentsId()))
 						.catch((cause) => setError(String(cause)));
 				}
 			};
@@ -313,7 +330,7 @@ export function BrowserPanel({ onClose, preview, visible = true }: {
 			element.addEventListener("page-favicon-updated", onFavicon);
 			element.addEventListener("did-fail-load", onFail);
 		},
-		[updateTab, t],
+		[updateTab, t, reportGuestSize],
 	);
 
 	// Keep one guest per tab, created before connection and removed with its tab.

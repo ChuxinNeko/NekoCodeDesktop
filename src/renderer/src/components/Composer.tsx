@@ -11,6 +11,7 @@ import { ComposerPickers } from "./chat/ComposerPickers";
 import { ComposerShell } from "./chat/ComposerShell";
 
 interface ComposerProps {
+	workspacePicker?: React.ReactNode;
 	predictionContext?: PredictionContext;
 	loadCommands?: () => Promise<SlashCommandSummary[]>;
 	loadMentions?: (query: string) => Promise<MentionCandidate[]>;
@@ -37,6 +38,8 @@ interface ComposerProps {
 	onSetMode: (mode: ExecutionMode) => void;
 	onSetWorkMode: (mode: WorkMode) => void;
 	header?: React.ReactNode;
+	/** Attached activity rail, inset from the input's edges. */
+	activity?: React.ReactNode;
 }
 
 /** Composer for an open session: the shared input shell plus the model/thinking/mode pickers. */
@@ -45,10 +48,22 @@ export function Composer(props: ComposerProps) {
 	// boolean so the toolbar entry still works after the menu is dismissed.
 	const [openCommands, setOpenCommands] = useState(0);
 	const supportsImages = props.models.find((model) => model.key === props.modelKey)?.imageInput === true;
+	const pickerProps = {
+		models: props.models, modelKey: props.modelKey, fusion: props.fusion,
+		thinkingLevel: props.thinkingLevel, thinkingLevels: props.thinkingLevels,
+		mode: props.mode, workMode: props.workMode, agentPhase: props.agentPhase,
+		disabled: props.streaming || props.disabled, onSetFusion: props.onSetFusion,
+		onSetModel: props.onSetModel, onSetThinking: props.onSetThinking,
+		onSetMode: props.onSetMode, onSetWorkMode: props.onSetWorkMode,
+		onSlashCommands: () => setOpenCommands((n) => n + 1),
+	};
 	return (
 		<ComposerShell
+			workspacePicker={props.workspacePicker}
+			inlineToolbar={<ComposerPickers {...pickerProps} section="model" />}
 			predictionContext={props.predictionContext}
 			header={props.header}
+			activity={props.activity}
 			insertion={props.insertion}
 			onInsertionConsumed={props.onInsertionConsumed}
 			disabled={props.disabled}
@@ -64,21 +79,8 @@ export function Composer(props: ComposerProps) {
 			openCommandsSignal={openCommands}
 			toolbar={
 				<ComposerPickers
-					models={props.models}
-					modelKey={props.modelKey}
-					fusion={props.fusion}
-					thinkingLevel={props.thinkingLevel}
-					thinkingLevels={props.thinkingLevels}
-					mode={props.mode}
-					workMode={props.workMode}
-					agentPhase={props.agentPhase}
-					disabled={props.streaming || props.disabled}
-					onSetFusion={props.onSetFusion}
-					onSetModel={props.onSetModel}
-					onSetThinking={props.onSetThinking}
-					onSetMode={props.onSetMode}
-					onSetWorkMode={props.onSetWorkMode}
-					onSlashCommands={() => setOpenCommands((n) => n + 1)}
+					section="session"
+					{...pickerProps}
 				/>
 			}
 		/>

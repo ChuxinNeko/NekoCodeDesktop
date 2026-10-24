@@ -6,8 +6,8 @@ import { nativeConfigEnvironment } from "./native-config";
  * plus the push channel to the window.
  *
  * Open sessions live as long as the app does. History is the agent's own —
- * `session/list` reads it, `session/load` reopens it — only prompt usage is
- * stored locally, and one started in the agent's own CLI shows up
+ * `session/list` reads it, `session/load` reopens it, `session/delete` optionally
+ * removes it. Prompt usage and sidebar removals are stored locally; one started in the agent's own CLI shows up
  * next to the ones NekoCode started. Snapshots are coalesced: an agent can
  * stream hundreds of tiny updates a second and the window only needs to see
  * the latest one per frame or so.
@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import type {
 	AcpAgentInfo,
 	AcpCreateSessionRequest,
+	AcpDeleteSessionRequest,
 	AcpHistory,
 	AcpHistoryEntry,
 	AcpOpenSessionRequest,
@@ -39,6 +40,8 @@ import { ACP_PROTOCOL_VERSION, AcpSession, type AcpToolServers } from "./session
 import type { TextDiffer } from "./projection";
 import { openShellChanges, type ShellChangeTracker } from "./workspace-changes";
 import { AcpUsageStore } from "./usage-store";
+import { AcpDeletedSessions } from "./deleted-sessions";
+import { AcpSessionDefaults } from "./session-defaults";
 
 const PUSH_INTERVAL_MS = 50;
 /** A history listing keeps its agent process this long for the next one. */
@@ -54,6 +57,8 @@ const MAX_HISTORY_PAGES = 8;
 const MAX_IDLE_SESSIONS = 4;
 
 export interface AcpServiceOptions {
+	/** Application data directory for durable sidebar removals. */
+	userDataDir?: string;
 	nativeConfig?: boolean;
 	autoRetryCount?: () => number;
 	/** Durable prompt usage, read by the settings token dashboard. */
@@ -122,6 +127,8 @@ export function parseHistoryPage(result: unknown): { entries: AcpHistoryEntry[];
 const TRANSCRIPT_WINDOW_CELLS = 80;
 
 export class AcpService {
+	private readonly sessionDefaults: AcpSessionDefaults;
+	private readonly deleted: AcpDeletedSessions;
 	private readonly historyFrom = new Map<string, number>();
 	private readonly usageStore?: AcpUsageStore;
 	private readonly sessions = new Map<string, AcpSession>();
@@ -134,6 +141,8 @@ export class AcpService {
 	private timer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private readonly options: AcpServiceOptions) {
+		this.sessionDefaults = new AcpSessionDefaults(options.userDataDir);
+		this.deleted = new AcpDeletedSessions(options.userDataDir);
 		if (options.usageDir) this.usageStore = new AcpUsageStore(options.usageDir);
 	}
 
@@ -273,6 +282,8 @@ export class AcpService {
 			agent,
 			cwd,
 			clientVersion: this.options.clientVersion,
+			initialConfig: this.sessionDefaults.get(agent.id),
+			onConfigApplied: (configId, value) => this.sessionDefaults.set(agent.id, configId, value),
 			autoRetryCount: this.options.autoRetryCount,
 			createTransport: (target, dir) => this.transport(target, dir),
 			onChange: () => this.markDirty(id),
@@ -322,6 +333,7 @@ export class AcpService {
 	 * append to it without seeing the other's turns.
 	 */
 	openHistory(request: AcpOpenSessionRequest): AcpSessionSnapshot {
+		if (this.deleted.has(request.agentId, request.sessionId)) throw new Error("此会话已从 NekoCode 删除");
 		const agent = this.requireAgent(request.agentId);
 		for (const session of this.sessions.values()) {
 			const summary = session.summary();
@@ -367,7 +379,7 @@ export class AcpService {
 				if (!cursor) break;
 			}
 			this.scheduleListerIdle(agent.id);
-			return { agentId, entries: entries.sort((a, b) => b.updatedAt - a.updatedAt) };
+			return { agentId, entries: entries.filter((entry) => !this.deleted.has(agentId, entry.sessionId)).sort((a, b) => b.updatedAt - a.updatedAt) };
 		} catch (error) {
 			this.dropLister(agent.id);
 			return { agentId, entries: [], error: errorText(error) };
@@ -477,6 +489,64 @@ export class AcpService {
 
 	respondPermission(response: AcpPermissionResponse): void {
 		this.require(response.sessionId).respondPermission(response.requestId, response.optionId);
+	}
+
+	async deleteSession(request: AcpDeleteSessionRequest): Promise<void> {
+		if (!request || typeof request.agentId !== "string" || !request.agentId) throw new Error("无效的代理 ID");
+		let agentSessionId = request.sessionId;
+		if (request.localSessionId !== undefined) {
+			const session = this.require(request.localSessionId).summary();
+			if (session.agentId !== request.agentId) throw new Error("会话不属于此代理");
+			agentSessionId = session.agentSessionId;
+		} else if (typeof agentSessionId !== "string" || !agentSessionId) {
+			throw new Error("无效的会话 ID");
+		}
+		if (request.deleteFromCli === true) {
+			const live = [...this.sessions.values()].find((session) => {
+				const summary = session.summary();
+				return summary.agentId === request.agentId && summary.status !== "error" &&
+					(summary.id === request.localSessionId || (agentSessionId && summary.agentSessionId === agentSessionId));
+			});
+			if (live) {
+				await live.deleteHistory();
+				agentSessionId = live.summary().agentSessionId;
+			} else {
+				if (!agentSessionId) throw new Error("代理尚未分配会话 ID，请稍后重试");
+				const agent = this.requireAgent(request.agentId);
+				const lister = this.lister(agent);
+				try {
+					const capabilities = await lister.ready;
+					const sessions = isObject(capabilities.sessionCapabilities) ? capabilities.sessionCapabilities : {};
+					if (!isObject(sessions.delete)) throw new Error(`${agent.name} 不支持删除 CLI 会话，可取消勾选后仅从 NekoCode 移除`);
+					await new Promise<void>((resolve, reject) => {
+						const timer = setTimeout(() => {
+							this.dropLister(agent.id);
+							reject(new Error(`${agent.name} 删除 CLI 会话超时，请刷新历史后重试`));
+						}, LISTER_TIMEOUT_MS);
+						lister.connection.request("session/delete", { sessionId: agentSessionId }).then(
+							() => { clearTimeout(timer); resolve(); },
+							(error: unknown) => { clearTimeout(timer); reject(error); },
+						);
+					});
+				} finally {
+					this.scheduleListerIdle(agent.id);
+				}
+			}
+		}
+		// Native deletion must succeed before hiding the row locally.
+		if (agentSessionId && !request.deleteFromCli) this.deleted.add(request.agentId, agentSessionId);
+		for (const session of this.sessions.values()) {
+			const summary = session.summary();
+			if (summary.agentId === request.agentId && (summary.id === request.localSessionId ||
+				(agentSessionId && summary.agentSessionId === agentSessionId))) this.close(summary.id);
+		}
+		this.options.emitHistoryChanged?.(request.agentId);
+		// Native history is already gone: release its live session even if the
+		// local bookkeeping write fails, and report that partial result accurately.
+		if (agentSessionId && request.deleteFromCli) {
+			try { this.deleted.add(request.agentId, agentSessionId); }
+			catch (error) { throw new Error(`CLI 会话已删除，但保存本地移除记录失败：${errorText(error)}`); }
+		}
 	}
 
 	close(sessionId: string): void {

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { buildAcceptanceReport } from "../shared/acceptance";
+import { ACCEPTANCE_TOOL_NAME, createAcceptanceTool } from "./acceptance-tool";
+import { ACCEPTANCE_EVIDENCE_ENTRY, AcceptanceEvidenceRecorder, withAcceptanceEvidence } from "./acceptance-evidence";
 import { recordDiagnostic } from "./diagnostic-log";
 import { checkpointSummaries } from "./checkpoint-summaries";
 import type { GitGenerateCommitMessageRequest } from "../shared/git";
@@ -942,6 +945,7 @@ export class AgentService {
 	}
 
 	private savePreferences(): void {
+		if (this.pendingFusion?.teamRoomId) return;
 		try {
 			writeFileSync(
 				this.preferencesPath,
@@ -1331,7 +1335,7 @@ export class AgentService {
 	inheritDefaults(source: AgentService): void {
 		this.pendingModelKey = source.pendingModelKey;
 		this.pendingThinkingLevel = source.pendingThinkingLevel;
-		this.pendingFusion = source.pendingFusion;
+		this.pendingFusion = source.pendingFusion ? { ...source.pendingFusion, teamRoomId: undefined } : null;
 		this.mode = source.mode;
 		this.workMode = source.workMode;
 	}
@@ -1980,6 +1984,8 @@ export class AgentService {
 				}
 			},
 		});
+		const acceptanceEvidence = new AcceptanceEvidenceRecorder(() => this.projector.cells(), data => sessionManager.appendCustomEntry(ACCEPTANCE_EVIDENCE_ENTRY, data));
+		let acceptanceSaveFailed = false;
 		// A brand-new session takes the welcome screen's picks; an opened one
 		// keeps the model it was saved with.
 		const model = freshCwd
@@ -1994,7 +2000,15 @@ export class AgentService {
 			fusionError,
 		} = await createWorkflowSession({
 			initialFusion: freshCwd ? this.pendingFusion : undefined,
-			onHelperEvent: (event, source) => preview.handle(event, source),
+			onHelperEvent: (event, source) => {
+				if (generation !== this.generation) return;
+				preview.handle(event, source);
+				try { acceptanceEvidence.handle(event, source); }
+				catch (error) {
+					if (!acceptanceSaveFailed) this.projector.notice("warning", `验收证据未能保存：${String(error)}`);
+					acceptanceSaveFailed = true;
+				}
+			},
 			cwd: sessionManager.getCwd(),
 			sessionManager,
 			initialMode: this.workMode,
@@ -2018,6 +2032,7 @@ export class AgentService {
 				...new Set([
 					...this.pluginTools(),
 					...WEBSITE_CLONE_TOOL_NAMES,
+					ACCEPTANCE_TOOL_NAME,
 					...(this.mcp?.toolNames() ?? []),
 				]),
 			],
@@ -2030,6 +2045,7 @@ export class AgentService {
 			getGoal: () => goalPromptSection(this.goal),
 			customTools: [
 				...cloneTools,
+				createAcceptanceTool(() => withAcceptanceEvidence(this.projector.cells(), this.currentBranch(sessionManager))),
 				createMemoryTool(sessionManager.getCwd(), memoryStore()),
 				createGoalTool((status, note) => {
 					if (generation !== this.generation || this.goal?.status !== "active") return "No active goal";
@@ -2509,6 +2525,7 @@ export class AgentService {
 		const firstText = firstUser && typeof firstUser.content === "string" ? firstUser.content : "";
 		const name = sm.getSessionName();
 		const model = session.model;
+		const acceptanceCells = this.projector.cells();
 		return {
 			session: {
 				id: sm.getSessionId(),
@@ -2522,9 +2539,10 @@ export class AgentService {
 				messageCount: messages.length,
 				running: session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks,
 			},
-			cells: withFusionUsage(this.projector.cells(), this.currentBranch(sm), this.workflow?.state.hasRunningTasks),
+			cells: withFusionUsage(acceptanceCells, this.currentBranch(sm), this.workflow?.state.hasRunningTasks),
+			acceptance: buildAcceptanceReport(withAcceptanceEvidence(acceptanceCells, this.currentBranch(sm)), session.isStreaming || this.helperAbort !== null || !!this.workflow?.state.hasRunningTasks),
 			...(() => {
-				const context = contextUsage(messages, model?.contextWindow);
+				const context = contextUsage(messages, model?.contextWindow, true);
 				return context ? { context } : {};
 			})(),
 			checkpoints: this.listCheckpoints(),

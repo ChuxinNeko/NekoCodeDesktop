@@ -40,7 +40,7 @@ interface MemberEdit {
  * member is — role, instructions, model, avatar — is filled in once in the dialog
  * and then read as status here.
  */
-export function TeamSettings() {
+export function TeamSettings({ onOpenOverview }: { onOpenOverview?: () => void } = {}) {
 	const { t } = useTranslation();
 	const [team, setTeam] = useState<Team | null>(null);
 	const [models, setModels] = useState<CodeIntelModelOption[]>([]);
@@ -57,6 +57,9 @@ export function TeamSettings() {
 		// Leaving the page must not drop the last debounced edit.
 		return () => { clearTimeout(saveTimer.current); if (pending.current) void api.preferencesUpdate({ team: pending.current }).catch(() => undefined); };
 	}, []);
+	useEffect(() => api.onTeamChanged(() => {
+		if (!pending.current) void api.preferencesGet().then(preferences => { if (!pending.current) setTeam(preferences.team); }).catch(cause => setError(errorMessage(cause)));
+	}), []);
 
 	const problem = (value: Team): string | null => {
 		const names = new Set<string>();
@@ -129,6 +132,7 @@ export function TeamSettings() {
 		JSON.stringify(team.members) === JSON.stringify(DEFAULT_TEAM.members);
 	return (
 		<section className="flex flex-col gap-3">
+			{onOpenOverview ? <div><Button size="sm" variant="chrome-outline" onClick={onOpenOverview}>{t("team.openOverview")}</Button></div> : null}
 			<div className="flex items-start justify-between gap-3">
 				<p className="text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{t("team.description")}</p>
 				<Button className="shrink-0" size="xs" variant="chrome-outline" disabled={isDefaultRoster} onClick={() => setResetOpen(true)}>
@@ -372,6 +376,10 @@ function MemberDialog({
 							<Textarea size="sm" placeholder={t("team.instructionsPlaceholder")} value={draft.instructions} maxLength={8000}
 								onChange={(event) => patch({ instructions: event.target.value })} />
 						</div>
+						<label className="flex items-center justify-between gap-3 text-xs">
+							<span>{t("team.mainMember")}</span>
+							<Switch checked={draft.main === true} onCheckedChange={main => patch({ main })} />
+						</label>
 
 						<div className="flex flex-col gap-1">
 							<Label>{t("team.model")}</Label>

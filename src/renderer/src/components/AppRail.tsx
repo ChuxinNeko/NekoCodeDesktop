@@ -1,3 +1,5 @@
+import { useShortcuts } from "../hooks/useShortcuts";
+import type { ShortcutId } from "../lib/shortcuts";
 import type { WorkspaceView } from "../App";
 import { useTranslation, type TranslationKey } from "../i18n";
 import {
@@ -33,6 +35,9 @@ interface AppRailProps {
 /** Persistent navigation beside the independently collapsible session panel. */
 export function AppRail(props: AppRailProps) {
 	const { t } = useTranslation();
+	const { label: shortcutLabel } = useShortcuts();
+	const withShortcut = (text: string, id: ShortcutId) => [text, shortcutLabel(id)].filter(Boolean).join(" · ");
+	const viewShortcuts: Partial<Record<WorkspaceView, ShortcutId>> = { chat: "app.chat", tasks: "app.tasks", review: "app.review", "pull-requests": "app.github", automations: "app.automations" };
 	const buttonClass = (active = false) => cn(
 		"relative size-9 shrink-0 rounded-lg text-muted-foreground",
 		active && "bg-[var(--sidebar-accent)] text-foreground",
@@ -44,7 +49,7 @@ export function AppRail(props: AppRailProps) {
 					<IconButton
 						key={entry.id}
 						label={t(entry.labelKey)}
-						tooltip={entry.id === "tasks" && props.activeTasks ? `${t(entry.labelKey)} (${props.activeTasks})` : t(entry.labelKey)}
+						tooltip={viewShortcuts[entry.id] ? withShortcut(entry.id === "tasks" && props.activeTasks ? `${t(entry.labelKey)} (${props.activeTasks})` : t(entry.labelKey), viewShortcuts[entry.id]!) : t(entry.labelKey)}
 						tooltipSide="right"
 						aria-current={props.view === entry.id ? "page" : undefined}
 						className={buttonClass(props.view === entry.id)}
@@ -59,16 +64,16 @@ export function AppRail(props: AppRailProps) {
 				{props.browserAvailable ? (
 					<>
 						<div aria-hidden="true" className="my-0.5 h-px w-5 shrink-0 bg-[var(--sidebar-border)]" />
-						<IconButton label={t("nav.browser")} tooltip={t("nav.browser")} tooltipSide="right" aria-pressed={props.browserOpen} className={buttonClass(props.browserOpen)} onClick={props.onToggleBrowser}>
+						<IconButton label={t("nav.browser")} tooltip={withShortcut(t("nav.browser"), "agent.browser")} tooltipSide="right" aria-pressed={props.browserOpen} className={buttonClass(props.browserOpen)} onClick={props.onToggleBrowser}>
 							<GlobeIcon className="size-[18px]" />
 						</IconButton>
 					</>
 				) : null}
 			</div>
-			<IconButton label={t("sidebar.toggleTheme")} tooltip={t("sidebar.toggleTheme")} tooltipSide="right" className={buttonClass()} onClick={props.onToggleTheme}>
+			<IconButton label={t("sidebar.toggleTheme")} tooltip={withShortcut(t("sidebar.toggleTheme"), "app.theme")} tooltipSide="right" className={buttonClass()} onClick={props.onToggleTheme}>
 				{props.resolvedTheme === "dark" ? <SunIcon className="size-[18px]" /> : <MoonIcon className="size-[18px]" />}
 			</IconButton>
-			<IconButton label={t("sidebar.settings")} tooltip={t("sidebar.settings")} tooltipSide="right" aria-current={props.view === "settings" ? "page" : undefined} className={buttonClass(props.view === "settings")} onClick={() => props.onSelectView("settings")}>
+			<IconButton label={t("sidebar.settings")} tooltip={withShortcut(t("sidebar.settings"), "app.settings")} tooltipSide="right" aria-current={props.view === "settings" ? "page" : undefined} className={buttonClass(props.view === "settings")} onClick={() => props.onSelectView("settings")}>
 				<SettingsIcon className="size-[18px]" />
 			</IconButton>
 		</nav>

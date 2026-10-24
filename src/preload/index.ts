@@ -3,6 +3,7 @@ import type { GitHubAuthorization, GitHubAuthorizationMethod, GitHubAuthorizatio
 import type { GitHubProfile } from "../shared/github-profile";
 import type { GitHubClientRequest, GitHubClientResult } from "../shared/github-client";
 import type { FusionConfig } from "../shared/fusion";
+import type { TeamSendRequest, TeamWorkspaceAction, TeamWorkspaceSnapshot, TeamRoom, TeamMemory } from "../shared/team-workspace";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../shared/code-intel";
 import type { LanStatus } from "../shared/lan";
 import type { SshHostInput, SshStatus, SshTestResult, SandboxDeployment } from "../shared/ssh";
@@ -106,6 +107,7 @@ import type {
 	AcpCreateSessionRequest,
 	AcpHistory,
 	AcpOpenSessionRequest,
+	AcpDeleteSessionRequest,
 	AcpPermissionResponse,
 	AcpPromptRequest,
 	AcpSaveAgentRequest,
@@ -246,6 +248,8 @@ const api = {
 	browserSetInspect: (guestId: number, enabled: boolean): Promise<void> => ipcRenderer.invoke("browser:setInspect", guestId, enabled),
 	browserBindAutomation: (requestId: string, guestId: number): Promise<void> =>
 		ipcRenderer.invoke("browser:bindAutomation", requestId, guestId),
+	browserResize: (guestId: number, width: number, height: number): Promise<void> =>
+		ipcRenderer.invoke("browser:resize", guestId, width, height),
 
 	setTheme: (theme: "light" | "dark" | "system") =>
 		ipcRenderer.invoke("theme:set", theme),
@@ -371,6 +375,11 @@ const api = {
 	agentStopCommand: (sessionId: string, toolCallId: string): Promise<boolean> => ipcRenderer.invoke("agent:stopCommand", sessionId, toolCallId),
 	agentDismissTasks: (sessionIds: string[]): Promise<void> => ipcRenderer.invoke("agent:dismissTasks", sessionIds),
 	preferencesGet: (): Promise<AppPreferences> => ipcRenderer.invoke("preferences:get"),
+	teamSnapshot: (): Promise<TeamWorkspaceSnapshot> => ipcRenderer.invoke("team:snapshot"),
+	teamAction: (action: TeamWorkspaceAction): Promise<TeamRoom | TeamMemory | undefined> => ipcRenderer.invoke("team:action", action),
+	teamSend: (request: TeamSendRequest): Promise<SendPromptResult> => ipcRenderer.invoke("team:send", request),
+	teamStop: (roomId: string, memberId?: string): Promise<void> => ipcRenderer.invoke("team:stop", roomId, memberId),
+	onTeamChanged: (listener: () => void) => subscribe("team:changed", listener),
 	preferencesUpdate: (patch: Partial<AppPreferences>): Promise<AppPreferences> =>
 		ipcRenderer.invoke("preferences:update", patch),
 	/** The command shells this platform offers, and where each is installed. */
@@ -410,6 +419,7 @@ const api = {
 	acpCancel: (sessionId: string): Promise<void> => ipcRenderer.invoke("acp:cancel", sessionId),
 	acpSetConfig: (request: AcpSetConfigRequest): Promise<void> => ipcRenderer.invoke("acp:setConfig", request),
 	acpRespondPermission: (response: AcpPermissionResponse): Promise<void> => ipcRenderer.invoke("acp:permission", response),
+	acpDelete: (request: AcpDeleteSessionRequest): Promise<void> => ipcRenderer.invoke("acp:delete", request),
 	acpClose: (sessionId: string): Promise<void> => ipcRenderer.invoke("acp:close", sessionId),
 	onAcpChanged: (listener: (state: AcpState) => void) => subscribe("acp:changed", listener),
 	onAcpSnapshot: (listener: (snapshot: AcpSessionSnapshot) => void) => subscribe("acp:snapshot", listener),

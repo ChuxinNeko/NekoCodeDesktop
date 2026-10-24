@@ -52,9 +52,12 @@ export interface OAuthLoginState {
  *
  * All backend traffic lives here; both tabs render what this hands them.
  */
-function LocalProviderModelSettings() {
+function LocalProviderModelSettings({ searchTarget }: { searchTarget?: TranslationKey }) {
 	const { t } = useTranslation();
 	const [tab, setTab] = useState<TabId>("providers");
+	useEffect(() => {
+		if (searchTarget) setTab(searchTarget.startsWith("models.") ? "models" : "providers");
+	}, [searchTarget]);
 	const [profiles, setProfiles] = useState<ModelProfileSummary[]>([]);
 	const [accounts, setAccounts] = useState<OAuthProviderSummary[]>([]);
 	const [login, setLogin] = useState<OAuthLoginState | null>(null);
@@ -355,8 +358,8 @@ function LocalProviderModelSettings() {
 // Temporarily hide ACP provider/model settings while retaining their implementation.
 const SHOW_ACP_MODEL_SETTINGS = false;
 
-export function ProviderModelSettings() {
-	return SHOW_ACP_MODEL_SETTINGS ? <WorkspaceProviderModelSettings /> : <LocalProviderModelSettings />;
+export function ProviderModelSettings({ searchTarget }: { searchTarget?: TranslationKey }) {
+	return SHOW_ACP_MODEL_SETTINGS ? <WorkspaceProviderModelSettings /> : <LocalProviderModelSettings searchTarget={searchTarget} />;
 }
 
 /** The same provider page follows each enabled ACP workspace. */

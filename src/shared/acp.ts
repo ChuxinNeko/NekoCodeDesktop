@@ -121,6 +121,12 @@ export interface AcpOpenSessionRequest {
 	title?: string;
 }
 
+/** Remove a conversation from NekoCode, optionally deleting the agent's native history. */
+export type AcpDeleteSessionRequest = { agentId: string; deleteFromCli?: boolean } & (
+	| { sessionId: string; localSessionId?: never }
+	| { localSessionId: string; sessionId?: never }
+);
+
 /** A select-style setting the agent exposes for a session (mode, model, …). */
 export interface AcpConfigOption {
 	id: string;
@@ -176,6 +182,7 @@ export interface AcpSessionSummary {
 }
 
 export interface AcpSessionSnapshot extends AcpSessionSummary {
+	acceptance?: import("./acceptance").AcceptanceReport;
 	error?: string;
 	cells: AgentCell[];
 	/** Records before the desktop's current transcript window. */

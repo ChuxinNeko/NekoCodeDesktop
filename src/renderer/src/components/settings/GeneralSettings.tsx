@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ProxyStatus } from "../../../../shared/settings";
-import { DEFAULT_APP_PREFERENCES, MAX_AUTO_RETRY_COUNT, type AppPreferences, type CommandShellId, type CommandShellOption } from "../../../../shared/preferences";
+import { DEFAULT_APP_PREFERENCES, MAX_AUTO_RETRY_COUNT, isWindowCloseBehavior, type AppPreferences, type CommandShellId, type CommandShellOption, type WindowCloseBehavior } from "../../../../shared/preferences";
 import { api, errorMessage } from "../../api";
 import { LANGUAGE_OPTIONS, useTranslation, type TranslationKey } from "../../i18n";
 import { cn, getNavigatorPlatform, isWindowsPlatform } from "../../lib/utils";
@@ -95,6 +95,25 @@ const PROXY_SOURCE_KEYS: Record<ProxyStatus["source"], TranslationKey> = {
 	none: "settings.proxy.direct",
 };
 
+export function CloseBehaviorSetting({ value, disabled, onChange }: {
+	value: WindowCloseBehavior;
+	disabled: boolean;
+	onChange: (value: WindowCloseBehavior) => void;
+}) {
+	const { t } = useTranslation();
+	return <SettingsRow settingKey="settings.closeBehavior" label={t("settings.closeBehavior")} hint={t("settings.closeBehaviorHint")}>
+		<Select value={value} disabled={disabled} onValueChange={(next) => { if (isWindowCloseBehavior(next)) onChange(next); }}>
+			<SelectTrigger size="sm" className="w-44" aria-label={t("settings.closeBehavior")}>
+				<SelectValue>{t(value === "tray" ? "settings.closeBehavior.tray" : "settings.closeBehavior.quit")}</SelectValue>
+			</SelectTrigger>
+			<SelectPopup surface="settings">
+				<SelectItem value="quit">{t("settings.closeBehavior.quit")}</SelectItem>
+				<SelectItem value="tray">{t("settings.closeBehavior.tray")}</SelectItem>
+			</SelectPopup>
+		</Select>
+	</SettingsRow>;
+}
+
 export function GeneralSettings() {
 	const { language, setLanguage, t } = useTranslation();
 	const [proxy, setProxy] = useState<ProxyStatus | null>(null);
@@ -102,6 +121,15 @@ export function GeneralSettings() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [preferences, setPreferences] = useState<AppPreferences | null>(null);
+	const [closeBehaviorBusy, setCloseBehaviorBusy] = useState(false);
+	const [closeBehaviorError, setCloseBehaviorError] = useState<string | null>(null);
+	const changeCloseBehavior = async (closeBehavior: WindowCloseBehavior) => {
+		setCloseBehaviorBusy(true);
+		setCloseBehaviorError(null);
+		try { setPreferences(await api.preferencesUpdate({ closeBehavior })); }
+		catch (cause) { setCloseBehaviorError(errorMessage(cause)); }
+		finally { setCloseBehaviorBusy(false); }
+	};
 
 	useEffect(() => {
 		api
@@ -165,6 +193,12 @@ export function GeneralSettings() {
 					))}
 				</div>
 			</SettingsRow>
+
+			{api.runtime === "electron" ? <div>
+				<CloseBehaviorSetting value={preferences?.closeBehavior ?? DEFAULT_APP_PREFERENCES.closeBehavior}
+					disabled={!preferences || closeBehaviorBusy} onChange={(value) => void changeCloseBehavior(value)} />
+				{closeBehaviorError ? <p role="alert" className="pb-2 text-xs text-destructive">{closeBehaviorError}</p> : null}
+			</div> : null}
 
 			<LayoutSettings />
 

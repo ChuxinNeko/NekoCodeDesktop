@@ -9,13 +9,6 @@ import { RAISED_SURFACE_BORDER_CLASS_NAME } from "../chat/composerPickerStyles";
 /**
  * The app's one modal confirmation.
  *
- * An alert dialog rather than an inline confirm strip — the pattern the session
- * rows use — because the actions behind this one are not scoped to a row and are
- * not cheap to undo: a checkpoint restore rewrites files on disk. A modal is the
- * right amount of friction for an action whose blast radius is the whole
- * working tree, and it is the only place in the app where taking the user's
- * focus is the point rather than a cost.
- *
  * Deliberately not dismissable by clicking away: Base UI's AlertDialog already
  * requires an explicit choice, which is what keeps a stray click on the backdrop
  * from reading as "cancel" when the user meant to scroll the file list.

@@ -3,6 +3,7 @@ import type { GitHubAuthorization, GitHubAuthorizationMethod, GitHubAuthorizatio
 import type { GitHubProfile } from "../../shared/github-profile";
 import type { GitHubClientRequest, GitHubClientResult } from "../../shared/github-client";
 import type { FusionConfig } from "../../shared/fusion";
+import type { TeamSendRequest, TeamWorkspaceAction, TeamWorkspaceSnapshot, TeamRoom, TeamMemory } from "../../shared/team-workspace";
 import type { CodeIntelModels, CodeIntelStatus, CodeIntelUpdate, PromptPredictionRequest, CompletionRequest, CompletionResponse, IndexStatus } from "../../shared/code-intel";
 import type { LanStatus } from "../../shared/lan";
 import type { SshHostInput, SshStatus, SshTestResult, SandboxDeployment } from "../../shared/ssh";
@@ -163,6 +164,7 @@ import type {
 	AcpCreateSessionRequest,
 	AcpHistory,
 	AcpOpenSessionRequest,
+	AcpDeleteSessionRequest,
 	AcpPermissionResponse,
 	AcpPromptRequest,
 	AcpSaveAgentRequest,
@@ -231,6 +233,7 @@ export interface AgentApi {
 	onBrowserAutomationPointer(listener: (state: BrowserAutomationPointer) => void): () => void;
 	browserSetInspect(guestId: number, enabled: boolean): Promise<void>;
 	browserBindAutomation(requestId: string, guestId: number): Promise<void>;
+	browserResize(guestId: number, width: number, height: number): Promise<void>;
 
 	setTheme(theme: "light" | "dark" | "system"): Promise<void>;
 
@@ -340,6 +343,11 @@ export interface AgentApi {
 	/** Take finished tasks off the board; their sessions stay in the sidebar. */
 	agentDismissTasks(sessionIds: string[]): Promise<void>;
 	preferencesGet(): Promise<AppPreferences>;
+	teamSnapshot(): Promise<TeamWorkspaceSnapshot>;
+	teamAction(action: TeamWorkspaceAction): Promise<TeamRoom | TeamMemory | undefined>;
+	teamSend(request: TeamSendRequest): Promise<SendPromptResult>;
+	teamStop(roomId: string, memberId?: string): Promise<void>;
+	onTeamChanged(listener: () => void): () => void;
 	preferencesUpdate(patch: Partial<AppPreferences>): Promise<AppPreferences>;
 	/** The command shells this platform offers, and where each is installed. */
 	preferencesCommandShells(): Promise<CommandShellOption[]>;
@@ -376,6 +384,7 @@ export interface AgentApi {
 	acpCancel(sessionId: string): Promise<void>;
 	acpSetConfig(request: AcpSetConfigRequest): Promise<void>;
 	acpRespondPermission(response: AcpPermissionResponse): Promise<void>;
+	acpDelete(request: AcpDeleteSessionRequest): Promise<void>;
 	acpClose(sessionId: string): Promise<void>;
 	onAcpChanged(listener: (state: AcpState) => void): () => void;
 	onAcpSnapshot(listener: (snapshot: AcpSessionSnapshot) => void): () => void;

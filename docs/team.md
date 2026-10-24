@@ -1,5 +1,68 @@
 # AI team
 
+Open **AI team** in the title bar or app rail for the independent workspace.
+IDE mode also has an activity-bar entry; **Settings → AI team → Open team overview**
+provides another route. It is also
+available through WebUI. The existing Team strategy in the composer continues
+to work; both surfaces use the same saved roster and PI execution engine.
+
+## Team workspace
+
+- **Overview:** member cards, Main status, model, access, live work and recent
+  activity. Stop an individual member without selecting its PI session.
+- **Conversations:** persistent private chats and named groups. Each has a
+  working folder, its own model, transcript and execution lifetime. Changing
+  folders starts a new PI session; old transcripts remain in the normal sidebar.
+  Replies are saved per model message: an opening reply stays in place while each
+  hand-off appears in its own sender-labelled bubble. Member reports and closing
+  replies are appended in order, and completed messages survive reopening. Live
+  typing updates only its current bubble; run status is displayed separately.
+- **Groups:** choose members, admin, notice, and either admin coordination or
+  everyone replying. `@Name` and `@all` override the default routing. The notice
+  and group memory are provided to each member. Groups run independently.
+- **Memory:** view, search, add, edit and delete team, member and group memories.
+  Relevant memories are supplied again on subsequent tasks and after restart.
+- **Members & settings:** maintain profiles, avatars, models and access, and grant
+  additional members Main status. The default admin always has Main rights.
+
+Chief can now create specialists itself and delegate to them **in the same turn**,
+including when Chief was initially the only member. Created members are saved
+to app preferences and appear in the workspace immediately. Inside a group,
+new members are added to that group. Deleting members and granting Main status
+remain user actions. Removing a member reconciles affected groups and stops its
+active work; deleting a group does not delete the underlying PI transcript.
+
+### Agent tools and permissions
+
+| Tools | Behavior |
+| --- | --- |
+| `list_bots`, `list_models` | Inspect the live roster, running work, accessible groups and configured models. |
+| `create_bot` | Main members create persistent specialists; new members inherit the creator's model unless specified. |
+| `update_bot` | Members edit themselves; Main members may edit other profiles. Privilege changes and deletion are excluded. |
+| `team_assign`, `message_bot` | Assign work or ask a teammate; receive its report. Group work stays within group membership. Cycles, duplicate concurrent actors and exhausted budgets are refused. |
+| `stop_bot` | Stop yourself; Main members may also stop teammates. The workspace can stop one member or the entire conversation. |
+| `create_group`, `update_group` | Create groups; only Main members or the group admin can edit an existing group. |
+| `post_to_group` | Start work in another accessible group; inspect its asynchronous results with `read_group_chat`. |
+| `read_own_chat`, `read_group_chat`, `search_chats` | Retrieve private/group messages with access restricted by membership. |
+| `remember`, `recall`, `forget` | Persist and search memories. Members read others' personal memory; only its owner or a Main member may edit it. Team memory is writable by Main members. Group members share group memory. |
+
+Conversation metadata, messages, memories and work records are stored atomically
+in `team-workspace.json` in the application's data directory. Interrupted work is
+marked stopped after restart. Each conversation binds to its own ordinary PI
+session, so the full transcript and existing approval UI remain available through
+**Full transcript**. Team actors support automatic context compaction. Explicit
+memory and recent conversation reports restore continuity when actors reopen.
+
+This is a native PI/React adaptation of DS Bot's team capabilities. In particular,
+`message_bot` returns a report within the calling PI tool, while posting to another
+group starts an independent run. It does not import DS Bot's DSH runtime or its
+separate desktop app, provider installers, connector/secrets system, per-Bot browser
+containers, schedule UI, voice, or generated view cards. Those are separate app
+subsystems, rather than implemented team parity. See `NOTICE` and
+`licenses/DeepSeek-Bot-LICENSE.txt` for attribution.
+
+## Composer strategy
+
 The AI team is a third engine strategy (`strategy: "team"`) next to Fusion's
 `delegate` and `parallel`. Pick **Team** in the composer's model menu; configure
 it in **Settings → AI team**.

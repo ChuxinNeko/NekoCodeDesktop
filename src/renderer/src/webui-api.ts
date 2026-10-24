@@ -3,6 +3,7 @@ import { isWebUiRpcMethod } from "../../shared/webui";
 import type { AgentApi } from "./api";
 
 const SUBSCRIPTIONS = {
+	onTeamChanged: "team:changed",
 	onRelayChanged: "relay:changed",
 	onBrowserPopup: "browser:popup",
 	onBrowserPreview: "browser:preview",

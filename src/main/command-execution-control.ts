@@ -50,6 +50,12 @@ export class CommandExecutionControl {
 					}
 					if (failure !== undefined) throw failure;
 					if (!result) throw new Error("Command returned no result");
+					// Keep authoritative process status in persisted tool details, not parsed log text.
+					const execution = result.structuredContent as Record<string, unknown> | undefined;
+					if (execution && typeof execution === "object" && !Array.isArray(execution) && typeof execution.exit_code === "number") {
+						return { ...result, details: { ...(result.details && typeof result.details === "object" ? result.details : {}),
+							execution: { exitCode: execution.exit_code, wallTimeSeconds: execution.wall_time_seconds } } };
+					}
 					return result;
 				} finally {
 					this.running.delete(id);

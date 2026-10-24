@@ -31,6 +31,7 @@ export class PiFusionStageDriver {
 	release(handle: PiFusionActorHandle): void { handle.session?.dispose(); handle.session = undefined; handle.transform = undefined; }
 	async abort(): Promise<void> { await Promise.all([...this.actors].filter(session => session !== this.host.parent).map(session => session.abort())); }
 	async run(request: PiFusionStage): Promise<PiFusionStageResult> {
+		if (request.actor) request.actor.extraToolNames = new Set((request.extraTools ?? []).map(tool => tool.name));
 		if (request.signal?.aborted) throw request.signal.reason ?? new Error("Fusion cancelled");
 		if (typeof request.model !== "string") throw new Error("PI Fusion requires a configured provider/model key");
 		const main = request.role === "main" && ["execute", "synthesize"].includes(request.kind);
@@ -55,7 +56,14 @@ export class PiFusionStageDriver {
 				message.role === "assistant" ? { ...fauxAssistantMessage(message.content), provider: model.provider, model: model.id, api: model.api } :
 					{ role: "user", content: message.content, timestamp: Date.now() });
 			// A reused actor keeps its first-stage transform: the new prompt is part of its tail.
-			if (reused && request.actor?.transform) session.agent.transformContext = request.actor.transform;
+			if (reused && request.actor?.transform) {
+				const previous = request.actor.transform;
+				session.agent.transformContext = async (messages, signal) => {
+					const context = await previous(messages, signal);
+					return context.map(message => message.role === "system" ? { ...message,
+						content: [request.instructions, ...request.messages.filter(message => message.role === "system").map(message => message.content)].join("\n\n") } : message);
+				};
+			}
 			else session.agent.transformContext = async (messages) => {
 				const system = [...messages].reverse().find(message => message.role === "system");
 				const tail = messages.filter(message => message.role !== "system").slice(baseline);
@@ -126,6 +134,7 @@ export class PiFusionStageDriver {
 					if (part.type === "thinking_delta") request.onStreamPart?.({ type: "reasoning-delta", text: part.delta });
 				}
 				if (event.type === "message_end" && event.message.role === "assistant") {
+					request.onAssistantMessage?.(textOf(event.message.content), event.message.stopReason === "aborted" || event.message.stopReason === "error");
 					const value = event.message.usage;
 					usage.inputTokens += value.input + value.cacheRead + value.cacheWrite; usage.outputTokens += value.output;
 					this.host.onUsage(request, { provider: event.message.provider, model: event.message.model, calls: 1,

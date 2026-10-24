@@ -1,3 +1,5 @@
+import { useShortcuts } from "../../hooks/useShortcuts";
+import { matchesShortcut } from "../../lib/shortcuts";
 import { usePromptPrediction } from "../../hooks/usePromptPrediction";
 import { canAcceptPrediction, type PredictionContext } from "../../lib/promptPrediction";
 import type { ContextUsage, PromptImageAttachment, SendPromptRequest } from "../../../../shared/agent";
@@ -54,6 +56,15 @@ const MENTION_DEBOUNCE_MS = 80;
 const PILL_GAP_PX = 6;
 
 interface ComposerShellProps {
+	/** Optional room-owned draft, retained across navigation and failed sends. */
+	draft?: string;
+	onDraftChange?: (text: string) => void;
+	/** Some transports clear their controlled draft only after accepting a send. */
+	clearOnSend?: boolean;
+	/** Defaults to the capsule layout; only the welcome page opts into the original card. */
+	followUp?: boolean;
+	inlineToolbar?: React.ReactNode;
+	workspacePicker?: React.ReactNode;
 	predictionContext?: PredictionContext;
 	/** Allows the welcome surface to place the shared composer in its hero card. */
 	className?: string;
@@ -96,6 +107,8 @@ interface ComposerShellProps {
 	toolbar?: React.ReactNode;
 	/** Above the input, in the same column: the workspace picker. */
 	header?: React.ReactNode;
+	/** Stacked immediately above the input, inside its width-constrained frame. */
+	activity?: React.ReactNode;
 }
 
 /**
@@ -104,10 +117,18 @@ interface ComposerShellProps {
  * sending the first prompt must not make the box jump.
  */
 export function ComposerShell(props: ComposerShellProps) {
+	const { bindings, label: shortcutLabel } = useShortcuts();
 	const { t } = useTranslation();
 	const { resolvedTheme } = useTheme();
 	const { disabled, streaming } = props;
-	const [text, setText] = useState("");
+	const followUp = props.followUp !== false;
+	const [internalText, setInternalText] = useState("");
+	const text = props.draft ?? internalText;
+	const setText = (next: React.SetStateAction<string>) => {
+		const value = typeof next === "function" ? next(text) : next;
+		if (props.draft === undefined) setInternalText(value);
+		props.onDraftChange?.(value);
+	};
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
 	/**
@@ -237,7 +258,7 @@ export function ComposerShell(props: ComposerShellProps) {
 		if (!el) return;
 		el.style.height = "auto";
 		el.style.height = `${String(Math.min(el.scrollHeight, 320))}px`;
-	}, [text, indent]);
+	}, [text, indent, followUp]);
 
 	const consumedInsertion = useRef<string | null>(null);
 	useEffect(() => {
@@ -454,7 +475,7 @@ export function ComposerShell(props: ComposerShellProps) {
 			text: value || t("composer.imageOnlyPrompt"),
 			...(images.length ? { images: images.map((image) => image.attachment) } : {}),
 		};
-		setText("");
+		if (props.clearOnSend !== false) setText("");
 		setCommand(null);
 		setImages([]);
 		setImageError(null);
@@ -464,6 +485,10 @@ export function ComposerShell(props: ComposerShellProps) {
 	};
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (event.repeat && (matchesShortcut(event.nativeEvent, bindings["composer.send"]) || matchesShortcut(event.nativeEvent, bindings["composer.background"]))) {
+			event.preventDefault();
+			return;
+		}
 		if (mentionOpen) {
 			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 				event.preventDefault();
@@ -542,10 +567,12 @@ export function ComposerShell(props: ComposerShellProps) {
 			clearCommand();
 			return;
 		}
-		if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+		if (matchesShortcut(event.nativeEvent, bindings["composer.background"])) {
 			event.preventDefault();
-			// Held modifier: the prompt goes to a new task rather than to this one.
-			submit(event.ctrlKey || event.metaKey);
+			submit(true);
+		} else if (matchesShortcut(event.nativeEvent, bindings["composer.send"])) {
+			event.preventDefault();
+			submit();
 		}
 	};
 
@@ -556,14 +583,15 @@ export function ComposerShell(props: ComposerShellProps) {
 		: FileIcon;
 
 	return (
-		<div className={cn("px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-0 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]", props.className)}>
+		<div data-composer-layout={followUp ? "follow-up" : "welcome"} className={cn("px-[var(--app-density-chat-gutter-x,0.75rem)] pb-3 pt-0 sm:px-[var(--app-density-chat-gutter-x-lg,1.25rem)]", followUp && "follow-up-composer", props.className)}>
 			<ComposerColumnFrame className="relative">
 				{props.header ? (
 					<div data-composer-floating-controls="" className="@container pointer-events-none absolute inset-x-0 bottom-full z-20 flex flex-wrap items-end justify-between gap-2 pb-2 [&>*]:pointer-events-auto">
 						{props.header}
 					</div>
 				) : null}
-				<div className={COMPOSER_INPUT_SHELL_CLASS_NAME}>
+				{props.activity}
+				<div className={cn(COMPOSER_INPUT_SHELL_CLASS_NAME, (mentionOpen || menuOpen) && "z-30")}>
 					{mentionOpen ? (
 						<ComposerMentionMenu
 							candidates={mentionCandidates}
@@ -582,8 +610,9 @@ export function ComposerShell(props: ComposerShellProps) {
 							onPick={pick}
 						/>
 					) : null}
-					<BorderBeam active={streaming === true} theme={resolvedTheme} duration={6}>
+					<BorderBeam active={streaming === true} theme={resolvedTheme} duration={6} borderRadius={followUp ? 28 : undefined}>
 						<div
+							data-composer-attachments={imagesAllowed ? "enabled" : "hidden"}
 							className={cn(
 								COMPOSER_INPUT_SURFACE_CLASS_NAME,
 								dragActive && "border-[color:var(--color-border-focus)] bg-[color-mix(in_srgb,var(--color-border-focus)_6%,transparent)]",
@@ -594,7 +623,7 @@ export function ComposerShell(props: ComposerShellProps) {
 							onDrop={onDrop}
 						>
 							{images.length > 0 ? (
-								<div className="flex flex-wrap gap-2 px-3 pt-2">
+								<div data-slot="composer-images" className="flex flex-wrap gap-2 px-3 pt-2">
 									{images.map((image) => (
 										<div
 											key={image.id}
@@ -621,11 +650,11 @@ export function ComposerShell(props: ComposerShellProps) {
 								</div>
 							) : null}
 							{shownImageError ? (
-								<div className="px-3 pt-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
+								<div data-slot="composer-image-error" className="px-3 pt-1.5 text-[length:var(--app-font-size-ui-sm,11px)] text-destructive">
 									{shownImageError}
 								</div>
 							) : null}
-							<div className={COMPOSER_EDITOR_PADDING_CLASS_NAME}>
+							<div data-slot="composer-editor" className={COMPOSER_EDITOR_PADDING_CLASS_NAME}>
 								{/* The pill sits *in* the first line rather than above it: a
 								    textarea cannot hold an element, so it is laid over the
 								    line box and the text is pushed past it with text-indent,
@@ -663,6 +692,7 @@ export function ComposerShell(props: ComposerShellProps) {
 									<textarea
 										autoFocus={props.autoFocus}
 										ref={textareaRef}
+									data-chat-composer
 										value={text}
 										onChange={(event) => changeText(event.target.value, event.target.selectionStart)}
 										onSelect={(event) =>
@@ -678,7 +708,7 @@ export function ComposerShell(props: ComposerShellProps) {
 										placeholder={
 											command
 												? (command.argumentHint ?? t("commands.argsPlaceholder"))
-												: (prediction.text ? "" : props.placeholder ?? t("composer.placeholder"))
+												: (prediction.text ? "" : props.placeholder ?? t(followUp ? "composer.followUpPlaceholder" : "composer.placeholder"))
 										}
 										rows={1}
 										aria-label={t("composer.placeholder")}
@@ -700,6 +730,7 @@ export function ComposerShell(props: ComposerShellProps) {
 							<div data-slot="composer-footer" className={cn(COMPOSER_FOOTER_ROW_CLASS_NAME, "gap-1 pb-1.5 pr-1.5")}>
 								{imagesAllowed ? (
 									<Button
+										data-composer-control="attach"
 										aria-label={t("composer.addImage")}
 										title={props.supportsImages === true ? t("composer.addImage") : t("composer.imagesUnsupportedModel")}
 										disabled={disabled || props.supportsImages !== true}
@@ -722,15 +753,17 @@ export function ComposerShell(props: ComposerShellProps) {
 										void addFiles(files);
 									}}
 								/>
-								<div data-slot="composer-toolbar" className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>
+								{followUp ? <div data-slot="composer-inline-toolbar">{props.inlineToolbar}</div> : <div data-slot="composer-toolbar" className="flex min-w-0 flex-1 items-center gap-1">{props.toolbar}</div>}
 
 								{/* Sits next to send because that is where the eye already is at
 								    the moment the length of the conversation starts to matter. */}
-								{props.context ? <ContextGauge context={props.context} /> : null}
+								{!followUp && props.context ? <ContextGauge context={props.context} /> : null}
 
 								{streaming && props.onAbort ? (
 									<Button
+										data-composer-control="submit"
 										aria-label={t("composer.stop")}
+										title={[t("composer.stop"), shortcutLabel("app.stop")].filter(Boolean).join(" · ")}
 										onClick={props.onAbort}
 										size="icon-sm"
 										variant="outline"
@@ -739,7 +772,9 @@ export function ComposerShell(props: ComposerShellProps) {
 									</Button>
 								) : (
 									<Button
+										data-composer-control="submit"
 										aria-label={t("composer.send")}
+										title={[t("composer.send"), shortcutLabel("composer.send")].filter(Boolean).join(" · ")}
 										disabled={disabled || !sendable || imagesBlocked}
 										onClick={() => submit()}
 										size="icon-sm"
@@ -752,6 +787,10 @@ export function ComposerShell(props: ComposerShellProps) {
 						</div>
 					</BorderBeam>
 				</div>
+				{followUp ? <div data-slot="composer-meta" className="mt-2 flex min-w-0 items-center gap-2 px-1">
+					<div data-slot="composer-toolbar" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{props.workspacePicker}{props.toolbar}</div>
+					{props.context ? <ContextGauge context={props.context} /> : null}
+				</div> : null}
 			</ComposerColumnFrame>
 			<ContextMenu menu={editMenu} onClose={closeEditMenu} />
 		</div>

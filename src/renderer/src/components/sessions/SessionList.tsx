@@ -8,6 +8,7 @@ import { SIDEBAR_HEADER_ROW_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME, SIDEBAR_SE
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { SessionRow } from "./SessionRow";
+import { SessionDeleteDialog } from "./SessionDeleteDialog";
 
 /** Relative timestamps only ever change by the minute, so that is how often they re-render. */
 const CLOCK_INTERVAL_MS = 60_000;
@@ -38,7 +39,7 @@ export interface SessionListProps {
 	onNewSession: (cwd: string) => void;
 	onOpen: (session: SessionSummary) => void;
 	onRename: (session: SessionSummary, title: string) => void;
-	onDelete: (session: SessionSummary) => void;
+	onDelete: (session: SessionSummary, deleteFromCli?: boolean) => Promise<boolean | void>;
 	/** Rows can be dragged into the chat area's split view. */
 	draggable?: boolean;
 	/** Drawn before a row's title: which external agent the conversation is with. */
@@ -59,7 +60,7 @@ export function SessionList(props: SessionListProps) {
 	const now = useNow(CLOCK_INTERVAL_MS);
 	const [query, setQuery] = useState("");
 	const [renaming, setRenaming] = useState<string | null>(null);
-	const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+	const [confirmingDelete, setConfirmingDelete] = useState<SessionSummary | null>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const [collapsed, setCollapsed] = useState(readCollapsed);
 	const [expanded, setExpanded] = useState<string[]>([]);
@@ -98,7 +99,7 @@ export function SessionList(props: SessionListProps) {
 		if (event.key === "F2") {
 			event.preventDefault();
 			const file = rows[index]?.dataset.sessionFile;
-			if (file) setRenaming(file);
+			if (file && !sessions.find((session) => session.sessionFile === file)?.agentId) setRenaming(file);
 			return;
 		}
 		event.preventDefault();
@@ -191,21 +192,14 @@ export function SessionList(props: SessionListProps) {
 							{shown.map((session) => (
 								<SessionRow
 									compact
-									// An external agent's history is its own: rows open, but are not renamed or deleted here.
-									hideActions={!!session.agentId}
+									hideRename={!!session.agentId}
 									icon={props.rowIcon?.(session)}
 									draggable={props.draggable}
 									disabled={props.busy}
 									active={session.id === activeId}
-									confirmingDelete={confirmingDelete === session.sessionFile}
 									key={session.sessionFile}
 									now={now}
-									onCancelDelete={() => setConfirmingDelete(null)}
 									onCancelRename={() => setRenaming(null)}
-									onDelete={() => {
-										setConfirmingDelete(null);
-										props.onDelete(session);
-									}}
 									onOpen={() => props.onOpen(session)}
 									onRename={(title) => {
 										setRenaming(null);
@@ -213,7 +207,7 @@ export function SessionList(props: SessionListProps) {
 									}}
 									onStartDelete={() => {
 										setRenaming(null);
-										setConfirmingDelete(session.sessionFile);
+										setConfirmingDelete(session);
 									}}
 									onStartRename={() => {
 										setConfirmingDelete(null);
@@ -230,6 +224,7 @@ export function SessionList(props: SessionListProps) {
 					})
 				)}
 			</div>
+			{confirmingDelete ? <SessionDeleteDialog key={confirmingDelete.sessionFile} session={confirmingDelete} onClose={() => setConfirmingDelete(null)} onDelete={props.onDelete} /> : null}
 		</div>
 	);
 }

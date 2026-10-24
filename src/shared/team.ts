@@ -7,6 +7,8 @@ import type { ThinkingLevel } from "./agent";
  * admin, which answers or hands work to members; `@Name` reaches a member directly.
  */
 export interface TeamMember {
+	/** Main members can create members and edit the roster. The admin is always main. */
+	main?: boolean;
 	id: string;
 	name: string;
 	/** Short role label shown to the team, e.g. "Coder". */
@@ -84,6 +86,7 @@ export function isTeamMember(value: unknown): value is TeamMember {
 		typeof member.instructions === "string" && member.instructions.length <= 8000 &&
 		typeof member.modelKey === "string" && LEVELS.has(member.thinkingLevel) &&
 		(member.access === "full" || member.access === "read-only") &&
+		(member.main === undefined || typeof member.main === "boolean") &&
 		(member.avatar === undefined || isTeamAvatar(member.avatar));
 }
 

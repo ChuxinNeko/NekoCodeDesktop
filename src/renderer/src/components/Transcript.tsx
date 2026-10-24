@@ -348,7 +348,7 @@ const ToolCell = memo(function ToolCell({ cell, active }: { cell: Extract<AgentC
 	// that one started.
 	const id = taskIdOf(cell);
 	const task = id ? view.tasks.get(id) : undefined;
-	if (task) return <TaskCard task={task} onOpen={view.open} />;
+	if (task) return <TaskCard task={task} variant="transcript" onOpen={view.open} />;
 	// A search is a run too: the explorer's fan-out while it works, what it
 	// found once it is done.
 	if (cell.toolName === "code_search")

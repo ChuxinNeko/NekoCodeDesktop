@@ -3,6 +3,12 @@
 /** Session partition for in-app browsing; persisted so logins survive restarts. */
 export const BROWSER_PARTITION = "persist:nekocode-browser";
 
+export interface BrowserViewport {
+	width: number;
+	height: number;
+	deviceScaleFactor: number;
+}
+
 export interface BrowserTabState {
 	id: string;
 	title: string;

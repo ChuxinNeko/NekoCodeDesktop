@@ -171,6 +171,7 @@ export interface SessionStore {
 }
 
 export type FusionEvent =
+  | { type: "team.message.completed"; sessionId: string; role: AgentRole; task: string; text: string; workerId?: string; interrupted?: boolean }
   | {
       type: "session.started";
       sessionId: string;

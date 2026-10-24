@@ -22,6 +22,22 @@ const coordinated: FusionEvent[] = [
 ] as FusionEvent[];
 
 describe("team thread", () => {
+	test("message boundaries preserve opening replies from both Chief and members, including message_bot hand-offs", () => {
+		const events: FusionEvent[] = [
+			...coordinated.slice(0, 3),
+			{ type: "team.message.completed", sessionId: id, role: "main", task: "@Chief", text: "I will introduce myself." },
+			{ type: "tool.started", sessionId: id, role: "main", task: "@Chief", toolName: "message_bot", toolCallId: "send", input: { to: "Coder", message: "Write HTML" } },
+			{ type: "task.started", sessionId: id, role: "sidekick", task: "@Coder: Write HTML", workerId: "coder" },
+			{ type: "team.message.completed", sessionId: id, role: "sidekick", task: "@Coder: Write HTML", workerId: "coder", text: "I will write the page." },
+			{ type: "task.output.delta", sessionId: id, role: "sidekick", task: "@Coder: Write HTML", workerId: "coder", delta: "HTML written." },
+			{ type: "team.message.completed", sessionId: id, role: "sidekick", task: "@Coder: Write HTML", workerId: "coder", text: "HTML written." },
+			{ type: "task.completed", sessionId: id, role: "sidekick", task: "@Coder: Write HTML", workerId: "coder", text: "HTML written." },
+			{ type: "team.message.completed", sessionId: id, role: "main", task: "@Chief", text: "The page is ready." },
+			{ type: "task.completed", sessionId: id, role: "main", task: "@Chief", text: "The page is ready." },
+		];
+		const items = teamThreadItems(events, "The page is ready.");
+		expect(items.map(item => item.kind === "message" ? item.text : `@${item.to} ${item.task}`)).toEqual(["I will introduce myself.", "@Coder Write HTML", "I will write the page.", "HTML written."]);
+	});
 	test("draws the admin, its hand-off and the member's report as chat messages, without repeating the final answer", () => {
 		const items = teamThreadItems(coordinated, "Coder fixed the bug.");
 		expect(items.map(item => [item.kind, item.member])).toEqual([["message", "Chief"], ["assign", "Chief"], ["message", "Coder"]]);

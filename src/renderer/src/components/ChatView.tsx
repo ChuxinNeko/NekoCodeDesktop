@@ -18,6 +18,8 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 import { WorkflowPanel } from "./chat/WorkflowPanel";
+import { AcceptanceCenter } from "./chat/AcceptanceCenter";
+import { buildAcceptanceReport } from "../../../shared/acceptance";
 import { ExtensionPanel, ExtensionWidgetsBelow } from "./chat/ExtensionPanel";
 import { GoalBanner } from "./chat/GoalBanner";
 import { readGoalState, type GoalAction } from "../../../shared/goal";
@@ -434,7 +436,9 @@ export function ChatView(props: ChatViewProps) {
 					)}
 				</div>
 
-				{props.workspacePicker}
+				<AcceptanceCenter key={snapshot.session.id} report={snapshot.acceptance ?? buildAcceptanceReport(snapshot.cells, snapshot.streaming)}
+					disabled={busy || snapshot.streaming || !!snapshot.workflow.request} incomplete={!snapshot.acceptance && !!snapshot.earlierCells}
+					onRequestVerification={text => props.onSend({ text })} />
 				{props.headerActions}
 			</header>
 
@@ -512,7 +516,6 @@ export function ChatView(props: ChatViewProps) {
 						)}
 					</div>
 					{goal && props.onGoalAction ? <GoalBanner goal={goal} onAction={props.onGoalAction} /> : null}
-					<WorkflowPanel workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />
 					<ExtensionPanel ui={snapshot.extensionUi} streaming={snapshot.streaming} onAnswer={answerExtensionUi} />
 					{/* Scroll headroom: lets a fresh turn's prompt reach its middle-upper
 					    position before the answer has produced anything. "Latest" and
@@ -537,6 +540,8 @@ export function ChatView(props: ChatViewProps) {
 			</div>
 
 			<Composer
+				workspacePicker={props.workspacePicker}
+				activity={<WorkflowPanel key={snapshot.session.id} workflow={snapshot.workflow} onOpenTask={props.onOpenTask} onAnswer={props.onAnswerWorkflow} onCancelWorker={props.onCancelWorker} />}
 				predictionContext={props.mobile ? undefined : { sessionId: snapshot.session.id, cells: snapshot.cells }}
 				header={<>
 					{props.composerHeader}

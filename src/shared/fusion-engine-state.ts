@@ -97,6 +97,7 @@ export function fusionReducer(
       return next;
     case "task.reasoning.delta":
     case "task.output.delta":
+    case "team.message.completed":
       return next;
     case "session.reasoning.delta":
       return { ...next, reasoning: state.reasoning + event.delta };

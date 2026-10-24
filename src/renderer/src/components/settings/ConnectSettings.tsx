@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { BotIcon, DeviceMobileIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
@@ -20,9 +20,12 @@ type TabId = (typeof TABS)[number]["id"];
  * and splitting them down the settings nav would suggest they configure
  * different features.
  */
-export function ConnectSettings() {
+export function ConnectSettings({ searchTarget }: { searchTarget?: TranslationKey }) {
 	const { t } = useTranslation();
 	const [tab, setTab] = useState<TabId>("app");
+	useEffect(() => {
+		if (searchTarget) setTab(searchTarget.startsWith("qqbot.") || searchTarget === "connect.qqbot" ? "qqbot" : "app");
+	}, [searchTarget]);
 
 	return (
 		<div className="flex flex-col gap-4">

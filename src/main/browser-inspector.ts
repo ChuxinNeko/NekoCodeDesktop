@@ -1,5 +1,5 @@
 import type { BrowserWindow, WebContents } from "electron";
-import type { BrowserElementSelection, BrowserPointerUpdate, BrowserAutomationPointer } from "../shared/browser";
+import type { BrowserElementSelection, BrowserPointerUpdate, BrowserAutomationPointer, BrowserViewport } from "../shared/browser";
 
 /** Runs against the user-picked DOM node. Never includes input values or HTML. */
 export function describeSelectedElement(this: Element) {
@@ -41,11 +41,16 @@ export interface BrowserAutomationHost {
 	revealAutomation(): void;
 	watchAutomation(onInvalidate: (reason: string) => void): () => void;
 	updateAutomationPointer(update: BrowserPointerUpdate): void;
+	setAutomationViewport(viewport: BrowserViewport | null): void;
+	automationInputScale(): number;
 }
 
 /** Chrome's inspector intercepts the click, so selecting a link cannot follow it. */
 export class BrowserInspector {
 	private guests = new Map<number, WebContents>();
+	private guestSizes = new Map<number, { width: number; height: number }>();
+	private viewports = new Map<number, BrowserViewport>();
+	private viewportScales = new Map<number, number>();
 	private active?: WebContents;
 	/**
 	 * The page each session bound, by session id. Per session because two
@@ -69,6 +74,9 @@ export class BrowserInspector {
 		this.guests.set(guest.id, guest);
 		guest.once("destroyed", () => {
 			this.guests.delete(guest.id);
+			this.guestSizes.delete(guest.id);
+			this.viewports.delete(guest.id);
+			this.viewportScales.delete(guest.id);
 			if (this.active === guest) void this.stop();
 			for (const sessionId of this.sessionsBoundTo(guest)) {
 				this.automation.delete(sessionId);
@@ -122,6 +130,35 @@ export class BrowserInspector {
 		} catch (error) { await this.stop(); throw error; }
 	}
 
+	/** Panel dimensions are shell CSS pixels, independent of the emulated page. */
+	resizeGuest(sender: WebContents, guestId: number, width: number, height: number): void {
+		if (sender !== this.win.webContents) throw new Error("Invalid browser owner");
+		if (!Number.isInteger(guestId) || !Number.isFinite(width) || !Number.isFinite(height) ||
+			width < 0 || height < 0 || width > 100_000 || height > 100_000) {
+			throw new Error("Invalid browser size");
+		}
+		const guest = this.guests.get(guestId);
+		if (!guest || guest.isDestroyed() || width === 0 || height === 0) return;
+		this.guestSizes.set(guestId, { width, height });
+		this.fitViewport(guest);
+	}
+
+	private fitViewport(guest: WebContents): void {
+		const viewport = this.viewports.get(guest.id);
+		if (!viewport) return;
+		const size = this.guestSizes.get(guest.id);
+		const pageZoom = guest.getZoomFactor();
+		const zoom = pageZoom / this.win.webContents.getZoomFactor();
+		const scale = size ? Math.min(1, size.width / (viewport.width * zoom), size.height / (viewport.height * zoom)) : 1;
+		this.viewportScales.set(guest.id, scale);
+		guest.enableDeviceEmulation({
+			screenPosition: "desktop", screenSize: { width: viewport.width, height: viewport.height },
+			viewPosition: { x: 0, y: 0 }, deviceScaleFactor: viewport.deviceScaleFactor,
+			// Electron takes viewSize in DIPs; the tool promises CSS pixels even at page zoom.
+			viewSize: { width: Math.round(viewport.width * pageZoom), height: Math.round(viewport.height * pageZoom) }, scale,
+		});
+	}
+
 	private async select(guest: WebContents, backendNodeId: number): Promise<void> {
 		const generation = this.generation;
 		try {
@@ -160,12 +197,25 @@ export class BrowserInspector {
 			automationGuest: () => this.automationGuest(sessionId),
 			revealAutomation: () => this.revealAutomation(sessionId),
 			watchAutomation: (onInvalidate) => this.watchAutomation(sessionId, onInvalidate),
+			automationInputScale: () => this.viewportScales.get(this.automationGuest(sessionId).id) ?? 1,
+			setAutomationViewport: (viewport) => {
+				const guest = this.automationGuest(sessionId);
+				if (viewport) {
+					this.viewports.set(guest.id, viewport);
+					this.fitViewport(guest);
+				} else {
+					this.viewports.delete(guest.id);
+					this.viewportScales.delete(guest.id);
+					guest.disableDeviceEmulation();
+				}
+				this.win.webContents.send("browser:automationPointer", { guestId: guest.id, x: 0, y: 0, phase: "hide", scale: 1 });
+			},
 			updateAutomationPointer: (update) => {
 				const guest = this.automation.get(sessionId);
 				if (!guest || guest.isDestroyed() || this.win.isDestroyed()) return;
 				const pointer: BrowserAutomationPointer = {
 					...update, guestId: guest.id,
-					scale: guest.getZoomFactor() / this.win.webContents.getZoomFactor(),
+					scale: guest.getZoomFactor() / this.win.webContents.getZoomFactor() * (this.viewportScales.get(guest.id) ?? 1),
 				};
 				this.win.webContents.send("browser:automationPointer", pointer);
 			},

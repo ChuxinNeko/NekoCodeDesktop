@@ -157,7 +157,8 @@ Wire the page at its planned route: import the sections, implement page-level la
 3. For each issue: check the spec against the extraction. Spec wrong → re-extract, fix the spec, fix the component. Spec right → fix the component. `browser_navigate` to the clone URL again to load the rebuilt page, re-extract, re-compare. After a targeted correction and recheck, stop repeating a still-failing comparison or one that yields no new evidence; report the remaining differences and the blocker rather than looping until an ideal result.
 4. Behaviors: for each entry in `BEHAVIORS.md`, run the same before/after `match: "path"` comparison on the clone and check it changes the same properties to the same values with the same transition.
 5. Default QA uses structural and element-state comparisons, without screenshots. Only when the user explicitly requests screenshots or image comparison, take `browser_screenshot` as supplementary evidence. If images are not attached or cannot be assessed reliably, stop screenshot attempts, retain the structural results and report that image comparison was not completed. Do not claim complete visual fidelity from element checks.
-6. `website_clone_dev_server` `stop` when done.
+6. Return to the clone URL and call `browser_viewport` with `{ "reset": true }`. Check the actual top-level page at the panel's natural width: read `innerWidth`/`innerHeight`, document `scrollWidth`/`clientWidth`, and important element bounds. Fix unintended horizontal overflow in the source rather than masking it with document overflow hiding. Do not substitute a temporary iframe or modified DOM for the real page, and report a failed viewport check as unverified. Leave the preview at its natural panel size.
+7. `website_clone_dev_server` `stop` when done.
 
 ## Common failures
 

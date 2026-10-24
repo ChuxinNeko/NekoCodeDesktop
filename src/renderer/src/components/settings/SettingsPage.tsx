@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation, type TranslationKey } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -21,8 +21,11 @@ import { HooksSettings } from "./HooksSettings";
 import { WebToolsSettings } from "./WebToolsSettings";
 import { CodeIntelSettings } from "./CodeIntelSettings";
 import { PromptSettings } from "./PromptSettings";
+import { ShortcutSettings } from "./ShortcutSettings";
 import { api } from "../../api";
-import { ArrowLeftIcon } from "../../lib/icons";
+import { ArrowLeftIcon, SearchIcon, XIcon } from "../../lib/icons";
+import { searchSettings } from "../../lib/settingsSearch";
+import { findSettingsSearchTarget, revealSettingsSearchTarget } from "../../lib/settingsSearchTarget";
 import { SettingsSurfaceContext } from "../../lib/settingsSurface";
 
 /**
@@ -42,6 +45,7 @@ const SECTIONS = [
 	{ id: "providers", labelKey: "settings.section.providers", group: "essentials" },
 	{ id: "general", labelKey: "settings.section.general", group: "essentials" },
 	{ id: "appearance", labelKey: "settings.section.appearance", group: "essentials" },
+	{ id: "shortcuts", labelKey: "settings.section.shortcuts", group: "essentials" },
 	{ id: "prompts", labelKey: "settings.section.prompts", group: "agent" },
 	{ id: "context", labelKey: "settings.section.context", group: "agent" },
 	{ id: "skills", labelKey: "settings.section.skills", group: "agent" },
@@ -75,6 +79,7 @@ export function SettingsPage({
 	initialSection,
 	cwd = null,
 	projects = [],
+	onOpenTeam,
 }: {
 	onClose: () => void;
 	initialSection?: SettingsSectionId;
@@ -82,9 +87,14 @@ export function SettingsPage({
 	cwd?: string | null;
 	/** Every project the sidebar knows, for those sections' pickers. */
 	projects?: readonly string[];
+	onOpenTeam?: () => void;
 }) {
 	const { t } = useTranslation();
 	const [section, setSection] = useState<SectionId>(initialSection ?? "general");
+	const [query, setQuery] = useState("");
+	const searchRef = useRef<HTMLInputElement>(null);
+	const contentRef = useRef<HTMLDivElement>(null);
+	const [navigation, setNavigation] = useState<{ id: SectionId; key?: TranslationKey } | null>(null);
 	// External agents run local processes through the preload bridge; SSH
 	// passwords are entered on the desktop, not over the network.
 	const sections =
@@ -92,9 +102,40 @@ export function SettingsPage({
 			? SECTIONS.filter((entry) => entry.id !== "webui" && entry.id !== "agents" && entry.id !== "ssh" && entry.id !== "codeIntel")
 			: SECTIONS;
 
+	const results = useMemo(() => searchSettings(sections, query, t), [sections, query, t]);
+	const matches = new Map(results.map((result) => [result.section.id, result.match]));
+	const searching = query.trim().length > 0;
+	const openSection = (id: SectionId) => {
+		setSection(id);
+		setNavigation({ id, key: results.find((result) => result.section.id === id)?.matchKey });
+	};
+	useEffect(() => {
+		const root = contentRef.current;
+		if (!root || !navigation) return;
+		root.scrollTo({ top: 0, behavior: "instant" });
+		if (!navigation.key) return;
+		const key = navigation.key;
+		let frame = 0;
+		const reveal = () => {
+			const target = findSettingsSearchTarget(root, key, t);
+			if (!target) return;
+			revealSettingsSearchTarget(root, target);
+			observer.disconnect();
+		};
+		// Several settings pages load their controls asynchronously. Wait for the
+		// actual row instead of scrolling the old page before React commits.
+		const observer = new MutationObserver(() => {
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(reveal);
+		});
+		observer.observe(root, { childList: true, subtree: true, characterData: true });
+		frame = requestAnimationFrame(reveal);
+		const timeout = setTimeout(() => observer.disconnect(), 15_000);
+		return () => { clearTimeout(timeout); cancelAnimationFrame(frame); observer.disconnect(); };
+	}, [navigation, t]);
 	const groups = GROUPS.map((group) => ({
 		...group,
-		entries: sections.filter((entry) => entry.group === group.id),
+		entries: sections.filter((entry) => entry.group === group.id && matches.has(entry.id)),
 	})).filter((group) => group.entries.length > 0);
 
 	return (
@@ -109,7 +150,24 @@ export function SettingsPage({
 							{t("settings.title")}
 						</span>
 					</div>
+					<div className="relative mx-2 mb-3 shrink-0">
+						<SearchIcon className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+						<input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)}
+							aria-label={t("settings.search")} placeholder={t("settings.search")}
+							className="w-full rounded-md border border-border bg-transparent py-1.5 pl-7 pr-7 text-[length:var(--app-font-size-ui-sm,11px)] outline-none placeholder:text-muted-foreground focus:border-[color:var(--color-border-focus)] [&::-webkit-search-cancel-button]:appearance-none"
+							onKeyDown={(event) => {
+								if (event.nativeEvent.isComposing) return;
+								if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setQuery(""); }
+								if (event.key === "Enter" && results[0]) { event.preventDefault(); openSection(results[0].section.id); }
+							}}
+						/>
+						{query ? <Button size="icon-xs" variant="ghost" aria-label={t("settings.searchClear")} className="absolute right-0.5 top-1/2 -translate-y-1/2"
+							onClick={() => { setQuery(""); searchRef.current?.focus(); }}><XIcon className="size-3" /></Button> : null}
+					</div>
 					<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3">
+						{searching ? <p role="status" className="px-2 text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">
+							{t(results.length ? "settings.searchCount" : "settings.searchEmpty", { count: results.length })}
+						</p> : null}
 						{groups.map((group) => (
 							<div key={group.id} className="flex flex-col gap-0.5">
 								<div className="px-2 pb-0.5 text-[length:var(--app-font-size-ui-xs,10px)] font-medium text-muted-foreground">
@@ -120,15 +178,17 @@ export function SettingsPage({
 										key={entry.id}
 										type="button"
 										aria-current={section === entry.id ? "page" : undefined}
-										onClick={() => setSection(entry.id)}
+										onClick={() => openSection(entry.id)}
+										title={matches.get(entry.id) ?? t(entry.labelKey)}
 										className={cn(
-											"flex h-[var(--app-density-row-height,1.75rem)] items-center rounded-md px-2 text-left text-[length:var(--app-font-size-ui,12px)] transition-colors",
+											"flex min-h-[var(--app-density-row-height,1.75rem)] flex-col items-start justify-center rounded-md px-2 py-1 text-left text-[length:var(--app-font-size-ui,12px)] transition-colors",
 											section === entry.id
 												? "bg-[var(--sidebar-selected)] text-foreground"
 												: "text-foreground/95 hover:bg-[var(--sidebar-accent)]",
 										)}
 									>
 										{t(entry.labelKey)}
+										{matches.get(entry.id) ? <span className="line-clamp-2 break-words text-[length:var(--app-font-size-ui-xs,10px)] text-muted-foreground">{matches.get(entry.id)}</span> : null}
 									</button>
 								))}
 							</div>
@@ -138,7 +198,7 @@ export function SettingsPage({
 
 				{/* Keep navigation outside the glass scope; only settings controls
 				    in the content column and their portalled popups use it. */}
-				<div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 min-[1100px]:p-5" data-settings-surface="page">
+				<div ref={contentRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 min-[1100px]:p-5" data-settings-surface="page">
 					<div
 						className={cn(
 							"mx-auto flex w-full flex-col gap-4",
@@ -149,11 +209,12 @@ export function SettingsPage({
 							{t(sections.find((entry) => entry.id === section)?.labelKey ?? "settings.title")}
 						</h2>
 						{section === "general" ? <GeneralSettings /> : null}
-						{section === "connect" ? <ConnectSettings /> : null}
+						{section === "shortcuts" ? <ShortcutSettings /> : null}
+						{section === "connect" ? <ConnectSettings searchTarget={navigation?.id === "connect" ? navigation.key : undefined} /> : null}
 						{section === "appearance" ? <AppearanceSettings /> : null}
-						{section === "providers" ? <ProviderModelSettings /> : null}
+						{section === "providers" ? <ProviderModelSettings searchTarget={navigation?.id === "providers" ? navigation.key : undefined} /> : null}
 						{section === "agents" && api.runtime !== "web" ? <AcpSettings /> : null}
-						{section === "team" ? <TeamSettings /> : null}
+						{section === "team" ? <TeamSettings onOpenOverview={onOpenTeam} /> : null}
 						{section === "tokens" ? <TokenUsageSettings /> : null}
 						{section === "prompts" ? <PromptSettings /> : null}
 						{section === "context" ? <ContextSettings cwd={cwd} projects={projects} /> : null}

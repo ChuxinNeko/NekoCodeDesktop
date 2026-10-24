@@ -1,3 +1,4 @@
+import { useShortcuts } from "../../hooks/useShortcuts";
 import {
 	forwardRef,
 	useCallback,
@@ -277,19 +278,19 @@ export const EditorArea = forwardRef<
 			target.addAction({
 				id: "nekocode.save",
 				label: t("ide.command.save"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+				keybindings: [],
 				run: () => void actionsRef.current.saveActive(),
 			}),
 			target.addAction({
 				id: "nekocode.saveAll",
 				label: t("ide.command.saveAll"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyS],
+				keybindings: [],
 				run: () => void ws.saveAll(),
 			}),
 			target.addAction({
 				id: "nekocode.addToChat",
 				label: t("ide.command.addToChat"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
+				keybindings: [],
 				contextMenuGroupId: "0_agent",
 				contextMenuOrder: 1,
 				run: () => actionsRef.current.addSelectionToChat(),
@@ -297,7 +298,7 @@ export const EditorArea = forwardRef<
 			target.addAction({
 				id: "nekocode.inlineEdit",
 				label: t("ide.command.inlineEdit"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+				keybindings: [],
 				contextMenuGroupId: "0_agent",
 				contextMenuOrder: 2,
 				run: () => actionsRef.current.openInlineEdit(),
@@ -305,25 +306,25 @@ export const EditorArea = forwardRef<
 			target.addAction({
 				id: "nekocode.quickOpen",
 				label: t("ide.command.quickOpen"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP],
+				keybindings: [],
 				run: () => latest.current.onQuickOpen(),
 			}),
 			target.addAction({
 				id: "nekocode.commandPalette",
 				label: t("ide.command.palette"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP],
+				keybindings: [],
 				run: (instance) => instance.trigger("nekocode", "editor.action.quickCommand", null),
 			}),
 			target.addAction({
 				id: "nekocode.focusChat",
 				label: t("ide.command.toggleChat"),
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI],
+				keybindings: [],
 				run: () => latest.current.onFocusChat(),
 			}),
 			target.addAction({
 				id: "nekocode.wordWrap",
 				label: t("ide.command.wordWrap"),
-				keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
+				keybindings: [],
 				run: () => setWordWrap((value) => !value),
 			}),
 		];
@@ -757,22 +758,23 @@ export const EditorArea = forwardRef<
 });
 
 function EmptyEditor({ onQuickOpen }: { onQuickOpen: () => void }) {
+	const { label } = useShortcuts();
 	const { t } = useTranslation();
 	const shortcuts: Array<[string, string]> = [
-		[t("ide.command.quickOpen"), "Ctrl+P"],
-		[t("ide.command.palette"), "Ctrl+Shift+P"],
-		[t("ide.search.title"), "Ctrl+Shift+F"],
-		[t("ide.command.addToChat"), "Ctrl+L"],
-		[t("ide.command.inlineEdit"), "Ctrl+K"],
-		[t("ide.command.toggleTerminal"), "Ctrl+`"],
-		[t("ide.command.toggleChat"), "Ctrl+I"],
+		[t("ide.command.quickOpen"), label("ide.quickOpen")],
+		[t("ide.command.palette"), label("ide.palette")],
+		[t("ide.search.title"), label("ide.search")],
+		[t("ide.command.addToChat"), label("ide.addToChat")],
+		[t("ide.command.inlineEdit"), label("ide.inlineEdit")],
+		[t("ide.command.toggleTerminal"), label("ide.terminal")],
+		[t("ide.command.toggleChat"), label("ide.focusChat")],
 	];
 	return (
 		<div className="absolute inset-0 flex flex-col items-center justify-center gap-5 p-6">
 			<img src="./icon.png" alt="" aria-hidden="true" draggable={false} className="size-16 opacity-25 grayscale" />
 			<div className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1.5 text-[length:var(--app-font-size-ui-sm,11px)]">
 				{shortcuts.map(([label, keys]) => (
-					<div key={keys} className="contents">
+					<div key={label} className="contents">
 						<span className="text-right text-muted-foreground">{label}</span>
 						<kbd className="font-sans text-muted-foreground/80">{keys}</kbd>
 					</div>

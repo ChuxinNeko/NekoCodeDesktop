@@ -1,3 +1,5 @@
+import { useShortcuts } from "../../hooks/useShortcuts";
+import type { ShortcutId } from "../../lib/shortcuts";
 import type { AgentSnapshot } from "../../../../shared/agent";
 import type { WorkflowTask } from "../../../../shared/workflow";
 import { useTranslation, type TranslationKey } from "../../i18n";
@@ -60,19 +62,19 @@ const DOCK_MENU: ReadonlyArray<{
 	id: DockTool;
 	labelKey: TranslationKey;
 	icon: typeof GitBranchIcon;
-	shortcut: string;
+	shortcut: ShortcutId;
 }> = [
-	{ id: "agentmap", labelKey: "agentMap.title", icon: AgentMapIcon, shortcut: "Ctrl+Shift+A" },
-	{ id: "review", labelKey: "nav.review", icon: GitBranchIcon, shortcut: "Ctrl+Shift+G" },
-	{ id: "terminal", labelKey: "chat.terminal", icon: TerminalIcon, shortcut: "Ctrl+`" },
-	{ id: "browser", labelKey: "nav.browser", icon: GlobeIcon, shortcut: "Ctrl+T" },
-	{ id: "desktop", labelKey: "dock.desktop", icon: DesktopIcon, shortcut: "Ctrl+Shift+D" },
-	{ id: "files", labelKey: "dock.files", icon: FoldersIcon, shortcut: "Ctrl+P" },
+	{ id: "agentmap", labelKey: "agentMap.title", icon: AgentMapIcon, shortcut: "agent.agentmap" },
+	{ id: "review", labelKey: "nav.review", icon: GitBranchIcon, shortcut: "agent.review" },
+	{ id: "terminal", labelKey: "chat.terminal", icon: TerminalIcon, shortcut: "agent.terminal" },
+	{ id: "browser", labelKey: "nav.browser", icon: GlobeIcon, shortcut: "agent.browser" },
+	{ id: "desktop", labelKey: "dock.desktop", icon: DesktopIcon, shortcut: "agent.desktop" },
+	{ id: "files", labelKey: "dock.files", icon: FoldersIcon, shortcut: "agent.files" },
 	{
 		id: "checkpoints",
 		labelKey: "checkpoint.panelTitle",
 		icon: HistoryIcon,
-		shortcut: "Ctrl+Shift+H",
+		shortcut: "agent.checkpoints",
 	},
 ];
 
@@ -156,6 +158,7 @@ export function RightDock({
 	onCloseDock,
 }: RightDockProps) {
 	const { t } = useTranslation();
+	const { label: shortcutLabel } = useShortcuts();
 	const taskById = new Map(tasks.map((task) => [task.id, task]));
 	const liveChanges = diffRequest && agentSnapshot ? activeTurnChanges(agentSnapshot.cells, agentSnapshot.checkpoints, agentSnapshot.streaming, agentSnapshot.session.cwd) : undefined;
 	const diffCheckpoint = liveChanges?.id === diffRequest?.checkpoint.id ? liveChanges
@@ -257,7 +260,7 @@ export function RightDock({
 							<entry.icon className="size-3.5 shrink-0 opacity-80" />
 							<span className="min-w-0 flex-1 truncate">{t(entry.labelKey)}</span>
 							<kbd className="shrink-0 rounded border border-[color:var(--app-surface-divider)] px-1 py-px text-[length:var(--app-font-size-ui-xs,10px)] leading-4 text-muted-foreground/60">
-								{entry.shortcut}
+								{shortcutLabel(entry.shortcut)}
 							</kbd>
 						</button>
 					))}

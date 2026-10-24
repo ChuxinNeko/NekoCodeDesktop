@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_APP_PREFERENCES, isAutoRetryCount, isCommandShellId, type AppPreferences } from "../shared/preferences";
+import { DEFAULT_APP_PREFERENCES, isAutoRetryCount, isCommandShellId, isWindowCloseBehavior, type AppPreferences } from "../shared/preferences";
 import { isTeamSettings } from "../shared/team";
 import { isUiScalePercent } from "../shared/display-scale";
 
 /** What each key may hold; anything else falls back to its default. */
 const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPreferences[K] } = {
+	closeBehavior: isWindowCloseBehavior,
 	uiScalePercent: isUiScalePercent,
 	notifyOnTaskFinish: (value): value is boolean => typeof value === "boolean",
 	isolateBackgroundTasks: (value): value is boolean => typeof value === "boolean",
@@ -65,12 +66,12 @@ export class AppPreferencesStore {
 	update(patch: Partial<AppPreferences>): AppPreferences {
 		// The patch arrives over IPC: a key or value it may not hold is ignored.
 		const next = { ...this.get(), ...sanitizePreferences(patch as Record<string, unknown>) };
-		this.cached = next;
 		// Written through a temporary file: a half-flushed preferences.json would
 		// be read back as corrupt on the next launch and silently reset.
 		const temporary = `${this.path}.tmp`;
 		writeFileSync(temporary, `${JSON.stringify(next, null, "\t")}\n`, "utf8");
 		renameSync(temporary, this.path);
+		this.cached = next;
 		return next;
 	}
 }

@@ -4,8 +4,9 @@ import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, relative } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { BrowserPreviewRequest, BrowserPointerUpdate } from "../shared/browser";
+import type { BrowserPreviewRequest, BrowserPointerUpdate, BrowserViewport } from "../shared/browser";
 import { performBrowserInput } from "./browser-input";
+import { browserAcceptanceExpression } from "./browser-acceptance";
 import { devServers as defaultDevServers, type DevServerRegistry } from "./website-clone-dev-server";
 import {
 	compareExtractions,
@@ -19,6 +20,7 @@ export const WEBSITE_CLONE_TOOL_NAMES = [
 	"browser_navigate",
 	"browser_viewport",
 	"browser_evaluate",
+	"browser_check",
 	"browser_extract",
 	"browser_screenshot",
 	"browser_action",
@@ -71,6 +73,7 @@ export interface WebsiteCloneGuest {
 	isDestroyed(): boolean;
 	executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 	capturePage(): Promise<{ toPNG(): Buffer; getSize(): { width: number; height: number } }>;
+	disableDeviceEmulation(): void;
 	enableDeviceEmulation(parameters: {
 		screenPosition: "desktop" | "mobile";
 		screenSize?: { width: number; height: number };
@@ -109,6 +112,9 @@ export interface WebsiteCloneBrowserHost {
 	revealAutomation(): void;
 	watchAutomation(onInvalidate: (reason: string) => void): () => void;
 	updateAutomationPointer?(update: BrowserPointerUpdate): void;
+	/** Fit the emulated page inside the live panel without changing its CSS viewport. */
+	setAutomationViewport?(viewport: BrowserViewport | null): void;
+	automationInputScale?(): number;
 }
 
 /**
@@ -159,9 +165,10 @@ const navigateSchema = Type.Object(
 
 const viewportSchema = Type.Object(
 	{
-		width: Type.Integer({ minimum: 320, maximum: 2560 }),
-		height: Type.Integer({ minimum: 320, maximum: 2560 }),
+		width: Type.Optional(Type.Integer({ minimum: 320, maximum: 2560 })),
+		height: Type.Optional(Type.Integer({ minimum: 320, maximum: 2560 })),
 		deviceScaleFactor: Type.Optional(Type.Number({ minimum: 1, maximum: 3 })),
+		reset: Type.Optional(Type.Boolean({ description: "Restore the real browser panel viewport after responsive checks. Omit width, height and deviceScaleFactor." })),
 	},
 	{ additionalProperties: false },
 );
@@ -369,6 +376,10 @@ export function createWebsiteCloneTools(options: {
 
 	const emulate = (guest: WebsiteCloneGuest) => {
 		if (!viewportOverride) return;
+		if (browser.setAutomationViewport) {
+			browser.setAutomationViewport(viewportOverride);
+			return;
+		}
 		const { width, height, deviceScaleFactor } = viewportOverride;
 		guest.enableDeviceEmulation({
 			screenPosition: "desktop",
@@ -507,11 +518,23 @@ export function createWebsiteCloneTools(options: {
 		name: "browser_viewport",
 		label: "browser_viewport",
 		description:
-			"Set the emulated CSS viewport of the page bound by browser_navigate. Use 1440x900 desktop, 768x900 tablet, 390x844 mobile. The size holds for every later call, across navigations, until changed. Touch input and (hover: none)/(pointer: coarse) media are not emulated; read those rules from the stylesheets instead.",
+			"Set the real page's emulated CSS viewport: supply width and height (1440x900 desktop, 768x900 tablet, 390x844 mobile). The preview scales to fit the panel without changing CSS dimensions or input coordinates. The size holds across calls and navigations. After checks call with {reset:true} only, then check overflow at the actual panel width before delivery. Do not replace real-page checks with a temporary iframe. Touch input and (hover: none)/(pointer: coarse) media are not emulated; read those rules from stylesheets.",
 		parameters: viewportSchema,
 		executionMode: "sequential",
 		async execute(_id, params, signal) {
-			const { width, height, deviceScaleFactor } = params as Static<typeof viewportSchema>;
+			const { width, height, deviceScaleFactor, reset } = params as Static<typeof viewportSchema>;
+			if (reset) {
+				if (width !== undefined || height !== undefined || deviceScaleFactor !== undefined) {
+					throw new Error("Use {reset:true} without width, height or deviceScaleFactor");
+				}
+				const guest = browser.automationGuest();
+				viewportOverride = null;
+				if (browser.setAutomationViewport) browser.setAutomationViewport(null);
+				else guest.disableDeviceEmulation();
+				const measured = await guarded({ signal }, () => guest.executeJavaScript(MEASURE_VIEWPORT, true));
+				return { content: [{ type: "text", text: "Restored the real browser panel viewport. Read page geometry and check overflow at this size before delivery." }], details: { reset: true, measured } };
+			}
+			if (width === undefined || height === undefined) throw new Error("Provide both width and height, or {reset:true}");
 			const guest = browser.automationGuest();
 			viewportOverride = { width, height, deviceScaleFactor: deviceScaleFactor ?? 1 };
 			// Applied up front even at an unchanged size: the scale factor may differ.
@@ -564,6 +587,25 @@ export function createWebsiteCloneTools(options: {
 				content: [{ type: "text", text }],
 				details: { truncated },
 			};
+		},
+	};
+
+	const check: ToolDefinition = {
+		name: "browser_check", label: "browser_check", executionMode: "sequential",
+		description: "Run read-only acceptance assertions on the actual top-level preview page. Checks document horizontal overflow (default tolerance 1 CSS px) and optional selectors for visibility, enabled state, textIncludes or inViewport. Returns measured URL, viewport, bounds and pass/fail evidence recorded in the acceptance center. Use browser_action first to exercise controls, then check the resulting state. Navigation, screenshots and a successful evaluate alone are not assertion evidence. This does not prove visual fidelity or all application behavior.",
+		parameters: Type.Object({
+			title: Type.Optional(Type.String({ minLength: 1, maxLength: 240 })),
+			maxHorizontalOverflow: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+			elements: Type.Optional(Type.Array(Type.Object({
+				selector: Type.String({ minLength: 1, maxLength: 1000 }), visible: Type.Optional(Type.Boolean()),
+				textIncludes: Type.Optional(Type.String({ maxLength: 1000 })), enabled: Type.Optional(Type.Boolean()), inViewport: Type.Optional(Type.Boolean()),
+			}, { additionalProperties: false }), { maxItems: 30 })),
+		}, { additionalProperties: false }),
+		async execute(_id, params, signal) {
+			const guest = browser.automationGuest();
+			const result = await onPage(guest, { signal }, () => guest.executeJavaScript(browserAcceptanceExpression(params as import("./browser-acceptance").BrowserCheckInput), true));
+			if (!result || typeof result !== "object" || !["passed", "failed"].includes((result as { status: string }).status)) throw new Error("Browser check returned no assertion evidence");
+			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { acceptanceEvidence: result } };
 		},
 	};
 
@@ -812,6 +854,7 @@ export function createWebsiteCloneTools(options: {
 							signal: actionSignal,
 							onPointer: update => browser.updateAutomationPointer?.(update),
 							onDispatched: () => { interacted = true; },
+							inputScale: () => browser.automationInputScale?.() ?? 1,
 						});
 					}
 					interacted = true;
@@ -895,5 +938,5 @@ export function createWebsiteCloneTools(options: {
 		},
 	};
 
-	return [navigate, viewport, evaluate, extract, screenshot, action, scaffold, devServer, compare];
+	return [navigate, viewport, evaluate, check, extract, screenshot, action, scaffold, devServer, compare];
 }

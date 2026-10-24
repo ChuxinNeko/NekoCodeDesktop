@@ -16,6 +16,28 @@ const assistant = (over: Parameters<typeof usage>[0] = {}, stopReason?: string) 
 });
 
 describe("contextUsage", () => {
+	test("estimates categories at the reported call, replaying section replacements and tool removals", () => {
+		const result = contextUsage([
+			{ role: "system", content: "base", sections: { rules: "old rules", skills: "skill", project_context: "project" }, toolsAdded: [{ name: "read", parameters: {} }, { name: "mcp__search", parameters: {} }] },
+			{ role: "system", sections: { rules: "new", skills: null }, toolsRemoved: [{ name: "read" }] },
+			assistant({ totalTokens: 100 }),
+			{ role: "system", sections: { skills: "not sent at the reported call" } },
+		], 200_000, true)!;
+		expect(result.breakdownEstimated).toBe(true);
+		expect(result.breakdown?.skills).toBe(0);
+		expect(result.breakdown?.rules).toBe(3);
+		expect(result.breakdown?.tools).toBe(0);
+		expect(result.breakdown?.mcp).toBeGreaterThan(0);
+		expect(Object.values(result.breakdown!).reduce((a, b) => a + b, 0)).toBe(100);
+	});
+
+	test("reconciles oversized estimates without negative conversation or fabricated missing categories", () => {
+		const result = contextUsage([{ role: "system", content: "x".repeat(1000) }, assistant({ totalTokens: 3 })], 100, true)!;
+		expect(Object.values(result.breakdown!).every((value) => value >= 0)).toBe(true);
+		expect(Object.values(result.breakdown!).reduce((a, b) => a + b, 0)).toBe(3);
+		expect(contextUsage([assistant({ totalTokens: 10 })], 100, true)?.breakdown).toBeUndefined();
+	});
+
 	test("reads the newest reported call, not the sum of the turn", () => {
 		// Ten tool calls re-send the whole conversation ten times; adding them up
 		// would put a 30k conversation at 300k.

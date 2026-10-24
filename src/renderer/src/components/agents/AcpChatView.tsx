@@ -15,6 +15,8 @@ import { cn } from "../../lib/utils";
 import { ChevronDownIcon, TriangleAlertIcon, XIcon } from "../../lib/icons";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Transcript } from "../Transcript";
+import { AcceptanceCenter } from "../chat/AcceptanceCenter";
+import { buildAcceptanceReport } from "../../../../shared/acceptance";
 import { ConversationTimeline } from "../chat/ConversationTimeline";
 import { jumpToTimelinePrompt } from "../../lib/timeline";
 import { Button } from "../ui/button";
@@ -68,7 +70,16 @@ function ConfigPicker({
 	disabled: boolean;
 	onChange: (value: string) => void;
 }) {
+	const { t } = useTranslation();
+	const reasoning = /reasoning|thinking|thought|effort|思考|推理/i.test(`${option.id} ${option.name}`);
+	const levelLabel = (value: string, fallback: string) => {
+		if (!reasoning) return fallback;
+		const level = value.toLowerCase().replace(/[\s_-]/g, "");
+		if (["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level)) return t(`thinkingLevel.${level}` as TranslationKey);
+		return ({ none: "None", ultra: "Ultra", adaptive: "Adaptive", auto: "Auto" } as Record<string, string>)[level] ?? fallback;
+	};
 	const current = option.options.find((entry) => entry.value === option.currentValue);
+	const currentLabel = levelLabel(option.currentValue, current?.name ?? option.name);
 	return (
 		<Menu>
 			<MenuTrigger
@@ -80,10 +91,10 @@ function ConfigPicker({
 						className={cn(COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME, "min-w-0 shrink border-transparent")}
 						disabled={disabled}
 						size="chip"
-						title={`${option.name}: ${current?.name ?? option.currentValue}`}
+						title={`${option.name}: ${levelLabel(option.currentValue, current?.name ?? option.currentValue)}`}
 						variant="ghost"
 					>
-						<span className="truncate">{current?.name ?? option.name}</span>
+						<span className="truncate">{currentLabel}</span>
 						<ChevronDownIcon className="size-3 opacity-60" />
 					</Button>
 				}
@@ -98,7 +109,7 @@ function ConfigPicker({
 							title={entry.description}
 							value={entry.value}
 						>
-							<span className="truncate">{entry.name}</span>
+							<span className="truncate">{levelLabel(entry.value, entry.name)}</span>
 						</MenuRadioItem>
 					))}
 				</MenuRadioGroup>
@@ -231,6 +242,11 @@ interface AcpChatViewProps {
 export function AcpChatView(props: AcpChatViewProps) {
 	const { t } = useTranslation();
 	const { agent, snapshot } = props;
+	const inlineOption = (option: AcpConfigOption) => /model|reasoning|thinking|thought|effort/i.test(option.id);
+	const configPickers = (options: AcpConfigOption[]) => options.map((option) => (
+		<ConfigPicker disabled={snapshot?.status !== "ready"} key={option.id}
+			onChange={(value) => props.onSetConfig(option.id, value)} option={option} />
+	));
 	const scroll = useStickToBottom(snapshot?.cells, snapshot?.id);
 	const [loadingEarlier, setLoadingEarlier] = useState(false);
 	const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
@@ -312,7 +328,9 @@ export function AcpChatView(props: AcpChatViewProps) {
 						<ProjectPicker cwd={props.cwd} onPickProject={props.onPickProject} />
 					</div>
 				)}
-				{props.workspacePicker}
+				{snapshot && !fresh ? <AcceptanceCenter key={snapshot.id} report={snapshot.acceptance ?? buildAcceptanceReport(snapshot.cells, snapshot.streaming)}
+					disabled={busy || snapshot.streaming || !!snapshot.permissions.length || snapshot.status !== "ready" || props.disabled}
+					incomplete={!snapshot.acceptance && !!snapshot.earlierCells} onRequestVerification={text => props.onSend({ text })} /> : null}
 				{props.headerActions}
 			</header>
 			{error ? (
@@ -387,12 +405,14 @@ export function AcpChatView(props: AcpChatViewProps) {
 				</div>
 			) : null}
 			<ComposerShell
+				workspacePicker={props.workspacePicker}
+				inlineToolbar={<div className="flex min-w-0 items-center gap-0.5">{configPickers((snapshot?.configOptions ?? []).filter(inlineOption))}</div>}
 				predictionContext={!props.mobile && snapshot ? { sessionId: snapshot.id, cells: snapshot.cells } : undefined}
 				insertion={props.insertion}
 				onInsertionConsumed={props.onInsertionConsumed}
 				allowImageAttachments={props.allowImages !== false && (snapshot ? snapshot.supportsImages : true)}
 				autoFocus
-				context={snapshot?.context}
+				context={snapshot?.context ? { ...snapshot.context, source: "acp" } : undefined}
 				// An unsent conversation that failed to start is replaced on send.
 				disabled={props.disabled || !props.cwd || (snapshot?.status === "error" && !snapshot.pristine)}
 				header={props.composerHeader}
@@ -402,19 +422,12 @@ export function AcpChatView(props: AcpChatViewProps) {
 					scroll.stick();
 					props.onSend(request);
 				}}
-				placeholder={t("acp.placeholder", { agent: agent.name })}
+				placeholder={snapshot && !snapshot.pristine ? t("composer.followUpPlaceholder") : t("acp.placeholder", { agent: agent.name })}
 				streaming={snapshot?.streaming ?? false}
 				supportsImages={props.allowImages !== false && (snapshot ? snapshot.supportsImages : true)}
 				toolbar={
 					<div className={cn("flex min-w-0 flex-1 items-center gap-1", props.mobile ? "overflow-x-auto" : "overflow-hidden")}>
-						{(snapshot?.configOptions ?? []).map((option) => (
-							<ConfigPicker
-								disabled={snapshot?.status !== "ready"}
-								key={option.id}
-								onChange={(value) => props.onSetConfig(option.id, value)}
-								option={option}
-							/>
-						))}
+						{configPickers((snapshot?.configOptions ?? []).filter((option) => !inlineOption(option)))}
 					</div>
 				}
 			/>

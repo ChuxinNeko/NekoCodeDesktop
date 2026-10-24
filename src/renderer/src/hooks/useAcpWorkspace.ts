@@ -39,6 +39,7 @@ export interface AcpWorkspace {
 	liveId: (rowId: string) => string | null;
 	/** Open a row's conversation without selecting it — for a pane beside the selection. */
 	ensureLive: (rowId: string) => Promise<string | null>;
+	remove: (row: Pick<SessionSummary, "id">, deleteFromCli?: boolean) => Promise<boolean>;
 	/** Leave the open conversation for an empty composer, as "new session" does. */
 	startNew: (cwd?: string) => void;
 	send: (cwd: string, text: string, images?: PromptImageAttachment[]) => Promise<void>;
@@ -324,6 +325,32 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 		setError(null);
 	}, [agent, setActive, liveActive, workspace, cwd]);
 
+	const remove = useCallback(async (row: Pick<SessionSummary, "id">, deleteFromCli = false): Promise<boolean> => {
+		const target = targetsRef.current.get(row.id);
+		if (!target) return false;
+		selectionVersion.current++;
+		opening.current = false;
+		setError(null);
+		try {
+			await api.acpDelete(target.kind === "live"
+				? { agentId: target.agentId, localSessionId: target.sessionId, deleteFromCli }
+				: { agentId: target.agentId, sessionId: target.entry.sessionId, deleteFromCli });
+			// Invalidate old listings before removing the cached history row.
+			historyRequests.current.set(target.agentId, (historyRequests.current.get(target.agentId) ?? 0) + 1);
+			const removedId = target.kind === "history" ? target.entry.sessionId
+				: state.sessions.find((session) => session.id === target.sessionId)?.agentSessionId;
+			setHistories((current) => {
+				const history = current[target.agentId];
+				return history ? { ...current, [target.agentId]: { ...history, entries: history.entries.filter((entry) => entry.sessionId !== removedId) } } : current;
+			});
+			void loadHistory(target.agentId);
+			return true;
+		} catch (cause) {
+			setError(errorMessage(cause));
+			throw cause;
+		}
+	}, [state.sessions, loadHistory]);
+
 	const send = useCallback(
 		async (cwd: string, text: string, images?: PromptImageAttachment[]) => {
 			if (!agent) return;
@@ -367,6 +394,7 @@ export function useAcpWorkspace(workspace: string, cwd: string | null): AcpWorks
 		open,
 		liveId,
 		ensureLive,
+		remove,
 		startNew,
 		send,
 		cancel: useCallback(() => {

@@ -23,6 +23,18 @@ function fixture() {
 }
 
 describe("native browser input", () => {
+	test("scales native mouse coordinates while retaining page coordinates and wheel distances", async () => {
+		const f = fixture();
+		const options = { signal: f.controller.signal, inputScale: () => 0.4, onPointer: (update: BrowserPointerUpdate) => f.pointers.push(update) };
+		await performBrowserInput(f.page, { action: "click", selector: "button" }, options);
+		expect(f.commands.at(-1)!.params).toMatchObject({ type: "mouseReleased", x: 72, y: 36 });
+		expect(f.pointers.at(-1)).toMatchObject({ x: 180, y: 90 });
+		await performBrowserInput(f.page, { action: "scroll", deltaY: 200 }, options);
+		expect(f.commands.at(-1)!.params).toMatchObject({ type: "mouseWheel", x: 72, y: 36, deltaY: 200 });
+		f.page.getZoomFactor = () => 1.5;
+		await performBrowserInput(f.page, { action: "scroll", deltaY: 200 }, options);
+		expect(f.commands.at(-1)!.params).toMatchObject({ type: "mouseWheel", deltaY: 300 });
+	});
 	test("starts a later action at the previous pointer position", async () => {
 		const f = fixture();
 		await f.run({ action: "hover", selector: "button" });
