@@ -101,6 +101,7 @@ import { TerminalService } from "./terminal-service";
 import { TokenStatsService } from "./token-stats";
 import { tokenUsageCsv } from "./token-usage-export";
 import { AppInstallService, appVersionInfo, AppUpdateService, type InstallUpdater } from "./app-updates";
+import { createUpdateFetch } from "./update-network";
 import type {
 	InstallPluginRequest,
 	PluginActionRequest,
@@ -1094,6 +1095,11 @@ function registerIpc(): void {
 	const appUpdates = new AppUpdateService({
 		currentVersion: () => versionInfo().version,
 		resolveToken: async () => (await githubAuth?.resolveToken())?.token ?? null,
+		fetch: createUpdateFetch({
+			// An isolated, memory-only session avoids changing browser/model traffic.
+			session: () => session.fromPartition("nekocode-updates"),
+			proxy: () => proxyService?.current() ?? { manual: null, source: "none" },
+		}),
 	});
 	ipcMain.handle("app:version", versionInfo);
 	ipcMain.handle("app:checkForUpdates", () => appUpdates.check());

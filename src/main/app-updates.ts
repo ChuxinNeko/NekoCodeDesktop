@@ -16,6 +16,7 @@ export class AppUpdateService {
 	constructor(private readonly options: {
 		currentVersion: () => string;
 		resolveToken?: () => Promise<string | null>;
+		tokenTimeoutMs?: number;
 		fetch?: (url: string, init: RequestInit) => Promise<Response>;
 		timeoutMs?: number;
 	}) {}
@@ -36,15 +37,32 @@ export class AppUpdateService {
 		this.startupDismissed = true;
 	}
 
+	private async optionalToken(): Promise<string | null> {
+		if (!this.options.resolveToken) return null;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			// Releases are public: a slow gh invocation or OAuth refresh must not
+			// consume the HTTP deadline or prevent an anonymous update check.
+			return await Promise.race([
+				Promise.resolve().then(() => this.options.resolveToken!()).catch(() => null),
+				new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), this.options.tokenTimeoutMs ?? 3_000); }),
+			]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	private async request(): Promise<UpdateCheckResult> {
 		const currentVersion = this.options.currentVersion();
 		const base = () => ({ currentVersion, checkedAt: Date.now() });
 		const fail = (error: UpdateError): UpdateCheckResult => ({ ...base(), status: "error", error });
 		if (!parseVersion(currentVersion)) return fail("invalid-version");
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 15_000);
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			const token = await this.options.resolveToken?.();
+			const token = await this.optionalToken();
+			// Give the request its full budget, separately from optional auth.
+			timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 30_000);
 			const fetchRelease = this.options.fetch ?? fetch;
 			const init: RequestInit = {
 				headers: {
