@@ -194,6 +194,12 @@ export class AcpSession {
 		this.options.onChange();
 	}
 
+	/** A ready session can still own a queued prompt or configuration request. */
+	get canEvict(): boolean {
+		return (this.status === "ready" || this.status === "error") &&
+			!this.promptPending && !this.pendingConfig && this.permissions.size === 0;
+	}
+
 	summary(): AcpSessionSummary {
 		// A resumed conversation is known by its id from the start, not once the
 		// load returns: opening it again meanwhile must find this one, and the

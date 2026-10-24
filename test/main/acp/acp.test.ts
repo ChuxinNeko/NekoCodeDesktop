@@ -883,6 +883,87 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe("AcpService", () => {
+	test("a burst of completed startups is reclaimed without needing another create", async () => {
+		const transports: FakeTransport[] = [];
+		const service = new AcpService({ clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {}, emitSnapshot: () => {}, createTransport: historyAgent(transports) });
+		try {
+			for (let i = 0; i < 24; i++) service.create({ agentId: "fake", cwd: tmpdir() });
+			await until(() => service.state().sessions.length === 4 && service.state().sessions.every((session) => session.status === "ready"));
+			expect(transports.filter((transport) => !transport.closed)).toHaveLength(4);
+			expect(transports.filter((transport) => transport.closed)).toHaveLength(20);
+		} finally { service.dispose(); }
+	});
+
+	test("four concurrent prompts survive while extra idle process trees are reclaimed", async () => {
+		const transports: FakeTransport[] = [];
+		const service = new AcpService({ clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {}, emitSnapshot: () => {}, createTransport: historyAgent(transports) });
+		try {
+			const active: string[] = [];
+			for (let i = 0; i < 4; i++) {
+				const id = service.create({ agentId: "fake", cwd: tmpdir() }).id;
+				active.push(id);
+				await service.prompt({ sessionId: id, text: `task ${i}` });
+			}
+			await until(() => active.every((id) => service.snapshot(id)?.status === "prompting"));
+			for (let i = 0; i < 8; i++) {
+				const id = service.create({ agentId: "fake", cwd: tmpdir() }).id;
+				await until(() => service.snapshot(id)?.status === "ready");
+			}
+			expect(service.state().sessions).toHaveLength(5);
+			expect(active.every((id) => service.snapshot(id)?.status === "prompting")).toBe(true);
+			expect(transports.slice(0, 4).every((transport) => !transport.closed)).toBe(true);
+			for (const transport of transports.slice(0, 4)) {
+				const prompt = transport.sent.find((request) => request.method === "session/prompt")!;
+				transport.reply(prompt.id, { stopReason: "end_turn" });
+			}
+			await until(() => service.state().sessions.length === 4 && service.state().sessions.every((session) => session.status === "ready"));
+		} finally { service.dispose(); }
+	});
+
+	test("parallel windows share one in-flight history scan", async () => {
+		const transports: FakeTransport[] = [];
+		const service = new AcpService({ clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {}, emitSnapshot: () => {}, createTransport: historyAgent(transports) });
+		try {
+			const histories = await Promise.all(Array.from({ length: 4 }, () => service.history("fake")));
+			expect(transports).toHaveLength(1);
+			expect(transports[0].sent.filter((request) => request.method === "session/list")).toHaveLength(2);
+			expect(histories.every((history) => history.entries.length === histories[0].entries.length && !history.error)).toBe(true);
+		} finally { service.dispose(); }
+	});
+
+	test("a stalled history page closes its process and a subsequent refresh starts cleanly", async () => {
+		const transports: FakeTransport[] = [];
+		const factory = historyAgent(transports);
+		const service = new AcpService({ clientVersion: "0", store: memoryStore([AGENT]), emitState: () => {}, emitSnapshot: () => {}, historyTimeoutMs: 10, createTransport: () => {
+			const transport = factory();
+			if (transports.length === 1) {
+				const respond = transport.responder;
+				transport.responder = (request) => { if (request.method !== "session/list") respond?.(request); };
+			}
+			return transport;
+		} });
+		try {
+			expect((await service.history("fake")).error).toContain("超时");
+			expect(transports[0].closed).toBe(true);
+			expect((await service.history("fake")).error).toBeUndefined();
+			expect(transports).toHaveLength(2);
+		} finally { service.dispose(); }
+	});
+
+	test("replacing a window's unsent warmup releases its process without touching another window", async () => {
+		const transports: FakeTransport[] = [];
+		const other = { ...AGENT, id: "other", name: "Other" };
+		const service = new AcpService({ clientVersion: "0", store: memoryStore([AGENT, other]), emitState: () => {}, emitSnapshot: () => {}, createTransport: historyAgent(transports) });
+		try {
+			const first = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-a");
+			const separate = service.create({ agentId: "fake", cwd: tmpdir(), warm: true }, "window-b");
+			service.create({ agentId: "other", cwd: tmpdir(), warm: true }, "window-a");
+			expect(service.snapshot(first.id)).toBeNull();
+			expect(transports[0].closed).toBe(true);
+			expect(service.snapshot(separate.id)).not.toBeNull();
+			expect(transports[1].closed).toBe(false);
+		} finally { service.dispose(); }
+	});
 	test("remembers successful picker changes across restarts, isolates agents and preserves history settings", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "acp-picker-defaults-"));
 		const transports: FakeTransport[] = [];
@@ -1330,7 +1411,7 @@ describe("AcpService", () => {
 		const remaining = service.state().sessions.map((session) => session.id);
 		expect(remaining).toContain(ids[0]);
 		expect(remaining).not.toContain(ids[1]);
-		expect(remaining).toHaveLength(5);
+		expect(remaining).toHaveLength(4);
 		service.dispose();
 	});
 

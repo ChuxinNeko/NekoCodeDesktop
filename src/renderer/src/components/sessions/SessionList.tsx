@@ -64,6 +64,7 @@ export function SessionList(props: SessionListProps) {
 	const listRef = useRef<HTMLDivElement>(null);
 	const [collapsed, setCollapsed] = useState(readCollapsed);
 	const [expanded, setExpanded] = useState<string[]>([]);
+	const [workspaceOrder, setWorkspaceOrder] = useState<string[]>([]);
 	const setFolded = (next: string[]) => {
 		setCollapsed(next);
 		try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)); } catch { /* Session-only when storage is unavailable. */ }
@@ -79,10 +80,17 @@ export function SessionList(props: SessionListProps) {
 		});
 	}, [activeWorkspace, activeId]);
 
-	const groups = useMemo(
-		() => groupSessionsByWorkspace(sessions, { currentCwd, workspaces: props.workspaces, hidden: props.hiddenWorkspaces, homeDir: props.homeDir, query }),
+	const incomingGroups = useMemo(
+		() => groupSessionsByWorkspace(sessions, { currentCwd, workspaces: props.workspaces, hidden: props.hiddenWorkspaces, homeDir: props.homeDir, query, preserveOrder: true }),
 		[sessions, currentCwd, props.workspaces, props.hiddenWorkspaces, props.homeDir, query],
 	);
+	// Remember folder positions too: selecting a previously unregistered project
+	// adds it to the saved workspace list, but must not move its existing section.
+	const addedGroups = incomingGroups.filter((group) => !workspaceOrder.includes(group.id));
+	const order = addedGroups.length ? [...workspaceOrder, ...addedGroups.map((group) => group.id)] : workspaceOrder;
+	if (addedGroups.length) setWorkspaceOrder(order);
+	const ranks = new Map(order.map((id, index) => [id, index]));
+	const groups = [...incomingGroups].sort((a, b) => (ranks.get(a.id) ?? 0) - (ranks.get(b.id) ?? 0));
 
 	/**
 	 * Arrow keys walk the rows and F2 renames the focused one —

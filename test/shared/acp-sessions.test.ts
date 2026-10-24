@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AcpHistoryEntry, AcpSessionSummary } from "../../src/shared/acp";
 import { acpAgentsRows, acpSessionRows } from "../../src/shared/acp-sessions";
+import { reconcileSessionRows } from "../../src/shared/sessions";
 
 const live = (overrides: Partial<AcpSessionSummary>): AcpSessionSummary => ({
 	id: "local-1",
@@ -24,6 +25,16 @@ const entry = (overrides: Partial<AcpHistoryEntry>): AcpHistoryEntry => ({
 });
 
 describe("acpSessionRows", () => {
+	test("opening and refreshing an older Codex conversation keeps its sidebar position", () => {
+		const history = [entry({ sessionId: "newer", updatedAt: 100 }), entry({ sessionId: "older", updatedAt: 10 })];
+		const initial = acpSessionRows("codex", history, []).rows;
+		const opened = acpSessionRows("codex", history, [live({ agentSessionId: "older", updatedAt: 9999, title: "Opened title" })]).rows;
+		const afterOpen = reconcileSessionRows(initial, opened);
+		const updated = acpSessionRows("codex", [history[0], { ...history[1], updatedAt: 20000 }], [live({ agentSessionId: "older", status: "prompting", title: "New title" })]).rows;
+		const afterRefresh = reconcileSessionRows(afterOpen, updated);
+		expect(afterRefresh.map((row) => row.id)).toEqual(["acp:codex:newer", "acp:codex:older"]);
+		expect(afterRefresh[1]).toMatchObject({ title: "New title", running: true, updatedAt: 20000 });
+	});
 	test("an open conversation that is also in the history is one row", () => {
 		const { rows, targets } = acpSessionRows(
 			"codex",

@@ -15,6 +15,7 @@ import type { CheckpointSummary } from "../../shared/checkpoints";
 import { projectLabel } from "../../shared/paths";
 import { mentionToken } from "../../shared/mentions";
 import { mergeActiveSession, workspaceKey } from "../../shared/sessions";
+import { useStableSessionRows } from "./hooks/useStableSessionRows";
 import { api, errorMessage } from "./api";
 import { AutomationsPage } from "./components/automations/AutomationsPage";
 import { TasksPage } from "./components/tasks/TasksPage";
@@ -434,7 +435,8 @@ export default function App() {
 		[sessions.sessions, snapshot?.session],
 	);
 	/** NekoLocal's sessions and every enabled agent's, grouped by project in one list. */
-	const allRows = useMemo(() => [...sessionRows, ...acp.rows], [sessionRows, acp.rows]);
+	const incomingRows = useMemo(() => [...sessionRows, ...acp.rows], [sessionRows, acp.rows]);
+	const allRows = useStableSessionRows(incomingRows);
 
 	useEffect(() => {
 		const unsubscribe = api.onAgentSnapshot((next) => {

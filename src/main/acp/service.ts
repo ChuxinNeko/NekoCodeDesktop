@@ -50,13 +50,17 @@ const LISTER_TIMEOUT_MS = 120_000;
 /** `session/list` pages; codex-acp serves 25 per page. */
 const MAX_HISTORY_PAGES = 8;
 /**
- * Idle conversations kept open. Each one is a live agent process, and clicking
+ * Idle conversations kept open when no tasks are running; active tasks consume
+ * this cache budget, leaving at least one slot for the next conversation.
+ * Each one is a live agent process, and clicking
  * through history would otherwise leave one behind per row; closing costs
  * nothing, since the agent keeps the history and reopening reloads it.
  */
 const MAX_IDLE_SESSIONS = 4;
 
 export interface AcpServiceOptions {
+	/** Injectable deadline for history requests; stalled agents must not retain processes forever. */
+	historyTimeoutMs?: number;
 	/** Application data directory for durable sidebar removals. */
 	userDataDir?: string;
 	nativeConfig?: boolean;
@@ -136,9 +140,12 @@ export class AcpService {
 	private readonly warmOwners = new Map<string, string>();
 	private readonly dirty = new Set<string>();
 	private readonly listers = new Map<string, Lister>();
+	private readonly historyRequests = new Map<string, Promise<AcpHistory>>();
 	/** When each session was last opened, prompted or looked at. */
 	private readonly touched = new Map<string, number>();
 	private timer: ReturnType<typeof setTimeout> | null = null;
+	private touchSequence = 0;
+	private disposed = false;
 
 	constructor(private readonly options: AcpServiceOptions) {
 		this.sessionDefaults = new AcpSessionDefaults(options.userDataDir);
@@ -181,14 +188,14 @@ export class AcpService {
 
 	/** The window is showing this session; it is the last to be closed as idle. */
 	view(sessionId: string): AcpSessionSnapshot | null {
-		if (this.sessions.has(sessionId)) this.touched.set(sessionId, Date.now());
+		if (this.sessions.has(sessionId)) this.touched.set(sessionId, ++this.touchSequence);
 		return this.snapshot(sessionId);
 	}
 
 	/** Desktop IPC uses a paged window; mobile callers retain their existing full view. */
 	desktopView(sessionId: string, loadEarlier = false): AcpSessionSnapshot | null {
 		if (!this.sessions.has(sessionId)) return null;
-		this.touched.set(sessionId, Date.now());
+		this.touched.set(sessionId, ++this.touchSequence);
 		if (loadEarlier) {
 			const total = this.snapshot(sessionId)?.cells.length ?? 0;
 			this.historyFrom.set(sessionId, Math.max(0, (this.historyFrom.get(sessionId) ?? Math.max(0, total - TRANSCRIPT_WINDOW_CELLS)) - TRANSCRIPT_WINDOW_CELLS));
@@ -208,13 +215,17 @@ export class AcpService {
 
 	/** Close the least recently used idle sessions past the limit. */
 	private evictIdle(): void {
-		const idle = [...this.sessions.values()]
-			.filter((session) => {
-				const snapshot = session.snapshot();
-				return (snapshot.status === "ready" || snapshot.status === "error") && snapshot.permissions.length === 0;
-			})
+		if (this.disposed) return;
+		const sessions = [...this.sessions.values()];
+		const running = sessions.filter((session) => session.summary().status === "prompting").length;
+		// Active conversations already hold their own adapters/CLI/MCP trees.
+		// Keep room for one unsent/viewed conversation while four jobs run,
+		// rather than retaining another four complete idle process trees.
+		const idleLimit = Math.max(1, MAX_IDLE_SESSIONS - running);
+		const idle = sessions
+			.filter((session) => session.canEvict)
 			.sort((a, b) => (this.touched.get(b.id) ?? 0) - (this.touched.get(a.id) ?? 0));
-		for (const session of idle.slice(MAX_IDLE_SESSIONS)) this.close(session.id);
+		for (const session of idle.slice(idleLimit)) this.close(session.id);
 	}
 
 	saveAgent(request: AcpSaveAgentRequest): AcpAgentInfo[] {
@@ -252,6 +263,7 @@ export class AcpService {
 	}
 
 	private requireAgent(agentId: string): AcpAgentDefinition {
+		if (this.disposed) throw new Error("外部代理服务已关闭");
 		const agent = this.options.store.find(agentId);
 		if (!agent) throw new Error(`未知的代理：${agentId}`);
 		if (!agent.enabled) throw new Error(`${agent.name} 已在设置中停用`);
@@ -298,8 +310,8 @@ export class AcpService {
 			...(processCwd ? {} : { shellChanges: () => (this.options.shellChanges ?? openShellChanges)(cwd) }),
 		});
 		this.sessions.set(id, session);
-		this.touched.set(id, Date.now());
-		void session.start();
+		this.touched.set(id, ++this.touchSequence);
+		void session.start().then(() => this.evictIdle());
 		this.evictIdle();
 		this.options.emitState(this.state());
 		return session;
@@ -322,6 +334,13 @@ export class AcpService {
 		requireDirectory(request.cwd);
 		// Fail here, where the window shows the reason, not in a dead session.
 		if (!this.options.createTransport) this.launch(agent);
+		if (request.warm && owner) {
+			// A window has one unsent composer. Replacing it must release its old
+			// process tree, including a startup that has not completed yet.
+			for (const [id, session] of this.sessions) {
+				if (this.warmOwners.get(id) === owner && session.summary().pristine) this.close(id);
+			}
+		}
 		const session = this.start(agent, request.cwd);
 		if (request.warm && owner) this.warmOwners.set(session.id, owner);
 		return session.snapshot();
@@ -355,7 +374,19 @@ export class AcpService {
 	 * The agent's own list of conversations, newest first. Failures come back
 	 * as `error` rather than thrown: the sidebar still shows what is open here.
 	 */
-	async history(agentId: string): Promise<AcpHistory> {
+	history(agentId: string): Promise<AcpHistory> {
+		const existing = this.historyRequests.get(agentId);
+		if (existing) return existing;
+		const request = this.loadHistory(agentId);
+		this.historyRequests.set(agentId, request);
+		const forget = () => {
+			if (this.historyRequests.get(agentId) === request) this.historyRequests.delete(agentId);
+		};
+		void request.then(forget, forget);
+		return request;
+	}
+
+	private async loadHistory(agentId: string): Promise<AcpHistory> {
 		let agent: AcpAgentDefinition;
 		try {
 			agent = this.requireAgent(agentId);
@@ -373,7 +404,7 @@ export class AcpService {
 			const entries: AcpHistoryEntry[] = [];
 			let cursor: string | undefined;
 			for (let page = 0; page < MAX_HISTORY_PAGES; page++) {
-				const result = parseHistoryPage(await lister.connection.request("session/list", cursor ? { cursor } : {}));
+				const result = parseHistoryPage(await this.historyPage(lister, agent.name, cursor));
 				entries.push(...result.entries);
 				cursor = result.nextCursor;
 				if (!cursor) break;
@@ -384,6 +415,16 @@ export class AcpService {
 			this.dropLister(agent.id);
 			return { agentId, entries: [], error: errorText(error) };
 		}
+	}
+
+	private historyPage(lister: Lister, name: string, cursor?: string): Promise<unknown> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(`${name} 读取会话历史超时`)), this.options.historyTimeoutMs ?? LISTER_TIMEOUT_MS);
+			lister.connection.request("session/list", cursor ? { cursor } : {}).then(
+				(result) => { clearTimeout(timer); resolve(result); },
+				(error: unknown) => { clearTimeout(timer); reject(error); },
+			);
+		});
 	}
 
 	/**
@@ -435,6 +476,7 @@ export class AcpService {
 		const lister: Lister = { connection, ready, timer: null };
 		this.listers.set(agent.id, lister);
 		connection.onClose(() => {
+			if (lister.timer) clearTimeout(lister.timer);
 			if (this.listers.get(agent.id) === lister) this.listers.delete(agent.id);
 		});
 		return lister;
@@ -467,12 +509,12 @@ export class AcpService {
 	 */
 	async prompt(request: AcpPromptRequest): Promise<void> {
 		const session = this.require(request.sessionId);
-		this.touched.set(session.id, Date.now());
+		this.touched.set(session.id, ++this.touchSequence);
 		const turn = session.prompt(request.text, request.images ?? []);
 		// A turn that ends changes the agent's history — its title, its time.
 		turn.then(
-			() => this.options.emitHistoryChanged?.(session.agent.id),
-			() => undefined,
+			() => { this.evictIdle(); if (!this.disposed) this.options.emitHistoryChanged?.(session.agent.id); },
+			() => this.evictIdle(),
 		);
 		// A refused turn rejects before `prompt` reaches its first await, so it is
 		// already settled here and wins the race; a running turn loses it.
@@ -562,23 +604,28 @@ export class AcpService {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		this.historyFrom.clear();
 		if (this.timer) clearTimeout(this.timer);
 		this.timer = null;
 		for (const session of this.sessions.values()) session.dispose();
 		this.sessions.clear();
 		this.warmOwners.clear();
+		this.touched.clear();
+		this.historyRequests.clear();
 		this.dirty.clear();
 		for (const agentId of [...this.listers.keys()]) this.dropLister(agentId);
 	}
 
 	private markDirty(sessionId: string): void {
+		if (this.disposed || !this.sessions.has(sessionId)) return;
 		this.dirty.add(sessionId);
 		this.timer ??= setTimeout(() => this.flush(), PUSH_INTERVAL_MS);
 	}
 
 	private flush(): void {
 		this.timer = null;
+		this.evictIdle();
 		const ids = [...this.dirty];
 		this.dirty.clear();
 		for (const id of ids) {

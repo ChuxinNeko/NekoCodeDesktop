@@ -21,6 +21,8 @@ export interface WorkspaceSessionGroup {
  */
 export function groupSessionsByWorkspace(sessions: readonly SessionSummary[], options: {
 	workspaces?: readonly string[]; hidden?: readonly string[]; currentCwd?: string | null; query?: string; homeDir?: string;
+	/** Sidebar rows already have a stable order; selecting a row must not sort its folder either. */
+	preserveOrder?: boolean;
 } = {}): WorkspaceSessionGroup[] {
 	const groups = new Map<string, WorkspaceSessionGroup>();
 	const add = (cwd: string) => {
@@ -30,20 +32,41 @@ export function groupSessionsByWorkspace(sessions: readonly SessionSummary[], op
 		return group;
 	};
 	for (const cwd of options.workspaces ?? []) if (cwd) add(cwd);
-	if (options.currentCwd) add(options.currentCwd);
+	if (options.currentCwd && !options.preserveOrder) add(options.currentCwd);
 	for (const session of sessions) add(session.cwd).sessions.push(session);
+	if (options.currentCwd && options.preserveOrder) add(options.currentCwd);
 	const query = options.query?.trim().toLowerCase() ?? "";
 	return [...groups.values()].map((group) => ({
 		...group,
-		sessions: group.sessions.filter((session) => !query || group.cwd.toLowerCase().includes(query) || sessionMatchesQuery(session, query)).sort((a, b) => b.updatedAt - a.updatedAt || a.sessionFile.localeCompare(b.sessionFile)),
+		sessions: group.sessions.filter((session) => !query || group.cwd.toLowerCase().includes(query) || sessionMatchesQuery(session, query)).sort(options.preserveOrder ? () => 0 : (a, b) => b.updatedAt - a.updatedAt || a.sessionFile.localeCompare(b.sessionFile)),
 	})).filter((group) => !(group.id && options.hidden?.includes(group.id)))
 		.filter((group) => !query || group.sessions.length > 0 || group.cwd.toLowerCase().includes(query))
 		.sort((a, b) => {
+			if (options.preserveOrder) return 0;
 			const current = options.currentCwd ? workspaceKey(options.currentCwd) : null;
 			if (a.id === current) return -1;
 			if (b.id === current) return 1;
 			return (b.sessions[0]?.updatedAt ?? 0) - (a.sessions[0]?.updatedAt ?? 0) || a.cwd.localeCompare(b.cwd);
 		});
+}
+
+/** Keep existing rows in place while replacing their data. Only newly discovered rows are inserted by recency. */
+export function reconcileSessionRows(previous: readonly SessionSummary[], incoming: readonly SessionSummary[]): SessionSummary[] {
+	const latest = new Map(incoming.map((session) => [session.sessionFile, session]));
+	const rows: SessionSummary[] = [];
+	for (const session of previous) {
+		const next = latest.get(session.sessionFile);
+		if (!next) continue;
+		rows.push(next);
+		latest.delete(session.sessionFile);
+	}
+	const additions = [...latest.values()].sort((a, b) => b.updatedAt - a.updatedAt || a.sessionFile.localeCompare(b.sessionFile));
+	if (rows.length === 0) return additions;
+	for (const session of additions) {
+		const index = rows.findIndex((row) => row.updatedAt < session.updatedAt);
+		rows.splice(index < 0 ? rows.length : index, 0, session);
+	}
+	return rows;
 }
 
 /**
@@ -83,9 +106,10 @@ export function mergeActiveSession(
 	if (!active || active.messageCount === 0) return [...sessions];
 	if (sessions.some((session) => session.sessionFile === active.sessionFile)) {
 		// On disk already: the live copy still wins, since a title generated
-		// moments ago reaches the snapshot before the file is re-read.
+		// moments ago reaches the snapshot before the file is re-read. Snapshot
+		// timestamps reflect observation time, so keep the persisted activity time.
 		return sessions.map((session) =>
-			session.sessionFile === active.sessionFile ? active : session,
+			session.sessionFile === active.sessionFile ? { ...active, updatedAt: session.updatedAt } : session,
 		);
 	}
 	return [active, ...sessions];
