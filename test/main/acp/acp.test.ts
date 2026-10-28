@@ -315,14 +315,14 @@ const AGENT: AcpAgentDefinition = {
 };
 
 /** A scripted agent: answers the handshake and lets each test drive the turn. */
-function startSession(options: { agent?: AcpAgentDefinition; resume?: { sessionId: string }; authRequired?: boolean; onUsage?: (usage: TurnUsage, timestamp: number) => void; autoRetryCount?: () => number; retryDelayMs?: number } = {}) {
+function startSession(options: { steering?: boolean; agent?: AcpAgentDefinition; resume?: { sessionId: string }; authRequired?: boolean; onUsage?: (usage: TurnUsage, timestamp: number) => void; autoRetryCount?: () => number; retryDelayMs?: number } = {}) {
 	const transport = new FakeTransport();
 	let changes = 0;
 	const prompts: Message[] = [];
 	transport.responder = (message) => {
 		const { id, method } = message;
 		if (method === "initialize") {
-			transport.reply(id, { protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: true }, ...(options.resume ? { loadSession: true } : {}) }, authMethods: [{ id: "api-key", name: "API Key" }] });
+			transport.reply(id, { protocolVersion: 1, _meta: { steering: { supported: options.steering === true } }, agentCapabilities: { promptCapabilities: { image: true }, ...(options.resume ? { loadSession: true } : {}) }, authMethods: [{ id: "api-key", name: "API Key" }] });
 		} else if (method === "session/new" || method === "session/load") {
 			if (options.authRequired) {
 				transport.deliver({ jsonrpc: "2.0", id, error: { code: AUTH_REQUIRED, message: "Authentication required" } });
@@ -352,6 +352,79 @@ function startSession(options: { agent?: AcpAgentDefinition; resume?: { sessionI
 }
 
 describe("AcpSession", () => {
+	test("steering injects attachments without cancelling or replacing the active prompt", async () => {
+		const { session, transport, prompts } = startSession({ steering: true });
+		await session.start();
+		expect(session.snapshot().supportsSteering).toBe(true);
+		const running = session.prompt("do the work");
+		await tick();
+		transport.update("agent-1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "before guidance" } });
+		const images = [{ name: "reference.png", mimeType: "image/png", data: "aGVsbG8=" }];
+		const steering = session.steer("use this reference", images);
+		await tick();
+		const request = transport.sent.find((item) => item.method === "_session/steering")!;
+		expect(request.params).toEqual({ sessionId: "agent-1", prompt: [
+			{ type: "text", text: "use this reference" },
+			{ type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+		] });
+		transport.reply(request.id, { outcome: "injected" });
+		await steering;
+		expect(session.snapshot().streaming).toBe(true);
+		expect(prompts).toHaveLength(1);
+		expect(transport.sent.some((item) => item.method === "session/cancel")).toBe(false);
+		transport.update("agent-1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "continuing" } });
+		transport.reply(prompts[0].id, { stopReason: "end_turn" });
+		await running;
+		expect(session.snapshot().streaming).toBe(false);
+		expect(session.snapshot().cells.some((cell) => cell.type === "assistant" && cell.text === "continuing")).toBe(true);
+		expect(session.snapshot().cells.filter((cell) => cell.type === "assistant").every((cell) => !cell.streaming)).toBe(true);
+		session.dispose();
+	});
+
+	test("steering tracks a new turn when the original finishes during injection", async () => {
+		const { session, transport, prompts } = startSession({ steering: true });
+		await session.start();
+		const running = session.prompt("first");
+		await tick();
+		const steering = session.steer("guidance");
+		await tick();
+		const request = transport.sent.find((item) => item.method === "_session/steering")!;
+		transport.reply(prompts[0].id, { stopReason: "end_turn" });
+		await running;
+		expect(session.canEvict).toBe(false);
+		transport.update("agent-1", { sessionUpdate: "session_info_update", _meta: { codex: { threadStatus: { type: "active" } } } });
+		transport.reply(request.id, { outcome: "startedNewTurn" });
+		await steering;
+		expect(session.snapshot().streaming).toBe(true);
+		transport.update("agent-1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "second turn" } });
+		transport.update("agent-1", { sessionUpdate: "session_info_update", _meta: { codex: { threadStatus: { type: "idle" } } } });
+		expect(session.snapshot().streaming).toBe(false);
+		expect(session.snapshot().cells.at(-1)).toMatchObject({ type: "assistant", streaming: false });
+		session.dispose();
+	});
+
+	test("unsupported or failed steering never cancels the running turn", async () => {
+		const unsupported = startSession();
+		await unsupported.session.start();
+		await expect(unsupported.session.steer("hi")).rejects.toThrow("不支持运行中引导");
+		expect(unsupported.transport.sent.some((item) => item.method === "_session/steering")).toBe(false);
+		unsupported.session.dispose();
+		const { session, transport, prompts } = startSession({ steering: true });
+		await session.start();
+		const running = session.prompt("first");
+		await tick();
+		const steering = session.steer("hi").catch((error: Error) => error.message);
+		await tick();
+		const request = transport.sent.find((item) => item.method === "_session/steering")!;
+		transport.reply(request.id, { outcome: "failed" });
+		expect(await steering).toContain("未被代理接受");
+		expect(session.snapshot().streaming).toBe(true);
+		expect(transport.sent.some((item) => item.method === "session/cancel")).toBe(false);
+		transport.reply(prompts[0].id, { stopReason: "end_turn" });
+		await running;
+		session.dispose();
+	});
+
 	const stalled = "basispoints_tool_arguments_stalled: Tool arguments stopped making progress: consecutive whitespace outside JSON strings";
 	const corrected = "basispoints_protocol_error: basispoints tool transport correction changed an operation; no tool was executed";
 	const rejectPrompt = (transport: FakeTransport, prompt: Message, message: string) => {
@@ -912,6 +985,8 @@ describe("AcpService", () => {
 			expect(service.state().sessions).toHaveLength(5);
 			expect(active.every((id) => service.snapshot(id)?.status === "prompting")).toBe(true);
 			expect(transports.slice(0, 4).every((transport) => !transport.closed)).toBe(true);
+			// "prompting" reserves the turn before the async shell baseline is ready.
+			await until(() => transports.slice(0, 4).every((transport) => transport.sent.some((request) => request.method === "session/prompt")));
 			for (const transport of transports.slice(0, 4)) {
 				const prompt = transport.sent.find((request) => request.method === "session/prompt")!;
 				transport.reply(prompt.id, { stopReason: "end_turn" });

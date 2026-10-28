@@ -193,6 +193,7 @@ export interface AcpSessionSnapshot extends AcpSessionSummary {
 	commands: AcpCommand[];
 	permissions: AcpPermissionRequest[];
 	supportsImages: boolean;
+	supportsSteering?: boolean;
 }
 
 export interface AcpState {
@@ -213,6 +214,8 @@ export interface AcpCreateSessionRequest {
 
 export interface AcpPromptRequest {
 	sessionId: string;
+	/** Inject into the active turn without cancelling it. */
+	steer?: boolean;
 	text: string;
 	images?: PromptImageAttachment[];
 }

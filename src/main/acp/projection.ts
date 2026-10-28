@@ -420,6 +420,12 @@ export class AcpProjection {
 		this.push({ id: this.id("user"), type: "user", text, timestamp: this.now() });
 	}
 
+	/** A steer splits the visible reply while preserving the active work plan. */
+	addSteeringPrompt(text: string): void {
+		this.closeAssistant();
+		this.push({ id: this.id("user"), type: "user", text, timestamp: this.now() });
+	}
+
 	addNotice(level: "info" | "warning" | "error", text: string): void {
 		this.push({ id: this.id("notice"), type: "notice", level, text, timestamp: this.now() });
 	}

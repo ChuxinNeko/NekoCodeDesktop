@@ -28,6 +28,8 @@ import { ContextMenu, type ContextMenuState } from "../ui/context-menu";
 import { ContextGauge } from "./ContextGauge";
 import { Button } from "../ui/button";
 import { ComposerColumnFrame } from "./ComposerColumnFrame";
+import { ComposerQueue } from "./ComposerQueue";
+import { useComposerQueue } from "./useComposerQueue";
 import { ComposerCommandMenu, filterCommands } from "./ComposerCommandMenu";
 import { ComposerMentionMenu } from "./ComposerMentionMenu";
 import {
@@ -71,10 +73,14 @@ interface ComposerShellProps {
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	disabled: boolean;
+	/** Keeps queued follow-ups with the conversation that received them. */
+	queueScope?: string;
 	streaming?: boolean;
 	placeholder?: string;
 	autoFocus?: boolean;
-	onSend: (request: SendPromptRequest) => void;
+	onSend: (request: SendPromptRequest) => void | Promise<void>;
+	onQueueSend?: (request: SendPromptRequest) => void | Promise<void>;
+	onSteer?: (request: SendPromptRequest) => void | Promise<void>;
 	supportsImages?: boolean;
 	allowImageAttachments?: boolean;
 	/**
@@ -121,6 +127,13 @@ export function ComposerShell(props: ComposerShellProps) {
 	const { t } = useTranslation();
 	const { resolvedTheme } = useTheme();
 	const { disabled, streaming } = props;
+	const queue = useComposerQueue({
+		scope: props.queueScope ?? "default",
+		disabled,
+		streaming: streaming === true,
+		onSend: props.onQueueSend ?? props.onSend,
+		onSteer: props.onSteer,
+	});
 	const followUp = props.followUp !== false;
 	const [internalText, setInternalText] = useState("");
 	const text = props.draft ?? internalText;
@@ -475,13 +488,15 @@ export function ComposerShell(props: ComposerShellProps) {
 			text: value || t("composer.imageOnlyPrompt"),
 			...(images.length ? { images: images.map((image) => image.attachment) } : {}),
 		};
-		if (props.clearOnSend !== false) setText("");
+		const queued = streaming === true;
+		if (queued || props.clearOnSend !== false) setText("");
 		setCommand(null);
 		setImages([]);
 		setImageError(null);
 		closeMenu();
 		setMention(null);
-		props.onSend(request);
+		if (queued) queue.enqueue(request);
+		else props.onSend(request);
 	};
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -591,6 +606,15 @@ export function ComposerShell(props: ComposerShellProps) {
 					</div>
 				) : null}
 				{props.activity}
+				<ComposerQueue
+					items={queue.items}
+					streaming={streaming === true}
+					canSteer={!!props.onSteer && !disabled}
+					sendingId={queue.sendingId}
+					error={queue.error}
+					onSendNow={queue.sendNow}
+					onRemove={queue.remove}
+				/>
 				<div className={cn(COMPOSER_INPUT_SHELL_CLASS_NAME, (mentionOpen || menuOpen) && "z-30")}>
 					{mentionOpen ? (
 						<ComposerMentionMenu
@@ -685,7 +709,7 @@ export function ComposerShell(props: ComposerShellProps) {
 										</span>
 									) : null}
 									{prediction.text ? <div aria-hidden="true" data-prompt-prediction="" className={cn("pointer-events-none absolute inset-x-0 top-0 pr-12 text-muted-foreground/45", COMPOSER_EDITOR_TYPOGRAPHY_CLASS_NAME)}>
-										<span className="line-clamp-2 break-words">{prediction.text}</span>
+										<span className="block truncate">{prediction.text}</span>
 										<kbd className="absolute right-0 top-0 rounded border border-border/60 px-1 text-[10px] leading-5">Tab</kbd>
 									</div> : null}
 
@@ -759,9 +783,23 @@ export function ComposerShell(props: ComposerShellProps) {
 								    the moment the length of the conversation starts to matter. */}
 								{!followUp && props.context ? <ContextGauge context={props.context} /> : null}
 
+								<div data-slot="composer-actions" className="flex shrink-0 items-center gap-1">
+								{streaming ? (
+									<Button
+										data-composer-control="queue"
+										aria-label={t("composer.queue")}
+										title={[t("composer.queue"), shortcutLabel("composer.send")].filter(Boolean).join(" · ")}
+										disabled={disabled || !sendable || imagesBlocked}
+										onClick={() => submit()}
+										size="icon-sm"
+										variant="prominent"
+									>
+										<ComposerSendArrowIcon className="size-3.5" />
+									</Button>
+								) : null}
 								{streaming && props.onAbort ? (
 									<Button
-										data-composer-control="submit"
+										data-composer-control="stop"
 										aria-label={t("composer.stop")}
 										title={[t("composer.stop"), shortcutLabel("app.stop")].filter(Boolean).join(" · ")}
 										onClick={props.onAbort}
@@ -770,7 +808,8 @@ export function ComposerShell(props: ComposerShellProps) {
 									>
 										<StopIcon className="size-3.5" />
 									</Button>
-								) : (
+								) : null}
+								{!streaming ? (
 									<Button
 										data-composer-control="submit"
 										aria-label={t("composer.send")}
@@ -782,7 +821,8 @@ export function ComposerShell(props: ComposerShellProps) {
 									>
 										<ComposerSendArrowIcon className="size-3.5" />
 									</Button>
-								)}
+								) : null}
+								</div>
 							</div>
 						</div>
 					</BorderBeam>

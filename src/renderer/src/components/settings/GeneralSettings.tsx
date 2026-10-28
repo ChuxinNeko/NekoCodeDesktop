@@ -10,6 +10,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./SettingsRow";
 import { LayoutSettings } from "./LayoutSettings";
+import { LinuxRunModeSettings } from "./LinuxRunModeSettings";
 
 const COMMAND_SHELL_KEYS: Record<CommandShellId, TranslationKey> = {
 	auto: "settings.commandShell.auto",
@@ -201,6 +202,7 @@ export function GeneralSettings() {
 			</div> : null}
 
 			<LayoutSettings />
+			<LinuxRunModeSettings />
 
 			{/* The agent runs every command through this; it is picked before the rest is tuned. */}
 			<CommandShellRow value={preferences?.commandShell} onChange={(commandShell) => setPreference({ commandShell })} />

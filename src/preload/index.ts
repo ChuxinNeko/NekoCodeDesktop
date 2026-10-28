@@ -18,6 +18,7 @@ import type {
 } from "../shared/remote-desktop";
 import type { AppVersionInfo, UpdateCheckResult, UpdateInstallState } from "../shared/updates";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import type { LinuxRunMode, LinuxRunModeStatus } from "../shared/linux-run-mode";
 import { DEFAULT_SHELL_INFO, type EditCommand, type ShellInfo, type WindowMaterial } from "../shared/window";
 import type {
 	InstallPluginRequest,
@@ -375,6 +376,8 @@ const api = {
 	agentStopCommand: (sessionId: string, toolCallId: string): Promise<boolean> => ipcRenderer.invoke("agent:stopCommand", sessionId, toolCallId),
 	agentDismissTasks: (sessionIds: string[]): Promise<void> => ipcRenderer.invoke("agent:dismissTasks", sessionIds),
 	preferencesGet: (): Promise<AppPreferences> => ipcRenderer.invoke("preferences:get"),
+	linuxRunModeStatus: (): Promise<LinuxRunModeStatus> => ipcRenderer.invoke("linuxRunMode:status"),
+	linuxRunModeApply: (mode: LinuxRunMode): Promise<void> => ipcRenderer.invoke("linuxRunMode:apply", mode),
 	teamSnapshot: (): Promise<TeamWorkspaceSnapshot> => ipcRenderer.invoke("team:snapshot"),
 	teamAction: (action: TeamWorkspaceAction): Promise<TeamRoom | TeamMemory | undefined> => ipcRenderer.invoke("team:action", action),
 	teamSend: (request: TeamSendRequest): Promise<SendPromptResult> => ipcRenderer.invoke("team:send", request),

@@ -14,6 +14,7 @@ import type {
 	RepositoryIdentity,
 } from "../shared/pullRequests";
 import type { GitHubAuthService } from "./github-auth";
+import type { GitHubFetch } from "./github-network";
 
 const execFileP = promisify(execFile);
 
@@ -30,7 +31,7 @@ const PER_PAGE = 50;
 export class PullRequestService {
 	private readonly auth: GitHubAuthService;
 
-	constructor(auth: GitHubAuthService) {
+	constructor(auth: GitHubAuthService, private readonly requestFetch: GitHubFetch = fetch) {
 		this.auth = auth;
 	}
 
@@ -85,7 +86,7 @@ export class PullRequestService {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 		try {
-			const response = await fetch(`https://api.github.com${path}`, {
+			const response = await this.requestFetch(`https://api.github.com${path}`, {
 				method: init?.method ?? "GET",
 				headers: {
 					accept: "application/vnd.github+json",

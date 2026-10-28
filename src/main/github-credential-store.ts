@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { safeStorage } from "electron";
 import { GitHubOAuthClient } from "./github-oauth";
+import type { GitHubFetch } from "./github-network";
 import { validGitHubCredentials, type GitHubOAuthCredentials, type GitHubOAuthGrant } from "../shared/github-oauth";
 import type { GitHubAccount, GitHubProfile, GitHubRepository } from "../shared/github-profile";
 import type { GitHubAuthStatus } from "../shared/pullRequests";
@@ -42,7 +43,7 @@ export class GitHubCredentialStore {
 	private revision = 0;
 	private readonly oauthClient: Pick<GitHubOAuthClient, "refresh">;
 	private readonly encryption: Pick<typeof safeStorage, "isEncryptionAvailable" | "encryptString" | "decryptString" | "getSelectedStorageBackend">;
-	private readonly request: typeof fetch;
+	private readonly request: GitHubFetch;
 	private readonly requestTimeoutMs: number;
 	private readonly ghTokenReader?: () => Promise<string | null>;
 	private readonly now: () => number;
@@ -50,7 +51,7 @@ export class GitHubCredentialStore {
 	constructor(options: {
 		userDataDir: string;
 		encryption: Pick<typeof safeStorage, "isEncryptionAvailable" | "encryptString" | "decryptString" | "getSelectedStorageBackend">;
-		request?: typeof fetch;
+		request?: GitHubFetch;
 		oauthClient?: Pick<GitHubOAuthClient, "refresh">;
 		readGhToken?: () => Promise<string | null>;
 		now?: () => number;

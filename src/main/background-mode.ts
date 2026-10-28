@@ -83,6 +83,11 @@ export class BackgroundMode {
 		this.options.quit();
 	}
 
+	/** A supervised root instance owns the visible tray while this user's window is hidden. */
+	suspendTray(): void {
+		this.destroyTray();
+	}
+
 	/** Explicit Quit, updates and OS shutdown must bypass the close interceptor. */
 	beginQuit(): void {
 		this.quitting = true;

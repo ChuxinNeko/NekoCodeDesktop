@@ -1,4 +1,5 @@
 import type { GitHubCredentialStore } from "./github-credential-store";
+import type { GitHubFetch } from "./github-network";
 import { githubErrorMessage } from "./pull-request-service";
 import type {
   GitHubClientRequest,
@@ -185,7 +186,7 @@ export class GitHubClientService {
   constructor(
     private readonly auth: Pick<GitHubCredentialStore, "resolveToken">,
     private readonly options: {
-      request?: typeof fetch;
+      request?: GitHubFetch;
       resolveRepository?: (cwd: string) => Promise<string | null>;
       timeoutMs?: number;
     } = {},
@@ -196,11 +197,12 @@ export class GitHubClientService {
     method = "GET",
     body?: unknown,
   ): Promise<{ body: unknown; next: boolean }> {
-    const { token } = await this.auth.resolveToken();
-    if (!token) throw new Error("请先在 设置 → GitHub 授权 中连接账号。");
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const attempt = (async () => {
+      const { token } = await this.auth.resolveToken();
+      controller.signal.throwIfAborted();
+      if (!token) throw new Error("请先在 设置 → GitHub 授权 中连接账号。");
       const response = await (this.options.request ?? fetch)(
         `https://api.github.com${path}`,
         {
@@ -654,6 +656,7 @@ export class GitHubClientService {
     signal: AbortSignal,
   ): Promise<{ text: string; truncated: boolean }> {
     const { token } = await this.auth.resolveToken();
+    signal.throwIfAborted();
     if (!token) throw new Error("请先连接 GitHub 账号。");
     const request = this.options.request ?? fetch;
     const response = await request(

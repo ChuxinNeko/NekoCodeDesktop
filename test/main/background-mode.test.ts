@@ -43,6 +43,17 @@ function setup() {
 }
 
 describe("background window lifecycle", () => {
+	test("hands the tray to root and restores it when returning without marking the user session as quitting", () => {
+		const app = setup();
+		app.mode.loadBehavior("tray");
+		app.mode.suspendTray();
+		app.window.hide();
+		app.mode.loadBehavior("tray");
+		app.mode.showWindow();
+		expect(app.calls).toEqual(["createTray", "destroyTray", "hide", "createTray", "show", "focus"]);
+		app.close();
+		expect(app.calls.slice(-2)).toEqual(["preventClose", "hide"]);
+	});
 	test("quit behavior closes instead of hiding, without intercepting the final close", () => {
 		const app = setup();
 		app.mode.setBehavior("quit");

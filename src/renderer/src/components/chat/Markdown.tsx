@@ -1,6 +1,7 @@
 import { isValidElement, memo, useMemo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
+import { markdownMentions, type MarkdownMention } from "../../lib/markdownMentions";
 import { cn } from "../../lib/utils";
 import { MarkdownLink } from "./WebSources";
 import { MermaidDiagram } from "./MermaidDiagram";
@@ -9,7 +10,8 @@ import { OpenUIBlock } from "./OpenUIBlock";
 // Stable links use the application's safe opener instead of navigating Electron.
 
 /** One message renderer for the main transcript and auxiliary-agent panels. */
-export const Markdown = memo(function Markdown({ text, user, streaming = false, documentId }: { text: string; user?: boolean; streaming?: boolean; documentId?: string }) {
+export const Markdown = memo(function Markdown({ text, user, streaming = false, documentId, mentions }: { text: string; user?: boolean; streaming?: boolean; documentId?: string; mentions?: readonly MarkdownMention[] }) {
+	const rehypePlugins = useMemo(() => mentions ? [...(markdownRehypePlugins ?? []), markdownMentions(mentions)] : markdownRehypePlugins, [mentions]);
 	const components = useMemo<Components>(() => ({
 		a: MarkdownLink,
 		pre: ({ children, node, ...props }) => {
@@ -24,7 +26,7 @@ export const Markdown = memo(function Markdown({ text, user, streaming = false, 
 	}), [user, streaming, documentId]);
 	return (
 		<div className={cn("chat-markdown", user && "chat-markdown--user")}>
-			<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={markdownRehypePlugins} components={components}>{text}</ReactMarkdown>
+			<ReactMarkdown remarkPlugins={markdownRemarkPlugins} rehypePlugins={rehypePlugins} components={components}>{text}</ReactMarkdown>
 		</div>
 	);
 });

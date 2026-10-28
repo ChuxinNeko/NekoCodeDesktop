@@ -462,6 +462,26 @@ describe("GitHub workbench service", () => {
     ).rejects.toThrow("超时");
   });
 
+  test("credential lookup is bounded and a late token cannot start an abandoned operation", async () => {
+    const release: Array<(value: { token: string; source: "settings" }) => void> = [];
+    let requests = 0;
+    const service = new GitHubClientService(
+      { resolveToken: () => new Promise((resolve) => { release.push(resolve); }) },
+      {
+        timeoutMs: 10,
+        request: async () => { requests++; return Response.json(rawRepo); },
+      },
+    );
+    const results = await Promise.allSettled([
+      service.execute({ action: "repository", repo }),
+      service.execute({ action: "jobLog", repo, job: 1 }),
+    ]);
+    expect(results.every((r) => r.status === "rejected" && String(r.reason).includes("超时"))).toBe(true);
+    for (const resolve of release) resolve({ token: "late-token", source: "settings" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests).toBe(0);
+  });
+
   test("resolves a local checkout without reading or returning its remote credentials", async () => {
     const f = fixture();
     expect(

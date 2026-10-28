@@ -16,11 +16,11 @@ export function TeamConversationMessages({ team, posts, work, onStop }: {
 			const member = team.members.find(member => member.id === post.memberId);
 			const user = post.memberId === "user";
 			return <article key={post.id} data-team-post={post.id} data-message-kind={post.kind} className={cn("flex items-start gap-3", user && "flex-row-reverse")}>
-				{member ? <TeamAvatar member={member} size={28} /> : <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-[10px]">{post.memberId === "user" ? (zh ? "我" : "You") : "↗"}</span>}
-				<div className={cn("min-w-0 space-y-1.5", user ? "max-w-[85%]" : "flex-1")}>
-					<div className={cn("flex items-baseline gap-2 text-[11px]", user && "justify-end")}><span className="font-medium text-foreground/80">{post.name === "User" ? (zh ? "你" : "You") : post.name}</span><time className="text-[10px] tabular-nums text-muted-foreground/60">{new Date(post.at).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" })}</time></div>
-					<div className={cn("text-[length:var(--app-font-size-ui,12px)] leading-relaxed", user ? "rounded-2xl rounded-tr-md bg-muted/60 px-4 py-3" : "py-1", post.kind === "assignment" && "border-l-2 border-border/70 pl-3 text-muted-foreground", post.kind === "notice" && "rounded-xl bg-muted/25 px-3 py-2 text-muted-foreground")}>
-						<Markdown text={post.text} />
+				{user ? null : member ? <TeamAvatar member={member} size={28} /> : <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-[10px]">↗</span>}
+				<div className={cn("flex min-w-0 max-w-[85%] flex-col gap-1.5", user ? "items-end" : "items-start")}>
+					<div className={cn("flex items-baseline gap-2 text-[11px]", user && "justify-end")}>{!user ? <span className="font-medium text-foreground/80">{post.name}</span> : null}<time className="text-[10px] tabular-nums text-muted-foreground/60">{new Date(post.at).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" })}</time></div>
+					<div data-team-bubble={user ? "user" : "bot"} className={cn("team-bubble min-w-0 max-w-full rounded-2xl border border-border/40 bg-muted/60 px-4 py-3 text-[length:var(--app-font-size-ui,12px)] leading-relaxed [overflow-wrap:anywhere]", user ? "rounded-tr-md" : "rounded-tl-md", post.kind === "notice" && "text-muted-foreground", post.status === "failed" && "border-destructive/40")}>
+						<Markdown text={post.text} mentions={team.members} streaming={post.status === "streaming"} />
 						{post.status === "streaming" ? <span className="mt-2 block text-[10px] text-muted-foreground">{zh ? "正在输入…" : "Typing…"}</span> : null}
 						{post.status === "failed" ? <span className="mt-2 block text-[10px] text-destructive">{zh ? "回复已中断" : "Reply interrupted"}</span> : null}
 					</div>

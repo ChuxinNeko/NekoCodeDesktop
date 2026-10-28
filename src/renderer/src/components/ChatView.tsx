@@ -18,8 +18,6 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 import { WorkflowPanel } from "./chat/WorkflowPanel";
-import { AcceptanceCenter } from "./chat/AcceptanceCenter";
-import { buildAcceptanceReport } from "../../../shared/acceptance";
 import { ExtensionPanel, ExtensionWidgetsBelow } from "./chat/ExtensionPanel";
 import { GoalBanner } from "./chat/GoalBanner";
 import { readGoalState, type GoalAction } from "../../../shared/goal";
@@ -436,9 +434,6 @@ export function ChatView(props: ChatViewProps) {
 					)}
 				</div>
 
-				<AcceptanceCenter key={snapshot.session.id} report={snapshot.acceptance ?? buildAcceptanceReport(snapshot.cells, snapshot.streaming)}
-					disabled={busy || snapshot.streaming || !!snapshot.workflow.request} incomplete={!snapshot.acceptance && !!snapshot.earlierCells}
-					onRequestVerification={text => props.onSend({ text })} />
 				{props.headerActions}
 			</header>
 
@@ -560,6 +555,8 @@ export function ChatView(props: ChatViewProps) {
 					else props.onInsertionConsumed?.(id);
 				}}
 				disabled={busy || !!snapshot.workflow.request}
+				queueScope={snapshot.session.id}
+				onQueueSend={props.onInteractiveSend}
 				streaming={
 					snapshot.streaming || snapshot.workflow.tasks.some((task) => task.status === "running")
 				}

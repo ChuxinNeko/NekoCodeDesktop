@@ -4,7 +4,7 @@ import type { WorkspaceView } from "../App";
 import { useTranslation, type TranslationKey } from "../i18n";
 import {
 	GitBranchIcon, GitHubIcon, GlobeIcon, KanbanIcon,
-	MessageCircleIcon, MoonIcon, SettingsIcon, SunIcon, WorkflowIcon,
+	MessageCircleIcon, MoonIcon, SettingsIcon, SunIcon, UsersIcon, WorkflowIcon,
 } from "../lib/icons";
 import { cn } from "../lib/utils";
 import { IconButton } from "./ui/icon-button";
@@ -15,6 +15,7 @@ const DESTINATIONS: ReadonlyArray<{
 	icon: typeof MessageCircleIcon;
 }> = [
 	{ id: "chat", labelKey: "nav.chat", icon: MessageCircleIcon },
+	{ id: "team", labelKey: "nav.team", icon: UsersIcon },
 	{ id: "tasks", labelKey: "nav.tasks", icon: KanbanIcon },
 	{ id: "review", labelKey: "nav.review", icon: GitBranchIcon },
 	{ id: "pull-requests", labelKey: "nav.pullRequests", icon: GitHubIcon },

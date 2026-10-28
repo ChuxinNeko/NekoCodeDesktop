@@ -510,6 +510,7 @@ export class AcpService {
 	async prompt(request: AcpPromptRequest): Promise<void> {
 		const session = this.require(request.sessionId);
 		this.touched.set(session.id, ++this.touchSequence);
+		if (request.steer) return session.steer(request.text, request.images ?? []);
 		const turn = session.prompt(request.text, request.images ?? []);
 		// A turn that ends changes the agent's history — its title, its time.
 		turn.then(

@@ -27,6 +27,8 @@ import { QqBotService } from "./qqbot/service";
 import { renderBlock } from "./qqbot/code-image";
 import { LanService } from "./lan-service";
 import { settleLinuxKeyring } from "./linux-keyring";
+import { currentLinuxIdentity, LinuxRunModeService, ROOT_SESSION_ENV, RETURN_TO_USER_EXIT_CODE, rootReadyMessage } from "./linux-run-mode";
+import { isLinuxRunMode, type LinuxRunMode } from "../shared/linux-run-mode";
 import { RelayService } from "./relay-service";
 import type {
 	RelayLoginRequest,
@@ -101,7 +103,7 @@ import { TerminalService } from "./terminal-service";
 import { TokenStatsService } from "./token-stats";
 import { tokenUsageCsv } from "./token-usage-export";
 import { AppInstallService, appVersionInfo, AppUpdateService, type InstallUpdater } from "./app-updates";
-import { createUpdateFetch } from "./update-network";
+import { createGitHubFetch } from "./github-network";
 import type {
 	InstallPluginRequest,
 	PluginActionRequest,
@@ -489,6 +491,12 @@ let githubAuth: GitHubAuthService | null = null;
 let githubLogin: GitHubLoginService | null = null;
 let pullRequests: PullRequestService | null = null;
 let githubClient: GitHubClientService | null = null;
+// Shared by GitHub API, credentials, OAuth and update checks. Kept separate
+// from browser cookies and the model provider's Node dispatcher.
+const githubFetch = createGitHubFetch({
+	session: () => session.fromPartition("nekocode-github"),
+	proxy: () => proxyService?.current() ?? { manual: null, source: "none" },
+});
 let tokenStats: TokenStatsService | null = null;
 let modelPricing: ModelPricingService | null = null;
 
@@ -767,6 +775,7 @@ const WINDOW_REVEAL_TIMEOUT_MS = 2000;
 const displayScaleRefreshers = new Set<() => void>();
 let mainWindow: BrowserWindow | null = null;
 let backgroundMode: BackgroundMode | null = null;
+let linuxRunMode: LinuxRunModeService | null = null;
 
 function createWindow(): void {
 	preferences ??= new AppPreferencesStore(app.getPath("userData"));
@@ -824,10 +833,17 @@ function createWindow(): void {
 	let revealTimer: NodeJS.Timeout | undefined;
 	const reveal = () => {
 		clearTimeout(revealTimer);
+		if (linuxRunMode?.focusRoot()) return;
 		if (!win.isDestroyed() && !win.isVisible()) win.show();
 	};
 	revealTimer = setTimeout(reveal, WINDOW_REVEAL_TIMEOUT_MS);
 	win.once("ready-to-show", reveal);
+	win.webContents.once("did-finish-load", () => {
+		const token = process.env[ROOT_SESSION_ENV];
+		if (process.platform === "linux" && process.getuid?.() === 0 && token) {
+			process.stdout.write(rootReadyMessage(token));
+		}
+	});
 	win.on("close", (event) => {
 		clearTimeout(revealTimer);
 		win.removeListener("ready-to-show", reveal);
@@ -1025,13 +1041,13 @@ function createWindow(): void {
 	});
 	terminalService = new TerminalService(win, () => ssh().service);
 
-	if (!githubAuth) githubAuth = new GitHubAuthService();
+	if (!githubAuth) githubAuth = new GitHubAuthService(githubFetch);
 	// Push/pull fall back to the signed-in GitHub account when git has no credentials.
 	configureGitAuth(async () => (await githubAuth?.resolveToken())?.token ?? null);
-	if (!githubLogin) githubLogin = new GitHubLoginService(new GitHubOAuthClient(), (url) => shell.openExternal(url),
+	if (!githubLogin) githubLogin = new GitHubLoginService(new GitHubOAuthClient(githubFetch), (url) => shell.openExternal(url),
 		(grant, active) => githubAuth!.saveOAuth(grant, active), () => githubAuth!.assertStorage());
-	if (!pullRequests) pullRequests = new PullRequestService(githubAuth);
-	if (!githubClient) githubClient = new GitHubClientService(githubAuth, { resolveRepository: async (cwd) => {
+	if (!pullRequests) pullRequests = new PullRequestService(githubAuth, githubFetch);
+	if (!githubClient) githubClient = new GitHubClientService(githubAuth, { request: githubFetch, resolveRepository: async (cwd) => {
 		const repository = await pullRequests!.resolveRepository(cwd);
 		return repository ? `${repository.owner}/${repository.repo}` : null;
 	} });
@@ -1095,11 +1111,7 @@ function registerIpc(): void {
 	const appUpdates = new AppUpdateService({
 		currentVersion: () => versionInfo().version,
 		resolveToken: async () => (await githubAuth?.resolveToken())?.token ?? null,
-		fetch: createUpdateFetch({
-			// An isolated, memory-only session avoids changing browser/model traffic.
-			session: () => session.fromPartition("nekocode-updates"),
-			proxy: () => proxyService?.current() ?? { manual: null, source: "none" },
-		}),
+		fetch: githubFetch,
 	});
 	ipcMain.handle("app:version", versionInfo);
 	ipcMain.handle("app:checkForUpdates", () => appUpdates.check());
@@ -1634,6 +1646,25 @@ function registerIpc(): void {
 		preferences ??= new AppPreferencesStore(app.getPath("userData"));
 		return preferences.get();
 	});
+	// Deliberately excluded from the WebUI RPC allowlist: only the local app may switch identities.
+	ipcMain.handle("linuxRunMode:status", () => linuxRunMode?.status());
+	ipcMain.handle("linuxRunMode:apply", async (event, mode: LinuxRunMode) => {
+		if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+			throw new Error("Run mode may only be changed from the desktop window.");
+		}
+		if (!isLinuxRunMode(mode) || !linuxRunMode || process.platform !== "linux") throw new Error("Invalid Linux run mode");
+		const status = linuxRunMode.status();
+		if (mode === status.mode) return;
+		if (mode === "root") await linuxRunMode.elevate();
+		else {
+			if (!status.canReturn) throw new Error("Start the application from your normal desktop user to return to that user.");
+			// Let the IPC reply flush before closing the root instance and restoring the user process.
+			setTimeout(() => {
+				app.once("will-quit", () => app.exit(RETURN_TO_USER_EXIT_CODE));
+				app.quit();
+			}, 100);
+		}
+	});
 	ipcMain.handle("team:snapshot", () => teamWorkspaceStore?.snapshot());
 	ipcMain.handle("team:action", (_event, action: TeamWorkspaceAction) => {
 		if (!action || typeof action !== "object") throw new Error("Invalid team action");
@@ -1642,6 +1673,9 @@ function registerIpc(): void {
 	ipcMain.handle("team:send", (_event, request: TeamSendRequest) => teamWorkspaceService?.send(request));
 	ipcMain.handle("team:stop", (_event, roomId: string, memberId?: string) => teamWorkspaceService?.stop(roomId, memberId));
 	ipcMain.handle("preferences:update", (_e, patch: Partial<AppPreferences>): AppPreferences => {
+		// Run mode has a separate local-only authorization flow.
+		const { linuxRunAs: _linuxRunAs, ...ordinaryPatch } = patch;
+		patch = ordinaryPatch;
 		preferences ??= new AppPreferencesStore(app.getPath("userData"));
 		const previous = preferences.get();
 		let next: AppPreferences;
@@ -2124,10 +2158,26 @@ const PROXY_STARTUP_TIMEOUT_MS = 3000;
 // starting another set of agents, service ports and automation timers.
 const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
-app.on("second-instance", () => backgroundMode?.showWindow());
+app.on("second-instance", () => { if (!linuxRunMode?.focusRoot()) backgroundMode?.showWindow(); });
 nativeAutoUpdater.on("before-quit-for-update", () => backgroundMode?.beginQuit());
 
 if (ownsInstance) app.whenReady().then(async () => {
+	if (process.platform === "linux" && process.getuid?.() === 0 && process.env[ROOT_SESSION_ENV]) {
+		// The unprivileged supervisor owns this pipe; its exit must not leave a root app behind.
+		process.stdin.on("end", () => app.quit());
+		process.stdin.setEncoding("utf8");
+		let commands = "";
+		process.stdin.on("data", (data: string) => {
+			commands = (commands + data).slice(-1024);
+			let newline: number;
+			while ((newline = commands.indexOf("\n")) !== -1) {
+				const command = commands.slice(0, newline);
+				commands = commands.slice(newline + 1);
+				if (command === "show") backgroundMode?.showWindow();
+			}
+		});
+		process.stdin.resume();
+	}
 	// Before anything touches safeStorage: over remote desktop the keyring
 	// Chromium picked is often unreachable, and only a relaunch can switch.
 	const keyring = settleLinuxKeyring(safeStorage, app);
@@ -2223,6 +2273,29 @@ if (ownsInstance) app.whenReady().then(async () => {
 	backgroundMode.loadBehavior(preferences.get().closeBehavior);
 	powerMonitor.on("shutdown", () => backgroundMode?.beginQuit());
 	createWindow();
+	linuxRunMode = new LinuxRunModeService({
+		platform: process.platform, ...currentLinuxIdentity(), packaged: app.isPackaged,
+		executable: process.env.APPIMAGE || process.execPath, env: process.env,
+		onReady: () => {
+			preferences!.update({ linuxRunAs: "root" });
+			backgroundMode?.suspendTray();
+			mainWindow?.hide();
+		},
+		onReturn: () => {
+			preferences!.update({ linuxRunAs: "current" });
+			backgroundMode?.loadBehavior(preferences!.get().closeBehavior);
+			backgroundMode?.showWindow();
+		},
+		onExit: () => app.quit(),
+	});
+	if (process.platform === "linux" && process.getuid?.() !== 0 && preferences.get().linuxRunAs === "root") {
+		void linuxRunMode.elevate().catch((error: unknown) => {
+			// Failed/cancelled authentication never traps the user in a startup loop.
+			preferences!.update({ linuxRunAs: "current" });
+			backgroundMode?.showWindow();
+			dialog.showErrorBox("NekoCode — Linux root", error instanceof Error ? error.message : String(error));
+		});
+	}
 	void webUiService.startConfigured().catch((error: unknown) =>
 		console.error("Could not start the WebUI server:", error),
 	);

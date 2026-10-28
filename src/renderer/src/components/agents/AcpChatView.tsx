@@ -15,8 +15,6 @@ import { cn } from "../../lib/utils";
 import { ChevronDownIcon, TriangleAlertIcon, XIcon } from "../../lib/icons";
 import { MUTED_LABEL_TEXT_CLASS_NAME } from "../../surfaceStyles";
 import { Transcript } from "../Transcript";
-import { AcceptanceCenter } from "../chat/AcceptanceCenter";
-import { buildAcceptanceReport } from "../../../../shared/acceptance";
 import { ConversationTimeline } from "../chat/ConversationTimeline";
 import { jumpToTimelinePrompt } from "../../lib/timeline";
 import { Button } from "../ui/button";
@@ -328,9 +326,6 @@ export function AcpChatView(props: AcpChatViewProps) {
 						<ProjectPicker cwd={props.cwd} onPickProject={props.onPickProject} />
 					</div>
 				)}
-				{snapshot && !fresh ? <AcceptanceCenter key={snapshot.id} report={snapshot.acceptance ?? buildAcceptanceReport(snapshot.cells, snapshot.streaming)}
-					disabled={busy || snapshot.streaming || !!snapshot.permissions.length || snapshot.status !== "ready" || props.disabled}
-					incomplete={!snapshot.acceptance && !!snapshot.earlierCells} onRequestVerification={text => props.onSend({ text })} /> : null}
 				{props.headerActions}
 			</header>
 			{error ? (
@@ -415,9 +410,12 @@ export function AcpChatView(props: AcpChatViewProps) {
 				context={snapshot?.context ? { ...snapshot.context, source: "acp" } : undefined}
 				// An unsent conversation that failed to start is replaced on send.
 				disabled={props.disabled || !props.cwd || (snapshot?.status === "error" && !snapshot.pristine)}
+				queueScope={snapshot?.id ?? `new:${agent.id}:${props.cwd ?? ""}`}
 				header={props.composerHeader}
 				loadCommands={snapshot ? commands : undefined}
 				onAbort={props.onAbort}
+				onSteer={snapshot?.supportsSteering ? request => api.acpPrompt({ sessionId: snapshot.id, text: request.text, images: request.images, steer: true }) : undefined}
+				onQueueSend={snapshot ? request => api.acpPrompt({ sessionId: snapshot.id, text: request.text, images: request.images }) : undefined}
 				onSend={(request) => {
 					scroll.stick();
 					props.onSend(request);

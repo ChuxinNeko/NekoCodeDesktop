@@ -1,4 +1,5 @@
 import type { ExplainSelectionRequest, ExplainSelectionResult } from "../../shared/selection-explanation";
+import type { LinuxRunMode, LinuxRunModeStatus } from "../../shared/linux-run-mode";
 import type { GitHubAuthorization, GitHubAuthorizationMethod, GitHubAuthorizationPoll } from "../../shared/github-oauth";
 import type { GitHubProfile } from "../../shared/github-profile";
 import type { GitHubClientRequest, GitHubClientResult } from "../../shared/github-client";
@@ -343,6 +344,8 @@ export interface AgentApi {
 	/** Take finished tasks off the board; their sessions stay in the sidebar. */
 	agentDismissTasks(sessionIds: string[]): Promise<void>;
 	preferencesGet(): Promise<AppPreferences>;
+	linuxRunModeStatus(): Promise<LinuxRunModeStatus>;
+	linuxRunModeApply(mode: LinuxRunMode): Promise<void>;
 	teamSnapshot(): Promise<TeamWorkspaceSnapshot>;
 	teamAction(action: TeamWorkspaceAction): Promise<TeamRoom | TeamMemory | undefined>;
 	teamSend(request: TeamSendRequest): Promise<SendPromptResult>;

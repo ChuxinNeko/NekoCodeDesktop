@@ -41,9 +41,9 @@ export function ContextUsageReport({ context }: { context: ContextUsage }) {
 	const unknown = Math.max(0, context.used - total);
 	const scale = Math.max(context.window, context.used, total, 1);
 	const exact = (value: number) => new Intl.NumberFormat(language).format(value);
-	return <div className="p-4" data-slot="context-usage-report">
-		<div className="mb-4 flex items-center justify-between gap-3">
-			<Popover.Title className="text-[13px] font-medium text-foreground">{t("context.reportTitle")}</Popover.Title>
+	return <div className="p-3" data-slot="context-usage-report">
+		<div className="mb-2 flex items-center justify-between gap-2">
+			<Popover.Title className="text-[12px] font-medium text-foreground">{t("context.reportTitle")}</Popover.Title>
 			<div className="flex items-center gap-2">
 				{context.source === "acp" ? <span className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">ACP</span> : null}
 				<Popover.Close aria-label={t("context.closeReport")} className="flex size-6 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-ring">
@@ -51,28 +51,28 @@ export function ContextUsageReport({ context }: { context: ContextUsage }) {
 				</Popover.Close>
 			</div>
 		</div>
-		<div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-[12px] text-muted-foreground tabular-nums">
+		<div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-[11px] text-muted-foreground tabular-nums">
 			<span>{t("context.full", { percent })}</span>
 			<span title={`${exact(context.used)} / ${exact(context.window)} Tokens`}>{tokens(context.used)} / {tokens(context.window)} Tokens</span>
 		</div>
 		<div role="progressbar" aria-label={t("context.title")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(percent, 100)} aria-valuetext={t("context.full", { percent })}
-			className="mb-4 flex h-1.5 overflow-hidden rounded-full bg-foreground/10">
+			className="mb-3 flex h-1 overflow-hidden rounded-full bg-foreground/10">
 			{rows.filter((row) => row.value !== undefined && row.value > 0).map((row) => <span key={row.id} className="h-full shrink-0 rounded-[1px]" style={{ width: `${row.value! / scale * 100}%`, backgroundColor: row.color }} />)}
 			{unknown > 0 ? <span className="h-full shrink-0 rounded-[1px] bg-foreground/40" style={{ width: `${unknown / scale * 100}%` }} /> : null}
 		</div>
-		<dl className="space-y-3">
-			{rows.map((row) => <div key={row.id} className="flex items-center justify-between gap-6 text-[12px]">
-				<dt className="flex min-w-0 items-center gap-2.5"><span aria-hidden="true" className="size-3 shrink-0 rounded-[3px]" style={{ backgroundColor: row.color }} /><span>{t(`context.category.${row.id}`)}</span></dt>
+		<dl className="space-y-2">
+			{rows.map((row) => <div key={row.id} className="flex items-center justify-between gap-4 text-[11px]">
+				<dt className="flex min-w-0 items-center gap-2"><span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: row.color }} /><span>{t(`context.category.${row.id}`)}</span></dt>
 				<dd className="shrink-0 tabular-nums text-muted-foreground" title={row.value === undefined ? t("context.notReported") : exact(row.value)}>
 					{row.value === undefined ? "—" : `${context.breakdownEstimated && row.value > 0 ? "~" : ""}${tokens(row.value)}`}
 				</dd>
 			</div>)}
-			{unknown > 0 ? <div className="flex items-center justify-between gap-6 border-t border-border/60 pt-3 text-[12px] text-muted-foreground"><dt>{t("context.unclassified")}</dt><dd className="tabular-nums">{tokens(unknown)}</dd></div> : null}
+			{unknown > 0 ? <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-2 text-[11px] text-muted-foreground"><dt>{t("context.unclassified")}</dt><dd className="tabular-nums">{tokens(unknown)}</dd></div> : null}
 		</dl>
-		<p className="mt-4 border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+		<p className="mt-3 border-t border-border/60 pt-2 text-[10px] leading-normal text-muted-foreground">
 			{context.breakdownSource === "codex-rollout" ? t("context.codexEstimatedHint") : context.breakdownEstimated ? t("context.estimatedHint") : context.source === "acp" ? t("context.acpHint") : t("context.noBreakdownHint")}
 		</p>
-		{ratio >= WARN_AT ? <p className={cn("mt-2 text-[11px] leading-relaxed", ratio >= DANGER_AT ? "text-destructive" : "text-[var(--warning)]")}>{t("context.hintNearFull")}</p> : null}
+		{ratio >= WARN_AT ? <p className={cn("mt-2 text-[10px] leading-normal", ratio >= DANGER_AT ? "text-destructive" : "text-[var(--warning)]")}>{t("context.hintNearFull")}</p> : null}
 	</div>;
 }
 
@@ -92,7 +92,7 @@ export function ContextGauge({ context }: { context: ContextUsage }) {
 		</Popover.Trigger>
 		<Popover.Portal>
 			<Popover.Positioner side="top" align="end" sideOffset={10} collisionPadding={12} collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "start" }} className="z-[80]">
-				<Popover.Popup initialFocus={false} aria-label={t("context.reportTitle")} className="max-h-[var(--available-height)] w-[min(26rem,var(--available-width))] overflow-y-auto overscroll-contain rounded-xl border border-border/70 bg-popover/70 text-popover-foreground shadow-xl backdrop-blur-2xl backdrop-saturate-150 outline-none">
+				<Popover.Popup initialFocus={false} aria-label={t("context.reportTitle")} className="max-h-[var(--available-height)] w-[min(20rem,var(--available-width))] overflow-y-auto overscroll-contain rounded-xl border border-border/70 bg-popover/70 text-popover-foreground shadow-xl backdrop-blur-2xl backdrop-saturate-150 outline-none">
 					<ContextUsageReport context={context} />
 				</Popover.Popup>
 			</Popover.Positioner>

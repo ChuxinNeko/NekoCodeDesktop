@@ -18,6 +18,7 @@ interface ComposerProps {
 	insertion?: ComposerInsertion | null;
 	onInsertionConsumed?: (id: string) => void;
 	disabled: boolean;
+	queueScope: string;
 	streaming: boolean;
 	models: ModelOption[];
 	modelKey: string | null;
@@ -28,6 +29,7 @@ interface ComposerProps {
 	workMode: WorkMode;
 	agentPhase: AgentPhase;
 	onSend: (request: SendPromptRequest) => void;
+	onQueueSend?: (request: SendPromptRequest) => Promise<void>;
 	onSendBackground?: (text: string) => void;
 	allowImageAttachments?: boolean;
 	context?: ContextUsage;
@@ -67,8 +69,11 @@ export function Composer(props: ComposerProps) {
 			insertion={props.insertion}
 			onInsertionConsumed={props.onInsertionConsumed}
 			disabled={props.disabled}
+			queueScope={props.queueScope}
 			onAbort={props.onAbort}
 			onSend={props.onSend}
+			onQueueSend={props.onQueueSend}
+			onSteer={props.onQueueSend ?? props.onSend}
 			onSendBackground={props.onSendBackground}
 			supportsImages={supportsImages}
 			allowImageAttachments={props.allowImageAttachments}

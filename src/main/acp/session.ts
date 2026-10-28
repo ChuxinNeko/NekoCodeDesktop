@@ -149,6 +149,10 @@ export class AcpSession {
 	private contextTimer: ReturnType<typeof setTimeout> | undefined;
 	private contextRead: Promise<void> = Promise.resolve();
 	private supportsImages = false;
+	private supportsSteering = false;
+	private steeringPending = 0;
+	private steeringNewTurn = false;
+	private codexThreadActive = false;
 	private supportsDelete = false;
 	private deleting = false;
 	private authMethods: string[] = [];
@@ -197,7 +201,7 @@ export class AcpSession {
 	/** A ready session can still own a queued prompt or configuration request. */
 	get canEvict(): boolean {
 		return (this.status === "ready" || this.status === "error") &&
-			!this.promptPending && !this.pendingConfig && this.permissions.size === 0;
+			!this.promptPending && !this.steeringPending && !this.pendingConfig && this.permissions.size === 0;
 	}
 
 	summary(): AcpSessionSummary {
@@ -236,6 +240,7 @@ export class AcpSession {
 			commands: this.projection.commands,
 			permissions: [...this.permissions.values()].map((pending) => pending.request),
 			supportsImages: this.supportsImages,
+			supportsSteering: this.supportsSteering,
 		};
 	}
 
@@ -282,6 +287,8 @@ export class AcpSession {
 				`${this.agent.name} 启动超时`,
 			);
 			if (isObject(init)) {
+				const meta = isObject(init._meta) ? init._meta : {};
+				this.supportsSteering = isObject(meta.steering) && meta.steering.supported === true;
 				const capabilities = isObject(init.agentCapabilities) ? init.agentCapabilities : {};
 				const prompt = isObject(capabilities.promptCapabilities) ? capabilities.promptCapabilities : {};
 				this.supportsImages = prompt.image === true;
@@ -454,6 +461,19 @@ export class AcpSession {
 		}
 		if (method !== "session/update" || !isObject(params)) return;
 		if (this.agentSessionId && params.sessionId !== this.agentSessionId) return;
+		const update = params.update;
+		if (isObject(update) && update.sessionUpdate === "session_info_update" && isObject(update._meta) && isObject(update._meta.codex)) {
+			const threadStatus = update._meta.codex.threadStatus;
+			if (isObject(threadStatus)) {
+				this.codexThreadActive = threadStatus.type === "active";
+				if (this.steeringNewTurn && !this.codexThreadActive) {
+					this.steeringNewTurn = false;
+					this.projection.finishTurn("end_turn");
+					this.status = "ready";
+					this.changed();
+				}
+			}
+		}
 		if (this.projection.apply(params.update)) this.changed();
 		if (isObject(params.update) && params.update.sessionUpdate === "usage_update" && this.codexContext && !this.contextTimer) {
 			this.contextTimer = setTimeout(() => {
@@ -574,6 +594,41 @@ export class AcpSession {
 	/** Closed by the user or died mid-turn; either way the turn's end is moot. */
 	private gone(): boolean {
 		return this.disposed || this.status === "error";
+	}
+
+	/** Inject guidance into the live turn without sending session/cancel. */
+	async steer(text: string, images: PromptImageAttachment[] = []): Promise<void> {
+		this.steeringPending++;
+		try {
+			await this.steerOnce(text, images);
+		} finally {
+			this.steeringPending--;
+		}
+	}
+
+	private async steerOnce(text: string, images: PromptImageAttachment[]): Promise<void> {
+		if (!this.supportsSteering) throw new Error(`${this.agent.name} 不支持运行中引导`);
+		if (this.status !== "prompting") {
+			// The queued row may be clicked just as the original turn finishes.
+			const turn = this.prompt(text, images);
+			await Promise.race([turn, Promise.resolve()]);
+			return;
+		}
+		const { connection, sessionId } = this.requireReady();
+		if (images.length && !this.supportsImages) throw new Error(`${this.agent.name} 不支持图片输入`);
+		const prompt: unknown[] = [];
+		if (text) prompt.push({ type: "text", text });
+		for (const image of images) prompt.push({ type: "image", mimeType: image.mimeType, data: image.data });
+		const result = await connection.request("_session/steering", { sessionId, prompt });
+		if (!isObject(result) || !["injected", "startedNewTurn"].includes(String(result.outcome))) {
+			throw new Error("引导消息未被代理接受，请重试");
+		}
+		this.projection.addSteeringPrompt(userText(text, images));
+		if (result.outcome === "startedNewTurn" && this.codexThreadActive) {
+			this.steeringNewTurn = true;
+			this.status = "prompting";
+		}
+		this.changed();
 	}
 
 	/** Run one turn. Resolves when the agent finishes it, however it ends. */
@@ -712,7 +767,7 @@ export class AcpSession {
 		await this.refreshCodexContext();
 		if (this.gone()) return;
 		this.cancelPermissions();
-		this.status = "ready";
+		this.status = this.steeringNewTurn ? "prompting" : "ready";
 		this.changed();
 	}
 

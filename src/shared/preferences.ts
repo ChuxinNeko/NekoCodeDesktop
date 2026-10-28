@@ -13,6 +13,8 @@ export function isWindowCloseBehavior(value: unknown): value is WindowCloseBehav
 }
 
 export interface AppPreferences {
+	/** Linux desktop launcher preference; changed only through its local run-mode IPC. */
+	linuxRunAs: import("./linux-run-mode").LinuxRunMode;
 	/** Close the application, or hide its window while tasks continue in the tray. */
 	closeBehavior: WindowCloseBehavior;
 	/** null follows the current display; a percentage overrides app zoom. */
@@ -64,6 +66,7 @@ export interface CommandShellOption {
 }
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
+	linuxRunAs: "current",
 	closeBehavior: "tray",
 	uiScalePercent: null,
 	notifyOnTaskFinish: true,

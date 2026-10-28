@@ -7,7 +7,8 @@ import { api, errorMessage } from "../../api";
 import { useTranslation } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { PencilIcon, PlusIcon, RotateCcwIcon, TrashCanIcon, UploadIcon } from "../../lib/icons";
-import { fileToAvatarImage, TeamAvatarImageError } from "../../lib/teamAvatarImage";
+import { decodeAvatarImage, TeamAvatarImageError } from "../../lib/teamAvatarImage";
+import { AvatarCropDialog } from "./AvatarCropDialog";
 import { RAISED_SURFACE_BORDER_CLASS_NAME } from "../chat/composerPickerStyles";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -298,6 +299,10 @@ function MemberDialog({
 	const [draft, setDraft] = useState<TeamMember>(member);
 	const [imageBusy, setImageBusy] = useState(false);
 	const [imageError, setImageError] = useState<string | null>(null);
+	const [cropSource, setCropSource] = useState<ImageBitmap | null>(null);
+	const imageRequest = useRef(0);
+	useEffect(() => () => { imageRequest.current++; }, []);
+	useEffect(() => () => cropSource?.close(), [cropSource]);
 	const fileInput = useRef<HTMLInputElement>(null);
 
 	const name = draft.name.trim();
@@ -313,15 +318,19 @@ function MemberDialog({
 	const modelLabel = draft.modelKey ? models.find((model) => model.key === draft.modelKey)?.label ?? `${draft.modelKey} · ${t("team.modelMissing")}` : t("team.followChatModel");
 	const chooseImage = async (file: File | undefined) => {
 		if (!file) return;
+		const request = ++imageRequest.current;
 		setImageError(null);
 		setImageBusy(true);
 		try {
-			patch({ avatar: { ...avatar, image: await fileToAvatarImage(file) } });
+			const bitmap = await decodeAvatarImage(file);
+			if (request === imageRequest.current) setCropSource(bitmap);
+			else bitmap.close();
 		} catch (cause) {
+			if (request !== imageRequest.current) return;
 			const code = cause instanceof TeamAvatarImageError ? cause.code : "invalid";
 			setImageError(t(`team.avatarError.${code}`));
 		} finally {
-			setImageBusy(false);
+			if (request === imageRequest.current) setImageBusy(false);
 		}
 	};
 
@@ -479,6 +488,7 @@ function MemberDialog({
 							{t("common.save")}
 						</Button>
 					</div>
+					{cropSource ? <AvatarCropDialog bitmap={cropSource} onCancel={() => setCropSource(null)} onConfirm={image => { patch({ avatar: { ...avatar, image } }); setCropSource(null); }} /> : null}
 				</Dialog.Popup>
 			</Dialog.Portal>
 		</Dialog.Root>

@@ -19,6 +19,7 @@ test("opening and two assignments remain separate named bubbles while members wo
 	const finished = render(posts.map(post => ({ ...post, status: "done" })), []);
 	for (const html of [live, finished]) {
 		expect((html.match(/data-team-post=/g) ?? []).length).toBe(4);
+		expect((html.match(/data-team-bubble="bot"/g) ?? []).length).toBe(4);
 		expect((html.match(/data-message-kind="assignment"/g) ?? []).length).toBe(2);
 		expect(html.indexOf("先制作自我介绍")).toBeLessThan(html.indexOf("@Coder"));
 		expect(html.indexOf("编写 HTML")).toBeLessThan(html.indexOf("检查页面"));
@@ -26,4 +27,32 @@ test("opening and two assignments remain separate named bubbles while members wo
 	}
 	expect(live).toContain("正在输入");
 	expect(finished).not.toContain("正在输入");
+});
+
+test("roster mentions and all are highlighted in prose without touching code, emails or links", () => {
+	const text = "**@coder**，请 @Reviewer 协助 @all。 @Unknown name@Coder.com @CoderExtra @Coder_2 @Coder-2\n\n`@Coder` [@Reviewer](https://example.com)\n\n```text\n@Coder\n```";
+	const html = render([{ ...posts[0], text }], []);
+	expect((html.match(/data-team-mention=/g) ?? []).length).toBe(3);
+	expect(html).toContain('data-team-mention="coder">@coder</span>');
+	expect(html).toContain('data-team-mention="reviewer">@Reviewer</span>');
+	expect(html).toContain('data-team-mention="all">@all</span>');
+	expect(html).toContain("name@Coder.com");
+	expect(html).toContain("@Unknown");
+	expect(html).toContain("<code>@Coder</code>");
+	expect(html).toContain('class="language-text">@Coder');
+});
+
+test("user messages have their own bubble and use the same mention highlighting", () => {
+	const html = render([{ ...posts[0], memberId: "user", name: "User", text: "@Coder 请帮忙" }], []);
+	expect(html).toContain('data-team-bubble="user"');
+	expect(html).not.toContain('data-team-bubble="bot"');
+	expect(html).toContain('data-team-mention="coder"');
+});
+
+test("custom Chinese bot names are recognized without highlighting partial names", () => {
+	const team = { ...DEFAULT_TEAM, members: [...DEFAULT_TEAM.members, { ...DEFAULT_TEAM.members[1], id: "designer", name: "设计师" }] };
+	const html = renderToStaticMarkup(<I18nProvider><TeamConversationMessages team={team} posts={[{ ...posts[0], text: "@设计师，请与 @Coder 配合。@设计师助理" }]} work={[]} onStop={() => {}} /></I18nProvider>);
+	expect((html.match(/data-team-mention=/g) ?? []).length).toBe(2);
+	expect(html).toContain('data-team-mention="designer">@设计师</span>');
+	expect(html).toContain("@设计师助理");
 });

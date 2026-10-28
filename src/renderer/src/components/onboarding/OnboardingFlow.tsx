@@ -3,6 +3,7 @@
 // Layer: App shell (rendered by main.tsx before <App /> until completed or skipped).
 
 import { LayoutSettings } from "../settings/LayoutSettings";
+import { LinuxRunModeSettings } from "../settings/LinuxRunModeSettings";
 import { AppearanceSettings } from "../settings/AppearanceSettings";
 import { ProviderModelSettings } from "../settings/ProviderModelSettings";
 import { CodeIntelSettings } from "../settings/CodeIntelSettings";
@@ -246,6 +247,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 								{step === "profile" ? (
 									<div className="flex flex-col gap-5">
 										<Heading title={t("onboarding.profile.title")} hint={t("onboarding.profile.hint")} />
+										<LinuxRunModeSettings />
 										<Field label={t("onboarding.profile.name")}>
 											<Input
 												autoFocus

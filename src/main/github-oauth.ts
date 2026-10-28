@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
+import type { GitHubFetch } from "./github-network";
 import { validGitHubCredentials, type GitHubAuthorization, type GitHubAuthorizationMethod, type GitHubAuthorizationPoll, type GitHubOAuthCredentials, type GitHubOAuthGrant } from "../shared/github-oauth";
 import type { GitHubAuthStatus } from "../shared/pullRequests";
 
 const PUBLIC_SERVER = "https://codeapi.nekofun.top";
 
 export class GitHubOAuthClient {
-	constructor(private readonly request: typeof fetch = fetch, private readonly baseUrl = PUBLIC_SERVER, private readonly now: () => number = Date.now) {}
+	constructor(private readonly request: GitHubFetch = fetch, private readonly baseUrl = PUBLIC_SERVER, private readonly now: () => number = Date.now) {}
 
 	private async call(path: string, body: unknown, secret?: string, signal?: AbortSignal): Promise<unknown> {
 		const response = await this.request(`${this.baseUrl}/github/auth/${path}`, {

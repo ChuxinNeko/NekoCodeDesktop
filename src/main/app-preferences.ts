@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { DEFAULT_APP_PREFERENCES, isAutoRetryCount, isCommandShellId, isWindowCloseBehavior, type AppPreferences } from "../shared/preferences";
 import { isTeamSettings } from "../shared/team";
 import { isUiScalePercent } from "../shared/display-scale";
+import { isLinuxRunMode } from "../shared/linux-run-mode";
 
 /** What each key may hold; anything else falls back to its default. */
 const VALID: { [K in keyof AppPreferences]: (value: unknown) => value is AppPreferences[K] } = {
+	linuxRunAs: isLinuxRunMode,
 	closeBehavior: isWindowCloseBehavior,
 	uiScalePercent: isUiScalePercent,
 	notifyOnTaskFinish: (value): value is boolean => typeof value === "boolean",

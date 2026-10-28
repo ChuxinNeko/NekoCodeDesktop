@@ -83,7 +83,7 @@ const Bubble = memo(function Bubble({ item, team, continued }: { item: TeamThrea
 						</ul>
 					) : null}
 					{item.text.trim() ? (
-						<div className="max-h-80 overflow-auto"><Markdown text={item.text} /></div>
+						<div className="max-h-80 overflow-auto"><Markdown text={item.text} mentions={team.members} streaming={item.status === "running"} /></div>
 					) : item.status === "running" ? <TypingDots /> : null}
 					{item.error ? <p role="alert" className="mt-1 break-words text-[length:var(--app-font-size-ui-xs,11px)] text-destructive">{item.error}</p> : null}
 				</>

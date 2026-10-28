@@ -3317,7 +3317,7 @@ diffs-container {
 
 .follow-up-composer .chat-composer-surface {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto 28px;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
   grid-template-areas:
     "images images images images"
     "error error error error"
@@ -3332,7 +3332,7 @@ diffs-container {
 }
 
 .follow-up-composer [data-slot="composer-footer"] { display: contents; }
-.follow-up-composer [data-composer-attachments="hidden"] { grid-template-columns: 0 minmax(0, 1fr) auto 28px; column-gap: 6px; }
+.follow-up-composer [data-composer-attachments="hidden"] { grid-template-columns: 0 minmax(0, 1fr) auto auto; column-gap: 6px; }
 .follow-up-composer [data-slot="composer-images"] { grid-area: images; padding: 0 2px 8px; }
 .follow-up-composer [data-slot="composer-image-error"] { grid-area: error; padding: 0 2px 8px; }
 .follow-up-composer [data-slot="composer-editor"] { grid-area: editor; min-width: 0; padding: 0; }
@@ -3373,7 +3373,8 @@ diffs-container {
   font-size: var(--app-font-size-ui, 12px);
   color: var(--muted-foreground);
 }
-.follow-up-composer [data-composer-control="submit"] {
+.follow-up-composer [data-slot="composer-actions"] { grid-area: submit; }
+.follow-up-composer [data-slot="composer-actions"] [data-composer-control] {
   grid-area: submit;
   width: 28px;
   height: 28px;
@@ -3384,7 +3385,7 @@ diffs-container {
   color: var(--background);
   box-shadow: none;
 }
-.follow-up-composer [data-composer-control="submit"] > svg { width: 17px; height: 17px; }
+.follow-up-composer [data-slot="composer-actions"] [data-composer-control] > svg { width: 17px; height: 17px; }
 .follow-up-composer [data-slot="composer-meta"] { min-height: 24px; margin-top: 4px; }
 .follow-up-composer [data-slot="composer-meta"] button { color: var(--muted-foreground); }
 
@@ -3395,6 +3396,16 @@ diffs-container {
 .team-workspace > aside button { outline-offset: 2px; }
 .team-workspace > aside button:focus-visible { outline: 2px solid var(--ring); }
 .team-composer [data-slot="composer-inline-toolbar"] { max-width: min(18rem, 34cqw); }
+
+.team-mention {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text-accent) 12%, transparent);
+  color: var(--color-text-accent);
+  padding: 1px 3px;
+  font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 
 /* Wallpaper settings controls share the composer's glass, not an independent
    approximation. The wallpaper renderer owns data-wallpaper: removing/turning
@@ -4219,7 +4230,9 @@ html[data-wallpaper] .wallpaper-dock {
 
 html[data-wallpaper] .split-pane,
 html[data-wallpaper] .split-grid-split,
-html[data-wallpaper] .wallpaper-dock section {
+html[data-wallpaper] .wallpaper-dock section,
+html[data-wallpaper] [data-team-workspace],
+html[data-wallpaper] [data-team-sidebar] {
   background: transparent;
 }
 

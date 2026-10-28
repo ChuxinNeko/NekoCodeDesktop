@@ -32,6 +32,7 @@ export function TeamComposer({ room, draft, onDraftChange, models, modelKey, onS
 		onDraftChange={onDraftChange}
 		clearOnSend={false}
 		disabled={sending}
+		queueScope={room.id}
 		allowImageAttachments={false}
 		streaming={working}
 		onAbort={onStop}
