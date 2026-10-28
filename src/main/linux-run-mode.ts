@@ -4,13 +4,16 @@ import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
 import { posix } from "node:path";
 import type { LinuxRunModeStatus } from "../shared/linux-run-mode";
+import { PROFILE_BRIDGE_ENV, PROFILE_TOKEN_ENV, SHARED_PROFILE_ENV } from "../shared/linux-run-mode";
 
 export const ROOT_SESSION_ENV = "NEKOCODE_ROOT_SESSION";
 export const RETURN_TO_USER_EXIT_CODE = 42;
 export const rootReadyMessage = (token: string): string => `NEKOCODE_ROOT_READY:${token}\n`;
 
 /** No shell, user-supplied argv, profile directories, credentials or loader variables cross the boundary. */
-export function rootLaunchArgs(executable: string, env: NodeJS.ProcessEnv, token: string, exists = existsSync): string[] {
+export interface RootProfileLaunch { home: string; userData: string; bridge: string; token: string; path?: string }
+
+export function rootLaunchArgs(executable: string, env: NodeJS.ProcessEnv, token: string, exists = existsSync, profile?: RootProfileLaunch): string[] {
 	const display = env.DISPLAY;
 	if (!display) throw new Error("Root mode requires an X11 or XWayland display (DISPLAY).");
 	const defaultAuthority = env.HOME ? posix.join(env.HOME, ".Xauthority") : undefined;
@@ -20,6 +23,8 @@ export function rootLaunchArgs(executable: string, env: NodeJS.ProcessEnv, token
 		`DISPLAY=${display}`,
 		...(authority ? [`XAUTHORITY=${authority}`] : []),
 		`${ROOT_SESSION_ENV}=${token}`,
+		...(profile ? [`HOME=${profile.home}`, `${SHARED_PROFILE_ENV}=${profile.userData}`, `${PROFILE_BRIDGE_ENV}=${profile.bridge}`,
+			`${PROFILE_TOKEN_ENV}=${profile.token}`, ...(profile.path ? [`PATH=${profile.path}`] : [])] : []),
 		executable, "--no-sandbox", "--ozone-platform=x11", "--password-store=basic",
 	];
 }
@@ -37,6 +42,7 @@ interface RunModeOptions {
 	onReturn: () => void;
 	onExit: () => void;
 	timeoutMs?: number;
+	profile?: () => Promise<RootProfileLaunch>;
 }
 
 /** The original user process stays alive to own its preferences and restore its desktop session. */
@@ -68,9 +74,10 @@ export class LinuxRunModeService {
 		if (this.child || this.launching) throw new Error("A root instance is already running or starting.");
 		this.launching = true;
 		try {
+			const profile = this.options.profile ? await this.options.profile() : undefined;
 			await new Promise<void>((resolve, reject) => {
 				const token = randomUUID();
-				const args = rootLaunchArgs(this.options.executable, this.options.env, token);
+				const args = rootLaunchArgs(this.options.executable, this.options.env, token, existsSync, profile);
 				const child = this.options.spawn ? this.options.spawn(args) : spawn("/usr/bin/pkexec", args, {
 					stdio: ["pipe", "pipe", "pipe"], cwd: "/",
 					// pkexec sanitizes the target environment; sanitize its own launcher too.

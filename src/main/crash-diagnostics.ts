@@ -1,3 +1,4 @@
+import { appDataPath } from "./linux-profile-paths";
 import { app, crashReporter } from "electron";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ app.setName("NekoCode Desktop");
 
 // Imported first by the main entry so later module initialization is observed too.
 try {
-	const directory = join(app.getPath("userData"), "logs");
+	const directory = join(appDataPath(), "logs");
 	const log = new DiagnosticLog(directory);
 	setDiagnosticLog(log);
 	observeProcessDiagnostics(log);
@@ -19,7 +20,7 @@ try {
 		platform: process.platform, arch: process.arch, versions: process.versions,
 	});
 	try {
-		const dumps = join(app.getPath("userData"), "CrashDumps");
+		const dumps = join(appDataPath(), "CrashDumps");
 		mkdirSync(dumps, { recursive: true });
 		app.setPath("crashDumps", dumps);
 		crashReporter.start({ uploadToServer: false, compress: true });

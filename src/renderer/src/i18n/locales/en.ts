@@ -4,11 +4,11 @@
  */
 export const en = {
 	"settings.linuxRunMode": "Linux application user",
-	"settings.linuxRunMode.hint": "Choose the identity used by the whole application. Switching opens a separate session; the choice is remembered for future launches.",
+	"settings.linuxRunMode.hint": "Change the application's permissions while keeping your conversations, model configuration and preferences. Finish or stop running tasks before switching.",
 	"settings.linuxRunMode.current": "Current desktop user",
 	"settings.linuxRunMode.root": "root (administrator)",
 	"settings.linuxRunMode.active": "Currently running as: {user}",
-	"settings.linuxRunMode.warning": "Root mode grants the app, agents and commands full system permissions and disables the Electron sandbox. It uses root's separate settings, credentials and history; configure them again on first use. Files created in projects may belong to root. Your desktop user session stays in the background until you return or quit.",
+	"settings.linuxRunMode.warning": "Root mode grants the app, agents and commands full system permissions and disables the Electron sandbox. Your current conversation, history, credentials and settings are retained. Files created in projects may belong to root. Switching back reloads the same profile with your desktop user's permissions.",
 	"settings.linuxRunMode.apply": "Apply and switch session",
 	"settings.linuxRunMode.authorizing": "Waiting for system authorization…",
 	"settings.linuxRunMode.development": "Switching users is available in installed Linux builds only.",

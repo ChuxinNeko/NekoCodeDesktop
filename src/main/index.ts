@@ -1,3 +1,8 @@
+import { safeStorage } from "./profile-encryption";
+import { rootProfileHandoff, repairRootProfile } from "./linux-profile-bootstrap";
+import { appDataPath } from "./linux-profile-paths";
+import { PROFILE_BRIDGE_ENV, PROFILE_TOKEN_ENV } from "./linux-profile-paths";
+import { LinuxProfileBridge, profileRequestSync, type ProfileStorage } from "./linux-profile-bridge";
 import "./crash-diagnostics";
 import type { ExplainSelectionRequest } from "../shared/selection-explanation";
 import { SelectionExplanationService } from "./selection-explanation";
@@ -41,7 +46,7 @@ import type { TaskBoardEntry } from "../shared/task-board";
 import appIconPng from "../../resources/icons/icon.png?asset";
 import appIconIco from "../../resources/icons/icon.ico?asset";
 import { registerWallpaperIpc } from "./wallpaper/host";
-import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, safeStorage, screen, session, shell, Tray, utilityProcess } from "electron";
+import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, screen, session, shell, Tray, utilityProcess } from "electron";
 import { initialWindowSize } from "../shared/display-scale";
 import { installDisplayScale } from "./display-scale";
 import { existsSync, mkdirSync, statSync } from "node:fs";
@@ -262,17 +267,17 @@ let teamWorkspaceService: TeamWorkspaceService | null = null;
 let webToolsStore: WebToolsStore | null = null;
 let promptStore: PromptStore | null = null;
 function prompts(): PromptStore {
-	promptStore ??= new PromptStore(app.getPath("userData"));
+	promptStore ??= new PromptStore(appDataPath());
 	return promptStore;
 }
 /** Lazily, as safeStorage is only usable once the app is ready and the keyring settled. */
 function webTools(): WebToolsStore {
-	webToolsStore ??= new WebToolsStore(app.getPath("userData"), safeStorage);
+	webToolsStore ??= new WebToolsStore(appDataPath(), safeStorage);
 	return webToolsStore;
 }
 let codeIntelStore: CodeIntelStore | null = null;
 function codeIntel(): CodeIntelStore {
-	codeIntelStore ??= new CodeIntelStore(app.getPath("userData"));
+	codeIntelStore ??= new CodeIntelStore(appDataPath());
 	return codeIntelStore;
 }
 /** The runtime that reaches every model under Providers and models. */
@@ -330,7 +335,7 @@ let sshState: { store: SshStore; service: SshService } | null = null;
 /** Lazily for the same reason; window-independent, since saved hosts outlive a window. */
 function ssh(): { store: SshStore; service: SshService } {
 	if (!sshState) {
-		const store = new SshStore(app.getPath("userData"), safeStorage);
+		const store = new SshStore(appDataPath(), safeStorage);
 		sshState = { store, service: new SshService(store, state => {
 			for (const window of BrowserWindow.getAllWindows())
 				if (!window.isDestroyed()) window.webContents.send("ssh:sandboxDeployment", state);
@@ -382,7 +387,7 @@ let webSearchAccounts: () => Promise<Record<AccountSearchEngineId, boolean>> = a
 /** The task board as it stands, each task's worktree branch included. */
 function taskBoard(): TaskBoardEntry[] {
 	if (!taskManager) return [];
-	const checkouts = (worktrees ??= new WorktreeService(app.getPath("userData")));
+	const checkouts = (worktrees ??= new WorktreeService(appDataPath()));
 	return taskManager.board((sessionId) => checkouts.forSession(sessionId));
 }
 
@@ -502,7 +507,7 @@ let modelPricing: ModelPricingService | null = null;
 
 /** LiteLLM's price list, for the token panel's cost; pulled daily for as long as the app runs. */
 function modelPricingService(): ModelPricingService {
-	modelPricing ??= new ModelPricingService({ userDataDir: app.getPath("userData") });
+	modelPricing ??= new ModelPricingService({ userDataDir: appDataPath() });
 	return modelPricing;
 }
 
@@ -568,9 +573,9 @@ function isWebUiBridgeResponse(value: unknown): value is WebUiBridgeResponse {
 function tokenStatsService(): TokenStatsService {
 	if (!tokenStats) {
 		tokenStats = new TokenStatsService({
-			sessionDir: join(app.getPath("userData"), "sessions"),
-			automationDir: join(app.getPath("userData"), "automation-sessions"),
-			acpUsageDir: join(app.getPath("userData"), "acp-usage"),
+			sessionDir: join(appDataPath(), "sessions"),
+			automationDir: join(appDataPath(), "automation-sessions"),
+			acpUsageDir: join(appDataPath(), "acp-usage"),
 			providerLabels: () =>
 				Object.fromEntries(
 					(modelConfig?.list() ?? []).map((profile) => [`nekocode-${profile.id}`, profile.name]),
@@ -604,8 +609,8 @@ async function startBackgroundTask(
 	configure?: (agent: AgentService) => Promise<void>,
 ): Promise<StartBackgroundTaskResult> {
 	if (!taskManager) throw new Error("Agent service unavailable");
-	preferences ??= new AppPreferencesStore(app.getPath("userData"));
-	worktrees ??= new WorktreeService(app.getPath("userData"));
+	preferences ??= new AppPreferencesStore(appDataPath());
+	worktrees ??= new WorktreeService(appDataPath());
 	const workspace: PreparedWorkspace = (isolate ?? preferences.get().isolateBackgroundTasks)
 		? await worktrees.prepare(cwd)
 		: { cwd, worktree: null };
@@ -631,7 +636,7 @@ async function startBackgroundTask(
  */
 function createQqBotService(): QqBotService {
 	const service = new QqBotService({
-		userDataDir: app.getPath("userData"),
+		userDataDir: appDataPath(),
 		// Never isolated: a QQ task edits the project the way a local one does, and
 		// checkpoints are its undo. A branch in a directory under this app's data
 		// folder is not something anyone can review from a chat.
@@ -776,9 +781,52 @@ const displayScaleRefreshers = new Set<() => void>();
 let mainWindow: BrowserWindow | null = null;
 let backgroundMode: BackgroundMode | null = null;
 let linuxRunMode: LinuxRunModeService | null = null;
+let profileBridge: LinuxProfileBridge | null = null;
+let profileSuspended = false;
+let rootStorageTimer: NodeJS.Timeout | undefined;
+let rootStoragePending: Promise<void> = Promise.resolve();
+let rootStorageSaved = "";
+let rootSupervisorGone = false;
+
+async function captureProfileStorage(): Promise<ProfileStorage> {
+	if (!mainWindow || mainWindow.isDestroyed()) throw new Error("The desktop window is unavailable");
+	return mainWindow.webContents.executeJavaScript(`(() => {
+		window.dispatchEvent(new Event("nekocode:prepare-run-mode"));
+		return Object.fromEntries(Object.entries(localStorage));
+	})()`);
+}
+
+function saveRootStorage(): Promise<void> {
+	const path = process.env[PROFILE_BRIDGE_ENV];
+	const token = process.env[PROFILE_TOKEN_ENV];
+	if (!rootProfileHandoff || !path || !token) return Promise.resolve();
+	rootStoragePending = rootStoragePending.catch(() => {}).then(async () => {
+		const storage = await captureProfileStorage();
+		const encoded = JSON.stringify(Object.entries(storage).sort(([left], [right]) => left.localeCompare(right)));
+		if (encoded === rootStorageSaved) return;
+		profileRequestSync(path, token, "storage", storage);
+		rootStorageSaved = encoded;
+	});
+	return rootStoragePending;
+}
+
+function assertRunModeIdle(): void {
+	if (taskManager?.board().some((task) => task.status === "running" || task.status === "question")
+		|| acpService?.state().sessions.some((session) => session.status === "prompting")
+		|| automationService?.list().some((automation) => automation.running)) {
+		throw new Error("请先完成或停止正在运行的任务，再切换应用运行用户。会话与配置会保留。");
+	}
+}
+
+function restartDesktopUser(): void {
+	// Read the current file instead of overwriting root's settings with an old cached copy.
+	new AppPreferencesStore(appDataPath()).update({ linuxRunAs: "current" });
+	app.relaunch({ ...(process.env.APPIMAGE ? { execPath: process.env.APPIMAGE } : {}), args: process.argv.slice(1) });
+	app.quit();
+}
 
 function createWindow(): void {
-	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	preferences ??= new AppPreferencesStore(appDataPath());
 	const display = screen.getPrimaryDisplay();
 	// A system backdrop is composited behind the window by DWM, so the window's
 	// own background has to be fully transparent for it to show at all. Bound to
@@ -878,7 +926,7 @@ function createWindow(): void {
 
 	if (!modelConfig) modelConfig = new ModelConfigService();
 	const antigravity = new AntigravityOAuthService({
-			store: new OAuthCredentialStore(app.getPath("userData"), safeStorage),
+			store: new OAuthCredentialStore(appDataPath(), safeStorage),
 			fetch: createAntigravityFetch(async (targetUrl) => {
 				const manual = proxyService?.current().manual;
 				const resolution = await resolveProxy({
@@ -891,12 +939,12 @@ function createWindow(): void {
 			openExternal: (url) => shell.openExternal(url),
 			emit: (event) => { if (!win.isDestroyed()) win.webContents.send("oauth:event", event); },
 	});
-	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	preferences ??= new AppPreferencesStore(appDataPath());
 	// Read per session, so a change applies to the next one without a restart.
 	configureCommandShell(() => preferences?.get().commandShell ?? "auto");
 	configureTeamSettings(() => preferences?.get().team, team => { preferences!.update({ team }); teamWorkspaceStore?.reconcileRoster(); });
 	if (!teamWorkspaceStore) {
-		teamWorkspaceStore = new TeamWorkspaceStore(app.getPath("userData"));
+		teamWorkspaceStore = new TeamWorkspaceStore(appDataPath());
 		configureTeamWorkspace(teamWorkspaceStore);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		teamWorkspaceStore.subscribe(() => {
@@ -959,7 +1007,7 @@ function createWindow(): void {
 	// Servers are dialled against the project the window is on, and a stdio
 	// server's cwd is the only context it gets about which one that is.
 	mcpService ??= new McpService(
-		app.getPath("userData"),
+		appDataPath(),
 		() => taskManager?.active.getSnapshot()?.session.cwd ?? app.getPath("home"),
 		() => {
 			taskManager?.syncMcpTools();
@@ -971,7 +1019,7 @@ function createWindow(): void {
 		},
 		{
 			version: app.getVersion(),
-			auth: new McpAuthStore(app.getPath("userData"), safeStorage),
+			auth: new McpAuthStore(appDataPath(), safeStorage),
 			openUrl: (url) => shell.openExternal(url),
 		},
 	);
@@ -1016,10 +1064,10 @@ function createWindow(): void {
 	// project rather than to the fallback.
 	void mcpService.refresh();
 	qqBotService ??= createQqBotService();
-	lanService = new LanService(app.getPath("userData"), taskManager);
+	lanService = new LanService(appDataPath(), taskManager);
 	void lanService.restore().catch((error) => console.error("LAN restore:", error));
 	relayService = new RelayService({
-		userDataDir: app.getPath("userData"),
+		userDataDir: appDataPath(),
 		encryption: safeStorage,
 		gateway: lanService,
 		emit: (status) => { if (!win.isDestroyed()) win.webContents.send("relay:changed", status); },
@@ -1027,7 +1075,7 @@ function createWindow(): void {
 	void relayService.start();
 	oauthService = new OAuthService({
 		antigravity,
-		userDataDir: app.getPath("userData"),
+		userDataDir: appDataPath(),
 		getRuntime: () => {
 			if (!taskManager) throw new Error("Agent service unavailable");
 			return taskManager!.active.getModelRuntime();
@@ -1053,11 +1101,11 @@ function createWindow(): void {
 	} });
 	if (!automationService) {
 		automationService = new AutomationService({
-			userDataDir: app.getPath("userData"),
+			userDataDir: appDataPath(),
 			// Automation runs get their own session directory: a run creates a PI
 			// session, and sharing the interactive directory would make every
 			// scheduled run show up as a session in the sidebar.
-			sessionsDir: join(app.getPath("userData"), "automation-sessions"),
+			sessionsDir: join(appDataPath(), "automation-sessions"),
 			getModelRuntime: async () => {
 				if (!taskManager) throw new Error("Agent service is not running");
 				return taskManager!.active.getModelRuntime();
@@ -1292,7 +1340,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle("ide:gitHead", (_e, cwd: string, relPath: string) => showHeadFile(cwd, relPath));
 	// VS Code extensions for the IDE: data only, applied by the renderer.
-	const ideExtensions = new IdeExtensionStore(join(app.getPath("userData"), "ide-extensions"));
+	const ideExtensions = new IdeExtensionStore(join(appDataPath(), "ide-extensions"));
 	ideExtensions.cleanStaging();
 	ipcMain.handle("ideExt:list", (_e, locale: unknown) => {
 		if (typeof locale === "string") ideExtensions.setLocale(locale);
@@ -1448,27 +1496,27 @@ function registerIpc(): void {
 		await taskManager?.remove(req.sessionFile);
 		// The transcript is gone, so nothing can reach the checkout any more —
 		// leaving it would strand both the directory and its branch.
-		worktrees ??= new WorktreeService(app.getPath("userData"));
+		worktrees ??= new WorktreeService(appDataPath());
 		await worktrees.releaseByFile(req.sessionFile);
 	});
 
 	ipcMain.handle("worktree:status", (_e, sessionId: string): Promise<WorktreeStatus | null> => {
-		worktrees ??= new WorktreeService(app.getPath("userData"));
+		worktrees ??= new WorktreeService(appDataPath());
 		return worktrees.status(sessionId);
 	});
 	ipcMain.handle("worktree:list", (): WorktreeRecord[] => {
-		worktrees ??= new WorktreeService(app.getPath("userData"));
+		worktrees ??= new WorktreeService(appDataPath());
 		return worktrees.list();
 	});
 	// Both take a branch off the board's rows, so the board is re-sent after.
 	ipcMain.handle("worktree:merge", async (_e, req: WorktreeMergeRequest): Promise<WorktreeMergeResult> => {
-		worktrees ??= new WorktreeService(app.getPath("userData"));
+		worktrees ??= new WorktreeService(appDataPath());
 		const result = await worktrees.merge(req);
 		pushTaskBoard();
 		return result;
 	});
 	ipcMain.handle("worktree:discard", async (_e, sessionId: string): Promise<void> => {
-		worktrees ??= new WorktreeService(app.getPath("userData"));
+		worktrees ??= new WorktreeService(appDataPath());
 		await worktrees.discard(sessionId);
 		pushTaskBoard();
 	});
@@ -1525,10 +1573,10 @@ function registerIpc(): void {
 		(acpService ??= new AcpService({
 			clientVersion: app.getVersion(),
 			autoRetryCount: currentAutoRetryCount,
-			store: new AcpConfigStore(app.getPath("userData"), new AcpNativeConfig()),
+			store: new AcpConfigStore(appDataPath(), new AcpNativeConfig()),
 			nativeConfig: true,
-			usageDir: join(app.getPath("userData"), "acp-usage"),
-			userDataDir: app.getPath("userData"),
+			usageDir: join(appDataPath(), "acp-usage"),
+			userDataDir: appDataPath(),
 			appRoot: app.getAppPath(),
 			toolServers: acpToolServers,
 			// The same line diff NekoLocal's edit tool shows.
@@ -1643,11 +1691,14 @@ function registerIpc(): void {
 	);
 
 	ipcMain.handle("preferences:get", (): AppPreferences => {
-		preferences ??= new AppPreferencesStore(app.getPath("userData"));
+		preferences ??= new AppPreferencesStore(appDataPath());
 		return preferences.get();
 	});
 	// Deliberately excluded from the WebUI RPC allowlist: only the local app may switch identities.
 	ipcMain.handle("linuxRunMode:status", () => linuxRunMode?.status());
+	ipcMain.on("linuxRunMode:initialStorage", (event) => {
+		event.returnValue = event.sender === mainWindow?.webContents ? rootProfileHandoff?.storage ?? null : null;
+	});
 	ipcMain.handle("linuxRunMode:apply", async (event, mode: LinuxRunMode) => {
 		if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
 			throw new Error("Run mode may only be changed from the desktop window.");
@@ -1655,7 +1706,11 @@ function registerIpc(): void {
 		if (!isLinuxRunMode(mode) || !linuxRunMode || process.platform !== "linux") throw new Error("Invalid Linux run mode");
 		const status = linuxRunMode.status();
 		if (mode === status.mode) return;
-		if (mode === "root") await linuxRunMode.elevate();
+		assertRunModeIdle();
+		if (mode === "root") {
+			try { await linuxRunMode.elevate(); }
+			catch (error) { if (profileSuspended) restartDesktopUser(); throw error; }
+		}
 		else {
 			if (!status.canReturn) throw new Error("Start the application from your normal desktop user to return to that user.");
 			// Let the IPC reply flush before closing the root instance and restoring the user process.
@@ -1676,7 +1731,7 @@ function registerIpc(): void {
 		// Run mode has a separate local-only authorization flow.
 		const { linuxRunAs: _linuxRunAs, ...ordinaryPatch } = patch;
 		patch = ordinaryPatch;
-		preferences ??= new AppPreferencesStore(app.getPath("userData"));
+		preferences ??= new AppPreferencesStore(appDataPath());
 		const previous = preferences.get();
 		let next: AppPreferences;
 		try {
@@ -2164,7 +2219,7 @@ nativeAutoUpdater.on("before-quit-for-update", () => backgroundMode?.beginQuit()
 if (ownsInstance) app.whenReady().then(async () => {
 	if (process.platform === "linux" && process.getuid?.() === 0 && process.env[ROOT_SESSION_ENV]) {
 		// The unprivileged supervisor owns this pipe; its exit must not leave a root app behind.
-		process.stdin.on("end", () => app.quit());
+		process.stdin.on("end", () => { rootSupervisorGone = true; app.quit(); });
 		process.stdin.setEncoding("utf8");
 		let commands = "";
 		process.stdin.on("data", (data: string) => {
@@ -2217,7 +2272,7 @@ if (ownsInstance) app.whenReady().then(async () => {
 	// Before the first provider request: without this the agent core connects
 	// direct regardless of what the rest of the machine is proxied through.
 	proxyService = new ProxyService({
-		userDataDir: app.getPath("userData"),
+		userDataDir: appDataPath(),
 		resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
 	});
 	const proxyReady = proxyService
@@ -2235,17 +2290,17 @@ if (ownsInstance) app.whenReady().then(async () => {
 	registerIpc();
 	// Before the window exists: the shell material is a window-construction
 	// option, so a preference saved last run has to be known by now.
-	windowMaterialStore = new WindowMaterialStore(app.getPath("userData"));
+	windowMaterialStore = new WindowMaterialStore(appDataPath());
 	activeMaterial = windowMaterialStore.resolve(supportedMaterials);
 	webUiService = new WebUiService({
-		userDataDir: app.getPath("userData"),
+		userDataDir: appDataPath(),
 		rendererDir: join(__dirname, "../renderer"),
 		rendererDevUrl: process.env.ELECTRON_RENDERER_URL,
 		homeDir: app.getPath("home"),
 		shell: { material: "opaque", materials: ["opaque"], titleBarHeight: TITLE_BAR_HEIGHT },
 		invoke: webUiInvoke,
 	});
-	preferences ??= new AppPreferencesStore(app.getPath("userData"));
+	preferences ??= new AppPreferencesStore(appDataPath());
 	backgroundMode = new BackgroundMode({
 		getWindow: () => mainWindow,
 		createWindow,
@@ -2276,20 +2331,44 @@ if (ownsInstance) app.whenReady().then(async () => {
 	linuxRunMode = new LinuxRunModeService({
 		platform: process.platform, ...currentLinuxIdentity(), packaged: app.isPackaged,
 		executable: process.env.APPIMAGE || process.execPath, env: process.env,
+		profile: async () => {
+			profileBridge ??= new LinuxProfileBridge({
+				encryption: safeStorage,
+				prepare: async () => {
+					assertRunModeIdle();
+					const storage = await captureProfileStorage();
+					session.defaultSession.flushStorageData();
+					profileSuspended = true;
+					await stopApplicationServices();
+					return { storage };
+				},
+				saveStorage: async (storage) => {
+					if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Original user window is unavailable");
+					await mainWindow.webContents.executeJavaScript(`localStorage.clear(); for (const [key, value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(key, value);`);
+					session.defaultSession.flushStorageData();
+				},
+			});
+			return { home: app.getPath("home"), userData: appDataPath(), bridge: await profileBridge.start(), token: profileBridge.token, path: process.env.PATH };
+		},
 		onReady: () => {
-			preferences!.update({ linuxRunAs: "root" });
+			new AppPreferencesStore(appDataPath()).update({ linuxRunAs: "root" });
 			backgroundMode?.suspendTray();
 			mainWindow?.hide();
 		},
-		onReturn: () => {
-			preferences!.update({ linuxRunAs: "current" });
-			backgroundMode?.loadBehavior(preferences!.get().closeBehavior);
-			backgroundMode?.showWindow();
-		},
+		onReturn: () => restartDesktopUser(),
 		onExit: () => app.quit(),
 	});
+	if (rootProfileHandoff) {
+		let syncing = false;
+		rootStorageTimer = setInterval(() => {
+			if (syncing) return;
+			syncing = true;
+			void saveRootStorage().catch(() => {}).finally(() => { syncing = false; });
+		}, 2000);
+	}
 	if (process.platform === "linux" && process.getuid?.() !== 0 && preferences.get().linuxRunAs === "root") {
 		void linuxRunMode.elevate().catch((error: unknown) => {
+			if (profileSuspended) { restartDesktopUser(); return; }
 			// Failed/cancelled authentication never traps the user in a startup loop.
 			preferences!.update({ linuxRunAs: "current" });
 			backgroundMode?.showWindow();
@@ -2307,10 +2386,10 @@ if (ownsInstance) app.whenReady().then(async () => {
 	});
 });
 
-app.on("before-quit", () => {
-	backgroundMode?.beginQuit();
+async function stopApplicationServices(): Promise<void> {
 	githubLogin?.cancel();
-	void webUiService?.stop();
+	themeLibraryInstance?.stop();
+	const stopped = [webUiService?.stop(), lanService?.stop()];
 	modelPricing?.stop();
 	automationService?.stop();
 	terminalService?.killAll();
@@ -2327,7 +2406,26 @@ app.on("before-quit", () => {
 	qqBotService?.close();
 	relayService?.close();
 	relayService = null;
-	taskManager?.close(); void lanService?.stop();
+	taskManager?.close();
+	await Promise.all(stopped);
+}
+
+let rootQuitFlushed = false;
+app.on("before-quit", (event) => {
+	if (rootProfileHandoff && !rootQuitFlushed && !rootSupervisorGone) {
+		event.preventDefault();
+		rootQuitFlushed = true;
+		clearInterval(rootStorageTimer);
+		void saveRootStorage().then(() => app.quit()).catch((error: unknown) => {
+			if (rootSupervisorGone) { app.quit(); return; }
+			rootQuitFlushed = false;
+			dialog.showErrorBox("NekoCode", `无法保存切换状态，请重试退出：${error instanceof Error ? error.message : String(error)}`);
+		});
+		return;
+	}
+	backgroundMode?.beginQuit();
+	void stopApplicationServices();
+	profileBridge?.close();
 });
 
 app.on("window-all-closed", () => {

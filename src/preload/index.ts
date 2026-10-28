@@ -200,6 +200,12 @@ function subscribe<T>(
 const shellInfo: ShellInfo =
 	(ipcRenderer.sendSync("app:shellInfo") as ShellInfo | undefined) ?? DEFAULT_SHELL_INFO;
 
+// Hydrate before the renderer's theme/onboarding modules read localStorage.
+const sharedStorage = ipcRenderer.sendSync("linuxRunMode:initialStorage") as Record<string, string> | null;
+if (sharedStorage) {
+	for (const [key, value] of Object.entries(sharedStorage)) localStorage.setItem(key, value);
+}
+
 const api = {
 	runtime: "electron" as const,
 	webUiStatus: (): Promise<WebUiStatus> => ipcRenderer.invoke("webui:status"),

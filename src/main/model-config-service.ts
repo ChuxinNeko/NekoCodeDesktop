@@ -1,3 +1,4 @@
+import { appDataPath } from "./linux-profile-paths";
 import {
 	existsSync,
 	mkdirSync,
@@ -8,7 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { app, safeStorage } from "electron";
+import { safeStorage } from "./profile-encryption";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
 	FetchModelsRequest,
@@ -80,7 +81,7 @@ export class ModelConfigService {
 	private fetchVersions = new Map<string, number>();
 
 	constructor() {
-		const dir = app.getPath("userData");
+		const dir = appDataPath();
 		mkdirSync(dir, { recursive: true });
 		this.filePath = join(dir, "model-profiles.json");
 	}

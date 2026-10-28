@@ -1,3 +1,4 @@
+import { appDataPath } from "../linux-profile-paths";
 /**
  * Local wallpaper host.
  *
@@ -524,7 +525,7 @@ async function play(request: WallpaperPlayRequest): Promise<WallpaperPlay | null
 }
 
 export function registerWallpaperIpc(): void {
-	userDataDir = app.getPath("userData");
+	userDataDir = appDataPath();
 	token = randomBytes(16).toString("hex");
 	ensureProtocol();
 

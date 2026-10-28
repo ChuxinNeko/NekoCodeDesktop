@@ -6,11 +6,11 @@ import type { TranslationKey } from "./en";
  */
 export const zhCN: Record<TranslationKey, string> = {
 	"settings.linuxRunMode": "Linux 应用运行用户",
-	"settings.linuxRunMode.hint": "选择整个应用的运行身份。切换会打开独立会话，并记住选择，在下次启动时应用。",
+	"settings.linuxRunMode.hint": "切换应用权限，同时保留会话、模型配置和偏好设置。请先完成或停止正在运行的任务。",
 	"settings.linuxRunMode.current": "当前桌面用户",
 	"settings.linuxRunMode.root": "root（管理员）",
 	"settings.linuxRunMode.active": "当前运行用户：{user}",
-	"settings.linuxRunMode.warning": "root 模式会让应用、智能体及其命令获得完整系统权限，并关闭 Electron 沙箱。此模式使用 root 独立的设置、凭据与历史记录，首次使用需要重新配置；项目中新建的文件可能归 root 所有。普通用户会话会在后台保留，直到返回或退出应用。",
+	"settings.linuxRunMode.warning": "root 模式会让应用、智能体及其命令获得完整系统权限，并关闭 Electron 沙箱。当前会话、历史记录、凭据与设置会保留；项目中新建的文件可能归 root 所有。切回时会以桌面用户权限重新加载同一份配置。",
 	"settings.linuxRunMode.apply": "应用并切换会话",
 	"settings.linuxRunMode.authorizing": "正在等待系统授权…",
 	"settings.linuxRunMode.development": "仅安装后的 Linux 应用支持切换运行用户。",

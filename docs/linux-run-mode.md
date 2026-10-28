@@ -10,25 +10,37 @@ agent, and an X11 display (including XWayland). Pure Wayland sessions without
 `DISPLAY` cannot use this option. No password is collected or saved by NekoCode.
 
 Root runs the entire application and its tools with UID 0 and `--no-sandbox`.
-The launcher passes only the display and Xauthority information; it does not
-forward the ordinary user's HOME, application profile or provider credentials.
-Root therefore uses its own settings, history and agent home, and needs its own
-initial configuration. The root session uses Electron's basic password store;
-features that require a system keyring may be unavailable. Project files created
-by root can be owned by root.
+It retains the desktop user's HOME and the original application data paths, so
+conversations, model profiles, agent/CLI configuration, credentials, themes and
+other preferences remain available. Browser storage is private to the root
+process to avoid two Chromium processes opening the same database. Onboarding,
+appearance and the currently selected local or ACP conversation are transferred
+before the new renderer loads; changes are periodically saved back to the
+desktop user's browser storage and flushed before returning.
 
-The ordinary user process remains in the background, with its tray icon hidden,
-to preserve its session and manage the saved launch preference. Existing tasks
-in that process retain their original identity. The preference is saved only
+Encrypted credentials retain their original format. Root uses a private,
+token-authenticated Unix socket to ask the original user's process to access
+its keyring. Plaintext credentials are never exported to disk or command-line
+arguments. Configuration files created by root have their ownership repaired
+without following symlinks or hard links. Project files are outside that repair
+scope and can still be owned by root.
+
+The ordinary user process remains in the background to provide the keyring and
+browser-storage bridge. Running agent tasks and automations must finish or be
+stopped before switching. After authorization succeeds its agent processes,
+terminals, watchers and background services stop before root opens the stores;
+the two instances do not run concurrent writers. The preference is saved only
 after the root window loads. Subsequent launches request system authorization
-again, subject to polkit policy. Cancellation or startup failure retains the
-ordinary user session. Opening the app again focuses the root instance.
+again, subject to polkit policy. Cancellation before handoff leaves the original
+session running; a failure after handoff restarts it from the preserved profile.
+Opening the app again focuses the root instance.
 
 To return, select **Current desktop user** in the root instance's settings and
-apply. The root instance quits, the saved preference resets, and the original
-window and tray are restored. A root instance launched outside this flow must be
+apply. The root instance saves its UI state and quits. The saved preference
+resets and the desktop user app restarts from the updated profile, avoiding stale
+in-memory stores overwriting changes made as root. A root instance launched outside this flow must be
 quit and reopened from the ordinary desktop user. Quitting root normally also
-quits the background supervisor; a root crash restores the ordinary user window.
+quits the background supervisor; a root crash restarts the ordinary user app.
 
 ## Linux acceptance checks
 
@@ -42,11 +54,14 @@ authorization, X server access or actual file permissions.
 3. Authorize root. Confirm only the root session remains visible, its terminal
    reports `id -u` as `0`, and it can list `/root`. Test writing only in a
    disposable directory, then remove the test files.
-4. Confirm root has separate onboarding and configuration. Check that ordinary
-   user configuration files retain their owner and permissions.
+4. Confirm root skips onboarding, shows the same conversations, reopens the
+   selected local/ACP conversation, and retains model/API and GitHub credentials.
+   Change a harmless preference while root is running.
 5. Launch the app from its desktop entry again; confirm it focuses root.
-6. Return to the current desktop user through settings; confirm the original
-   conversation, window and tray return, with `id -u` reporting the user's UID.
+6. Return to the current desktop user through settings; confirm the conversation,
+   changed preference and tray return, with `id -u` reporting the user's UID.
+   Confirm configuration files remain writable by the desktop user and that
+   executing a turn still works with the original model credentials.
 7. Repeat using both the deb package and an AppImage with spaces in its path;
    exercise an X11 desktop and a Wayland desktop with XWayland.
 8. Verify missing pkexec, missing DISPLAY, denied authorization, and startup

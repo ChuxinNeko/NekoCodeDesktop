@@ -53,6 +53,7 @@ import { SplitGrid } from "./components/SplitGrid";
 import { useSplitPanes, type PaneSlot } from "./hooks/useSplitPanes";
 import { startResizeDrag } from "./lib/resizeDrag";
 import { startSessionDrag, type DraggedSession } from "./lib/sessionDrag";
+import { parseRunModeSession, RUN_MODE_PREPARE_EVENT, RUN_MODE_SESSION_KEY } from "./lib/runModeHandoff";
 import type { DropPlan } from "./lib/splitLayout";
 import { DragHandleIcon, Maximize2, XIcon } from "./lib/icons";
 import { IconButton } from "./components/ui/icon-button";
@@ -229,6 +230,25 @@ export default function App() {
 		: snapshot
 			? { id: snapshot.session.id, cwd: snapshot.session.cwd, sessionFile: snapshot.session.sessionFile }
 			: null;
+	const handoffSelection = useRef(selected);
+	handoffSelection.current = selected;
+	const resumeRunModeSession = useRef(parseRunModeSession(readStored(RUN_MODE_SESSION_KEY)));
+	useEffect(() => {
+		const capture = () => {
+			if (resumeRunModeSession.current) return;
+			writeStored(RUN_MODE_SESSION_KEY, handoffSelection.current ? JSON.stringify(handoffSelection.current) : null);
+		};
+		window.addEventListener(RUN_MODE_PREPARE_EVENT, capture);
+		return () => window.removeEventListener(RUN_MODE_PREPARE_EVENT, capture);
+	}, []);
+	useEffect(() => {
+		const session = resumeRunModeSession.current;
+		if (!session) return;
+		if (session.agentId && (acp.loading || !acp.rows.some((row) => row.id === session.id))) return;
+		resumeRunModeSession.current = null;
+		writeStored(RUN_MODE_SESSION_KEY, null);
+		void selectSessionRef.current(session);
+	}, [acp.loading, acp.rows]);
 	/** Up to four sessions side by side; see useSplitPanes. Opens through a ref, as `selectSession` comes later. */
 	const openPaneSession = useCallback((session: DraggedSession) => selectSessionRef.current(session), []);
 	const panes = useSplitPanes({

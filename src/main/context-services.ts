@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { appDataPath } from "./linux-profile-paths";
 import { HookService } from "./hooks";
 import { MemoryStore } from "./memory-store";
 
@@ -13,12 +13,12 @@ let memory: MemoryStore | null = null;
 let hooks: HookService | null = null;
 
 export function memoryStore(): MemoryStore {
-	memory ??= new MemoryStore(app.getPath("userData"));
+	memory ??= new MemoryStore(appDataPath());
 	return memory;
 }
 
 export function hookService(): HookService {
-	hooks ??= new HookService(app.getPath("userData"));
+	hooks ??= new HookService(appDataPath());
 	return hooks;
 }
 

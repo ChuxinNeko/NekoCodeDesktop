@@ -26,7 +26,7 @@ function fixture(overrides: Partial<ConstructorParameters<typeof LinuxRunModeSer
 }
 
 describe("Linux application run mode", () => {
-	test("launches with explicit safe arguments, never inherits credentials or user profile", () => {
+	test("launches with explicit safe arguments, never inherits credentials or loader variables", () => {
 		const args = rootLaunchArgs("/home/morax/Neko Code.AppImage", {
 			DISPLAY: ":1", XAUTHORITY: "/home/morax/a file", HOME: "/home/morax", XDG_CONFIG_HOME: "/home/morax/.config",
 			LD_PRELOAD: "/tmp/bad.so", NODE_OPTIONS: "--require=/tmp/bad.js", API_KEY: "secret",
@@ -34,6 +34,15 @@ describe("Linux application run mode", () => {
 		expect(args).toEqual(["--disable-internal-agent", "--user", "root", "/usr/bin/env", "DISPLAY=:1",
 			"XAUTHORITY=/home/morax/a file", "NEKOCODE_ROOT_SESSION=token", "/home/morax/Neko Code.AppImage",
 			"--no-sandbox", "--ozone-platform=x11", "--password-store=basic"]);
+	});
+	test("passes only the approved profile handoff and keeps keyring credentials out of arguments", () => {
+		const args = rootLaunchArgs("/opt/app", { DISPLAY: ":0", API_KEY: "secret", NODE_OPTIONS: "--require=bad" }, "session", () => false,
+			{ home: "/home/morax", userData: "/home/morax/.config/NekoCode Desktop", bridge: "/tmp/bridge.sock", token: "bridge-token", path: "/home/morax/.bun/bin:/usr/bin" });
+		expect(args).toContain("HOME=/home/morax");
+		expect(args).toContain("NEKOCODE_SHARED_PROFILE=/home/morax/.config/NekoCode Desktop");
+		expect(args).toContain("NEKOCODE_PROFILE_BRIDGE=/tmp/bridge.sock");
+		expect(args.join(" ")).not.toContain("secret");
+		expect(args.join(" ")).not.toContain("NODE_OPTIONS");
 	});
 	test("does not silently guess a display", () => {
 		expect(() => rootLaunchArgs("/opt/app", {}, "token")).toThrow("DISPLAY");

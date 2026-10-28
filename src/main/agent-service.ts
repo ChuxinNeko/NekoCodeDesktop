@@ -1,3 +1,4 @@
+import { appDataPath } from "./linux-profile-paths";
 import { randomUUID } from "node:crypto";
 import { buildAcceptanceReport } from "../shared/acceptance";
 import { ACCEPTANCE_TOOL_NAME, createAcceptanceTool } from "./acceptance-tool";
@@ -397,11 +398,11 @@ export class AgentService {
 		 */
 		private readonly mcp?: { tools(): ToolDefinition[]; toolNames(): string[]; revision?(): number },
 	) {
-		this.sessionDir = join(app.getPath("userData"), "sessions");
+		this.sessionDir = join(appDataPath(), "sessions");
 		mkdirSync(this.sessionDir, { recursive: true });
-		this.preferencesPath = join(app.getPath("userData"), "preferences.json");
+		this.preferencesPath = join(appDataPath(), "preferences.json");
 		this.plugins = new PluginService({
-			statePath: join(app.getPath("userData"), "plugins.json"),
+			statePath: join(appDataPath(), "plugins.json"),
 			onChange: () => this.emitPlugins(),
 		});
 		this.extensionUi = new ExtensionUiHost({
@@ -420,7 +421,7 @@ export class AgentService {
 				resourcesPath: process.resourcesPath,
 				override: process.env.NEKOCODE_BUILTIN_SKILLS,
 			}),
-			join(app.getPath("userData"), "builtin-skills.json"),
+			join(appDataPath(), "builtin-skills.json"),
 		);
 		this.loadPreferences();
 	}
@@ -2013,7 +2014,7 @@ export class AgentService {
 			sessionManager,
 			initialMode: this.workMode,
 			getPermission: () => this.mode,
-			debugRoot: join(app.getPath("userData"), "debug-logs"),
+			debugRoot: join(appDataPath(), "debug-logs"),
 			onChange: () => {
 				if (generation === this.generation && this.session) this.emit();
 			},
