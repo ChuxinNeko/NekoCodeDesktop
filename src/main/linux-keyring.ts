@@ -1,4 +1,5 @@
 import type { App, safeStorage } from "electron";
+import { relaunchAppImage } from "./linux-appimage-relaunch";
 
 type Encryption = Pick<
 	typeof safeStorage,
@@ -31,7 +32,7 @@ export type KeyringOutcome =
 export function settleLinuxKeyring(
 	encryption: Encryption,
 	app: Relauncher,
-	options: { platform?: NodeJS.Platform; argv?: string[]; env?: NodeJS.ProcessEnv } = {},
+	options: { platform?: NodeJS.Platform; argv?: string[]; env?: NodeJS.ProcessEnv; relaunchImage?: typeof relaunchAppImage } = {},
 ): KeyringOutcome {
 	const platform = options.platform ?? process.platform;
 	const argv = options.argv ?? process.argv;
@@ -57,11 +58,9 @@ export function settleLinuxKeyring(
 		);
 		return "unavailable";
 	}
-	app.relaunch({
-		// An AppImage's execPath lives in a mount that disappears with this process.
-		...(env.APPIMAGE ? { execPath: env.APPIMAGE } : {}),
-		args: [...argv.slice(1), "--password-store=basic"],
-	});
+	const args = [...argv.slice(1), "--password-store=basic"];
+	if (env.APPIMAGE) (options.relaunchImage ?? relaunchAppImage)(env.APPIMAGE, args, env);
+	else app.relaunch({ args });
 	app.exit(0);
 	return "relaunching";
 }

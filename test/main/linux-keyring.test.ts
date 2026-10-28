@@ -62,14 +62,15 @@ describe("settleLinuxKeyring", () => {
 
 	test("an AppImage relaunches through the image, not its temporary mount", () => {
 		const app = fakeApp();
+		const launches: unknown[] = [];
 		settleLinuxKeyring(fakeEncryption("kwallet6", false), app, {
 			platform: "linux",
 			argv,
 			env: { APPIMAGE: "/home/neko/NekoCode.AppImage" },
+			relaunchImage: (image, args) => { launches.push({ image, args }); },
 		});
-		expect(app.calls.relaunch).toEqual([
-			{ execPath: "/home/neko/NekoCode.AppImage", args: ["--no-sandbox", "--password-store=basic"] },
-		]);
+		expect(launches).toEqual([{ image: "/home/neko/NekoCode.AppImage", args: ["--no-sandbox", "--password-store=basic"] }]);
+		expect(app.calls.relaunch).toEqual([]);
 	});
 
 	test("respects an explicit --password-store", () => {

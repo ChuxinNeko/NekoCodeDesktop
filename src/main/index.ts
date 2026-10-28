@@ -4,6 +4,7 @@ import { appDataPath } from "./linux-profile-paths";
 import { PROFILE_BRIDGE_ENV, PROFILE_TOKEN_ENV } from "./linux-profile-paths";
 import { LinuxProfileBridge, profileRequestSync, type ProfileStorage } from "./linux-profile-bridge";
 import "./crash-diagnostics";
+import { recordDiagnostic } from "./diagnostic-log";
 import type { ExplainSelectionRequest } from "../shared/selection-explanation";
 import { SelectionExplanationService } from "./selection-explanation";
 import { PromptPredictionService } from "./prompt-prediction";
@@ -32,6 +33,8 @@ import { QqBotService } from "./qqbot/service";
 import { renderBlock } from "./qqbot/code-image";
 import { LanService } from "./lan-service";
 import { settleLinuxKeyring } from "./linux-keyring";
+import { authorizeRootDisplay } from "./linux-root-display";
+import { relaunchAppImage } from "./linux-appimage-relaunch";
 import { currentLinuxIdentity, LinuxRunModeService, ROOT_SESSION_ENV, RETURN_TO_USER_EXIT_CODE, rootReadyMessage } from "./linux-run-mode";
 import { isLinuxRunMode, type LinuxRunMode } from "../shared/linux-run-mode";
 import { RelayService } from "./relay-service";
@@ -783,6 +786,8 @@ let backgroundMode: BackgroundMode | null = null;
 let linuxRunMode: LinuxRunModeService | null = null;
 let profileBridge: LinuxProfileBridge | null = null;
 let profileSuspended = false;
+let releaseRootDisplay: (() => void) | undefined;
+process.once("exit", () => releaseRootDisplay?.());
 let rootStorageTimer: NodeJS.Timeout | undefined;
 let rootStoragePending: Promise<void> = Promise.resolve();
 let rootStorageSaved = "";
@@ -821,7 +826,8 @@ function assertRunModeIdle(): void {
 function restartDesktopUser(): void {
 	// Read the current file instead of overwriting root's settings with an old cached copy.
 	new AppPreferencesStore(appDataPath()).update({ linuxRunAs: "current" });
-	app.relaunch({ ...(process.env.APPIMAGE ? { execPath: process.env.APPIMAGE } : {}), args: process.argv.slice(1) });
+	if (process.platform === "linux" && process.env.APPIMAGE) relaunchAppImage(process.env.APPIMAGE, process.argv.slice(1), process.env);
+	else app.relaunch({ args: process.argv.slice(1) });
 	app.quit();
 }
 
@@ -889,8 +895,24 @@ function createWindow(): void {
 	win.webContents.once("did-finish-load", () => {
 		const token = process.env[ROOT_SESSION_ENV];
 		if (process.platform === "linux" && process.getuid?.() === 0 && token) {
-			process.stdout.write(rootReadyMessage(token));
+			// A loaded file can still contain an empty or failed React application.
+			void win.webContents.executeJavaScript(`new Promise(resolve => {
+				let done = false;
+				const finish = value => { if (done) return; done = true; clearTimeout(timer); observer.disconnect(); resolve(value); };
+				const check = () => { if (document.getElementById("root")?.childElementCount) requestAnimationFrame(() => requestAnimationFrame(() => finish(true))); };
+				const observer = new MutationObserver(check);
+				const timer = setTimeout(() => finish(false), 30000);
+				observer.observe(document.documentElement, { childList: true, subtree: true }); check();
+			})`).then((ready: unknown) => {
+				if (ready === true && !win.isDestroyed()) process.stdout.write(rootReadyMessage(token));
+				else { recordDiagnostic("window.startupFailed", { stage: "first-render" }); app.exit(1); }
+			}).catch(() => { recordDiagnostic("window.startupFailed", { stage: "first-render" }); app.exit(1); });
 		}
+	});
+	win.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
+		if (!isMainFrame || code === -3) return;
+		recordDiagnostic("window.loadFailed", { code });
+		if (rootProfileHandoff) app.exit(1);
 	});
 	win.on("close", (event) => {
 		clearTimeout(revealTimer);
@@ -2338,6 +2360,8 @@ if (ownsInstance) app.whenReady().then(async () => {
 					assertRunModeIdle();
 					const storage = await captureProfileStorage();
 					session.defaultSession.flushStorageData();
+					// Only after polkit succeeds, before root starts its graphics children.
+					releaseRootDisplay ??= authorizeRootDisplay(process.env);
 					profileSuspended = true;
 					await stopApplicationServices();
 					return { storage };
@@ -2426,6 +2450,7 @@ app.on("before-quit", (event) => {
 	backgroundMode?.beginQuit();
 	void stopApplicationServices();
 	profileBridge?.close();
+	releaseRootDisplay?.();
 });
 
 app.on("window-all-closed", () => {

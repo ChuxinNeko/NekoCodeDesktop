@@ -8,6 +8,15 @@ Being in a sudo group does not change the UID of an already running application.
 Switching is supported in packaged builds with polkit, a desktop authentication
 agent, and an X11 display (including XWayland). Pure Wayland sessions without
 `DISPLAY` cannot use this option. No password is collected or saved by NekoCode.
+The system authorization dialog authenticates the administrator selected by
+polkit (normally the desktop user's own password on Ubuntu).
+
+After authorization, the original user's process uses `xhost` from
+`x11-xserver-utils` to allow only `SI:localuser:root` on this display. This is
+needed by graphics children that do not retain the main process's Xauthority
+cookie. Access control remains enabled. The supervisor removes its own grant
+on shutdown or recovery; a pre-existing root entry is left in place. The
+supervisor hides only after root's application UI has rendered.
 
 Root runs the entire application and its tools with UID 0 and `--no-sandbox`.
 It retains the desktop user's HOME and the original application data paths, so
@@ -41,6 +50,12 @@ resets and the desktop user app restarts from the updated profile, avoiding stal
 in-memory stores overwriting changes made as root. A root instance launched outside this flow must be
 quit and reopened from the ordinary desktop user. Quitting root normally also
 quits the background supervisor; a root crash restarts the ordinary user app.
+
+AppImage recovery and keyring fallback relaunch through a detached system shell
+that waits for the original process to exit and passes every path and argument
+as a quoted positional parameter. This avoids Electron's native relauncher's
+`no_new_privs` flag, which prevents the FUSE mount helper from elevating. Paths
+into the old AppImage mount are removed from the new process's environment.
 
 ## Linux acceptance checks
 
