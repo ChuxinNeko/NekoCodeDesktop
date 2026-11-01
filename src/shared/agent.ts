@@ -114,7 +114,7 @@ export interface TurnUsage {
 }
 
 export type AgentCell =
-	| { id: string; type: "user"; text: string; timestamp: number }
+	| { id: string; type: "user"; text: string; images?: PromptImageAttachment[]; timestamp: number }
 	| {
 			id: string;
 			type: "assistant";

@@ -5,6 +5,10 @@ import type { TranslationKey } from "./en";
  * exactly; the Record type makes a missing key a compile error.
  */
 export const zhCN: Record<TranslationKey, string> = {
+	"chat.image.open": "放大图片：{name}",
+	"chat.image.fit": "适应窗口",
+	"chat.image.actualSize": "原始大小",
+	"chat.image.close": "关闭图片",
 	"settings.linuxRunMode": "Linux 应用运行用户",
 	"settings.linuxRunMode.hint": "切换应用权限，同时保留会话、模型配置和偏好设置。请先完成或停止正在运行的任务。",
 	"settings.linuxRunMode.current": "当前桌面用户",

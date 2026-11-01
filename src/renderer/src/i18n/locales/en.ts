@@ -3,6 +3,10 @@
  * locale must provide exactly these keys.
  */
 export const en = {
+	"chat.image.open": "Open image: {name}",
+	"chat.image.fit": "Fit to window",
+	"chat.image.actualSize": "Actual size",
+	"chat.image.close": "Close image",
 	"settings.linuxRunMode": "Linux application user",
 	"settings.linuxRunMode.hint": "Change the application's permissions while keeping your conversations, model configuration and preferences. Finish or stop running tasks before switching.",
 	"settings.linuxRunMode.current": "Current desktop user",

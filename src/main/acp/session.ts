@@ -109,11 +109,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 	});
 }
 
-function userText(text: string, images: PromptImageAttachment[]): string {
-	if (images.length === 0) return text;
-	return `${text}${text ? "\n\n" : ""}${images.map((image) => `[图片 ${image.name}]`).join(" ")}`;
-}
-
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -623,7 +618,7 @@ export class AcpSession {
 		if (!isObject(result) || !["injected", "startedNewTurn"].includes(String(result.outcome))) {
 			throw new Error("引导消息未被代理接受，请重试");
 		}
-		this.projection.addSteeringPrompt(userText(text, images));
+		this.projection.addSteeringPrompt(text, images);
 		if (result.outcome === "startedNewTurn" && this.codexThreadActive) {
 			this.steeringNewTurn = true;
 			this.status = "prompting";
@@ -655,7 +650,7 @@ export class AcpSession {
 		if (this.status === "starting") {
 			// The first prompt of a new conversation is sent while the agent is
 			// still starting: show it now, send it once the handshake is done.
-			this.projection.addUserPrompt(userText(text, images));
+			this.projection.addUserPrompt(text, images);
 			this.changed();
 			await this.started;
 			if (this.gone()) return;
@@ -667,7 +662,7 @@ export class AcpSession {
 			return this.send(text, images);
 		}
 		this.requireReady();
-		this.projection.addUserPrompt(userText(text, images));
+		this.projection.addUserPrompt(text, images);
 		return this.send(text, images);
 	}
 

@@ -1,3 +1,4 @@
+import { messageImages } from "../../shared/message-images";
 /**
  * ACP `session/update` notifications → the transcript cells NekoCode renders.
  *
@@ -6,7 +7,7 @@
  * draw (`bash`, `read`, `edit`, `write`, `grep`) so an external agent's work
  * looks like NekoCode's own; anything else falls back to a generic row.
  */
-import type { AgentCell, ContextUsage, TurnUsage } from "../../shared/agent";
+import type { AgentCell, ContextUsage, TurnUsage, PromptImageAttachment } from "../../shared/agent";
 import type { AcpCommand, AcpConfigOption } from "../../shared/acp";
 import type { ShellFileChange } from "./workspace-changes";
 
@@ -415,15 +416,15 @@ export class AcpProjection {
 		return str(args.command) ?? str(args.path) ?? str(args.pattern);
 	}
 
-	addUserPrompt(text: string): void {
+	addUserPrompt(text: string, images: PromptImageAttachment[] = []): void {
 		this.planCellId = null;
-		this.push({ id: this.id("user"), type: "user", text, timestamp: this.now() });
+		this.push({ id: this.id("user"), type: "user", text, ...(images.length ? { images } : {}), timestamp: this.now() });
 	}
 
 	/** A steer splits the visible reply while preserving the active work plan. */
-	addSteeringPrompt(text: string): void {
+	addSteeringPrompt(text: string, images: PromptImageAttachment[] = []): void {
 		this.closeAssistant();
-		this.push({ id: this.id("user"), type: "user", text, timestamp: this.now() });
+		this.push({ id: this.id("user"), type: "user", text, ...(images.length ? { images } : {}), timestamp: this.now() });
 	}
 
 	addNotice(level: "info" | "warning" | "error", text: string): void {
@@ -435,7 +436,7 @@ export class AcpProjection {
 		if (!isObject(update)) return false;
 		switch (update.sessionUpdate) {
 			case "user_message_chunk":
-				return this.appendUser(contentBlockText(update.content), str(update.messageId));
+				return this.appendUser(update.content, str(update.messageId));
 			case "agent_message_chunk":
 				return this.appendAssistant("text", contentBlockText(update.content), str(update.messageId));
 			case "agent_thought_chunk":
@@ -481,17 +482,19 @@ export class AcpProjection {
 		}
 	}
 
-	private appendUser(text: string, messageId: string | undefined): boolean {
-		if (!text) return false;
+	private appendUser(content: unknown, messageId: string | undefined): boolean {
+		const images = messageImages(content);
+		const text = images.length ? "" : contentBlockText(content);
+		if (!text && !images.length) return false;
 		const last = this.cells.at(-1);
 		if (last?.type === "user" && (messageId === undefined || this.messageIds.get(last.id) === messageId)) {
-			this.replace(this.cells.length - 1, { ...last, text: last.text + text });
+			this.replace(this.cells.length - 1, { ...last, text: last.text + text, ...(images.length ? { images: [...(last.images ?? []), ...images] } : {}) });
 			return true;
 		}
 		const id = this.id("user");
 		if (messageId) this.messageIds.set(id, messageId);
 		this.planCellId = null;
-		this.push({ id, type: "user", text, timestamp: this.now() });
+		this.push({ id, type: "user", text, ...(images.length ? { images } : {}), timestamp: this.now() });
 		return true;
 	}
 

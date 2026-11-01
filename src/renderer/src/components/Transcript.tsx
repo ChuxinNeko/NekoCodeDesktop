@@ -1,3 +1,4 @@
+import { MessageImages } from "./chat/MessageImages";
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useId } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import type { AgentCell, ModelOption } from "../../../shared/agent";
@@ -75,14 +76,15 @@ const UserCell = memo(function UserCell({
 	return (
 		<div className="flex w-full justify-end" data-turn-anchor={anchor ? "" : undefined} data-user-cell={cell.id}>
 			<div className="group flex max-w-[80%] flex-col items-end gap-px">
-				<div
+				{cell.images?.length ? <div className={cell.text ? "mb-2 flex max-w-full justify-end" : "flex max-w-full justify-end"}><MessageImages images={cell.images} /></div> : null}
+				{cell.text ? <div
 					className={cn(
 						"chat-user-message-bubble w-max min-w-0 max-w-full self-end px-3 py-2.5",
 						"rounded-[var(--radius-user-message)] bg-[var(--app-user-message-background)]",
 					)}
 				>
 					<Markdown text={displayInteractiveMessage(cell.text) ?? cell.text} user />
-				</div>
+				</div> : null}
 				{/* The rewind belongs on the prompt it would undo — that is the thing
 				    the user is looking at when they decide this turn was a mistake.
 				    Hidden until the row is hovered, because every turn has one and a

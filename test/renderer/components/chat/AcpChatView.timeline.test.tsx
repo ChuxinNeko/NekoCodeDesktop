@@ -19,6 +19,14 @@ const render = (value: AcpSessionSnapshot | null, mobile = false) => renderToStr
 </I18nProvider>);
 
 describe("Codex ACP timeline integration", () => {
+	test("renders image-only history with an accessible enlargement trigger", () => {
+		const html = render({ ...snapshot, cells: [{ id: "image-user", type: "user", text: "", timestamp: 1,
+			images: [{ name: "pasted.png", mimeType: "image/png", data: "aGVsbG8=" }] }] });
+		expect(html).toContain("data-message-images");
+		expect(html).toContain('src="data:image/png;base64,aGVsbG8="');
+		expect(html).toContain('alt="pasted.png"');
+		expect(html).toContain('aria-haspopup="dialog"');
+	});
 	test("mounts the timeline in the actual ACP view, including loaded history and a streaming turn", () => {
 		const history = render(snapshot);
 		expect(history).toContain("data-conversation-timeline");

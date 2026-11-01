@@ -1,3 +1,4 @@
+import { messageImages } from "../shared/message-images";
 import type { AgentCell, TurnUsage } from "../shared/agent";
 import { displayGoalPrompt, GOAL_MESSAGE } from "../shared/goal";
 import { displayInitPrompt } from "../shared/instructions";
@@ -448,9 +449,11 @@ export function projectMessages(
 		switch (message.role) {
 			case "user": {
 				const text = displayUserText(textOf(message.content));
-				if (!text.trim()) break;
+				const images = messageImages(message.content);
+				if (!text.trim() && !images.length) break;
 				cells.push({
 					id: `user-${t}-${index}`,
+					...(images.length ? { images } : {}),
 					type: "user",
 					text,
 					timestamp: t || Date.now(),
