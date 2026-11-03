@@ -29,7 +29,7 @@ describe("getStatusDotClassName", () => {
 });
 
 describe("TaskCard default collapsed and summary line", () => {
-	test("collapsed transcript shows a brief result while workflow rows avoid repeating it", () => {
+	test("collapsed cards show run metadata and leave results in details", () => {
 		const task: WorkflowTask = {
 			id: "t1",
 			kind: "worker",
@@ -43,7 +43,8 @@ describe("TaskCard default collapsed and summary line", () => {
 		};
 		const html = render(<TaskCard task={task} />);
 		expect(html).toContain("Execute unit test migrations");
-		expect(html).toContain("All tests passed with flying colors");
+		expect(html).not.toContain("All tests passed with flying colors");
+		expect(html).toContain("4s");
 		expect(html).not.toContain("Long implementation details stay in the detail view");
 		expect(html).not.toContain("src/a.ts");
 		expect(render(<TaskCard task={task} variant="workflow" />)).not.toContain("All tests passed with flying colors");
@@ -203,6 +204,15 @@ describe("TaskCard actions and accessibility", () => {
 		expect(htmlCompleted).not.toMatch(/取消任务|Cancel task/);
 	});
 
+	test("dock-enabled cards open through a native button without inline disclosure", () => {
+		const task: WorkflowTask = { id: "dock-task", kind: "explore", description: "Explore project", writablePaths: [], status: "completed", startedAt: 1000, endedAt: 4000, steps: [], result: "Full detail should be in the sidebar" };
+		const html = render(<TaskCard task={task} onOpen={() => {}} defaultOpen />);
+		expect(html).toContain("Explore project");
+		expect(html).toMatch(/查看该子代理的完整过程|View this worker/);
+		expect(html).not.toContain('aria-expanded=');
+		expect(html).not.toContain("Full detail should be in the sidebar");
+	});
+
 	test("status tone for failed task applies text-destructive", () => {
 		const failedTask: WorkflowTask = {
 			id: "t9",
@@ -216,7 +226,7 @@ describe("TaskCard actions and accessibility", () => {
 		};
 		const html = render(<TaskCard task={failedTask} />);
 		expect(html).toContain("text-destructive");
-		expect(html).toContain("bg-destructive");
+		expect(html).not.toContain("task-pixel-loader");
 	});
 });
 

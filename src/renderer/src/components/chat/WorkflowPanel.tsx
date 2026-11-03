@@ -2,24 +2,19 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import {
-	MAX_WORKERS,
 	type WorkflowAnswer,
 	type WorkflowRequest,
 	type WorkflowSnapshot,
 	type WorkflowTodo,
 } from "../../../../shared/workflow";
 import { api, errorMessage } from "../../api";
-import { useTranslation, type TranslationKey } from "../../i18n";
+import { useTranslation } from "../../i18n";
 import {
 	ChevronDownIcon,
 	ChevronUpIcon,
-	CircleCheckIcon,
-	CircleDotIcon,
-	CircleIcon,
-	CircleXIcon,
 } from "../../lib/icons";
 import { Button } from "../ui/button";
-import { TaskCard, WorkerSlots } from "./AgentTask";
+import { TaskCard } from "./AgentTask";
 import { FusionEngineInspector } from "./FusionEngineInspector";
 import { COMPOSER_STACKED_SURFACE_BORDER_CLASS_NAME, COMPOSER_SURFACE_SHADOW_CLASS_NAME } from "./composerPickerStyles";
 import { ComposerStackedHeaderFrame } from "./ComposerColumnFrame";
@@ -211,27 +206,6 @@ function QuestionCard({ request, onAnswer }: { request: WorkflowRequest; onAnswe
 		</form>
 	);
 }
-const TODO_STATUS_KEYS: Record<WorkflowTodo["status"], TranslationKey> = {
-	pending: "workflow.pending",
-	in_progress: "workflow.running",
-	completed: "workflow.completed",
-	cancelled: "workflow.cancelled",
-};
-
-function TodoStatusIcon({ status }: { status: WorkflowTodo["status"] }) {
-	const className = "mt-px size-3.5 shrink-0";
-	switch (status) {
-		case "completed":
-			return <CircleCheckIcon className={cn(className, "text-muted-foreground")} />;
-		case "in_progress":
-			return <CircleDotIcon className={cn(className, "text-foreground")} />;
-		case "cancelled":
-			return <CircleXIcon className={cn(className, "text-muted-foreground/70")} />;
-		default:
-			return <CircleIcon className={cn(className, "text-muted-foreground/70")} />;
-	}
-}
-
 /**
  * Which step the run is on: the one in progress, or — between steps — how far
  * it has got. Positional rather than a count of finished items, because "3/7"
@@ -243,54 +217,7 @@ export function currentStep(todos: WorkflowTodo[]): { current: number; active?: 
 	return { current: todos.filter((todo) => todo.status === "completed").length };
 }
 
-/** Scroll the active step inside the upward-opening panel, without moving the chat. */
-function ProgressSection({
-	workflow, compact, open, onCancel, onOpenTask,
-}: {
-	workflow: WorkflowSnapshot;
-	compact: boolean;
-	open: boolean;
-	onCancel: (id: string) => void;
-	onOpenTask?: (taskId: string) => void;
-}) {
-	const { t } = useTranslation();
-	const { active } = currentStep(workflow.todos);
-	const body = useRef<HTMLOListElement | null>(null);
-	const activeRow = useRef<HTMLLIElement | null>(null);
-	useEffect(() => {
-		const container = body.current, row = activeRow.current;
-		if (!open || !container || !row) return;
-		const top = row.offsetTop;
-		if (top < container.scrollTop || top + row.offsetHeight > container.scrollTop + container.clientHeight) {
-			container.scrollTo({ top: Math.max(0, top - container.clientHeight / 3) });
-		}
-	}, [open, active?.id]);
-	return <div className={cn("min-h-0 overflow-y-auto overscroll-contain", compact ? "max-h-32 shrink-0" : "flex-1")} data-slot="workflow-sections">
-		{workflow.todos.length ? <section aria-label={t("workflow.stepsSection")}>
-			<h3 className="flex items-center justify-between px-2 py-1.5 text-[length:var(--app-font-size-ui-xs,10px)] font-medium text-muted-foreground">
-				<span>{t("workflow.stepsSection")}</span><span className="tabular-nums text-muted-foreground/70">{workflow.todos.length}</span>
-			</h3>
-			<ol ref={body} className="relative max-h-40 overflow-y-auto overscroll-contain">
-				{workflow.todos.map(todo => <li key={todo.id} ref={todo.id === active?.id ? activeRow : undefined}
-					className={cn("flex items-start gap-2 rounded-md px-2 py-1.5", todo.status === "in_progress" && "bg-muted/40")}>
-					<TodoStatusIcon status={todo.status} /><span className="sr-only">{t(TODO_STATUS_KEYS[todo.status])}</span>
-					<span className={cn("min-w-0 break-words leading-relaxed", todo.status === "in_progress" ? "font-medium text-foreground" :
-						todo.status === "completed" || todo.status === "cancelled" ? "text-muted-foreground/65" : "text-foreground/80")}>{todo.text}</span>
-				</li>)}
-			</ol>
-		</section> : null}
-		{workflow.tasks.length ? <section aria-label={t("workflow.subagentsSection")} className={cn(workflow.todos.length && "mt-2 border-t border-border/50 pt-2")}>
-			<h3 className="flex items-center justify-between px-2 py-1.5 text-[length:var(--app-font-size-ui-xs,10px)] font-medium text-muted-foreground">
-				<span>{t("workflow.subagentsSection")}</span><span className="tabular-nums text-muted-foreground/70">{workflow.tasks.length}</span>
-			</h3>
-			<ul className="divide-y divide-border/40">
-				{workflow.tasks.map(task => <li key={task.id}><TaskCard task={task} variant="workflow" onCancel={onCancel} onOpen={onOpenTask} /></li>)}
-			</ul>
-		</section> : null}
-	</div>;
-}
-
-export function WorkflowPanel({
+function WorkflowInspector({
 	workflow,
 	onOpenTask,
 	onAnswer,
@@ -302,7 +229,6 @@ export function WorkflowPanel({
 	onCancelWorker?: (id: string) => Promise<unknown>;
 }) {
 	const { t } = useTranslation();
-	const [error, setError] = useState("");
 	const [open, setOpen] = useState(Boolean(workflow.request));
 	const [availableHeight, setAvailableHeight] = useState(384);
 	const panel = useRef<HTMLDivElement | null>(null);
@@ -310,10 +236,8 @@ export function WorkflowPanel({
 	const contentId = useId();
 	// A team run is drawn in the transcript as a group chat instead of this inspector.
 	const fusion = workflow.fusion?.models?.sidekick === "team" ? undefined : workflow.fusion;
-	const hasContent = Boolean(workflow.request || workflow.todos.length || workflow.tasks.length || fusion);
-	const { current, active } = currentStep(workflow.todos);
-	const running = workflow.tasks.filter(task => task.status === "running").length;
-	const summary = workflow.request?.title || active?.text || workflow.todos.find(todo => todo.status === "pending")?.text || workflow.tasks.find(task => task.status === "running")?.description || (fusion ? `Fusion · ${t(`fusion.engine.${fusion.status}`)}` : "");
+	const hasContent = Boolean(workflow.request || fusion);
+	const summary = workflow.request?.title || (fusion ? `Fusion · ${t(`fusion.engine.${fusion.status}`)}` : "");
 
 	// A new question must be visible even when the user folded an earlier run.
 	useEffect(() => { if (workflow.request) setOpen(true); }, [workflow.request?.id]);
@@ -348,20 +272,42 @@ export function WorkflowPanel({
 					className={cn("absolute inset-x-[-1px] bottom-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain rounded-t-xl border border-b-0 bg-popover/95 p-2 backdrop-blur-xl", COMPOSER_STACKED_SURFACE_BORDER_CLASS_NAME, COMPOSER_SURFACE_SHADOW_CLASS_NAME, open ? "flex" : "hidden")}>
 					{fusion ? <FusionEngineInspector state={fusion} embedded /> : null}
 					{workflow.request ? <QuestionCard key={workflow.request.id} request={workflow.request} onAnswer={onAnswer} /> : null}
-					{workflow.todos.length || workflow.tasks.length ? <ProgressSection workflow={workflow} open={open} compact={Boolean(workflow.request)} onOpenTask={onOpenTask}
-						onCancel={id => { void (onCancelWorker ?? api.agentCancelTask)(id).catch(cause => { setError(errorMessage(cause)); setOpen(true); }); }} /> : null}
-					{error ? <p role="alert" className="shrink-0 break-words text-destructive">{error}</p> : null}
+
 				</div>
 				<button ref={toggle} type="button" aria-expanded={open} aria-controls={contentId} aria-label={t(open ? "workflow.collapse" : "workflow.expand")}
 					onClick={() => setOpen(value => !value)}
 					className="flex h-9 w-full min-w-0 items-center gap-2 rounded-t-[inherit] px-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
 					{open ? <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" /> : <ChevronUpIcon className="size-3.5 shrink-0 text-muted-foreground" />}
 					<span className="shrink-0 font-medium">{t("workflow.title")}</span>
-					{workflow.todos.length ? <span className="shrink-0 tabular-nums text-muted-foreground" aria-label={t("workflow.stepOfTotal", { current, total: workflow.todos.length })}>{current}/{workflow.todos.length}</span> : null}
 					<span className={cn("min-w-0 flex-1 truncate", workflow.request ? "text-foreground" : "text-muted-foreground")} title={summary}>{summary}</span>
-					{workflow.tasks.length ? <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground" aria-label={t("workflow.workers", { running, max: workflow.maxWorkers ?? MAX_WORKERS })}><WorkerSlots running={running} max={workflow.maxWorkers} /><span className="tabular-nums">{running}/{workflow.maxWorkers ?? MAX_WORKERS}</span></span> : null}
 				</button>
 			</div>
 		</ComposerStackedHeaderFrame>
 	);
+}
+
+/** Only active background work belongs above the composer; history stays in chat. */
+export function WorkflowPanel(props: Parameters<typeof WorkflowInspector>[0]) {
+	const { t } = useTranslation();
+	const [expanded, setExpanded] = useState(false);
+	const [error, setError] = useState("");
+	const tasks = props.workflow.tasks.filter(task => task.status === "running");
+	const showTasks = tasks.length <= 3 || expanded;
+	return <>
+		<WorkflowInspector {...props} />
+		{tasks.length ? <ComposerStackedHeaderFrame data-slot="background-task-strip" className="mb-2 text-[11.5px]">
+			<section aria-label={t("workflow.subagentsSection")} className="rounded-[10px] border border-border bg-muted/20 px-1 py-[3px]">
+				{tasks.length > 3 ? <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground">
+					<ChevronDownIcon className={cn("size-3.5 transition-transform", !expanded && "-rotate-90")} />{t("workflow.subagentsSection")} · {tasks.length}
+				</button> : null}
+				{showTasks ? <ul className="max-h-40 overflow-y-auto overscroll-contain">{tasks.map(task => <li key={task.id}>
+					<TaskCard task={task} variant="workflow" onOpen={props.onOpenTask} onCancel={id => {
+						setError("");
+						void (props.onCancelWorker ?? api.agentCancelTask)(id).catch(cause => setError(errorMessage(cause)));
+					}} />
+				</li>)}</ul> : null}
+				{error ? <p role="alert" className="px-2 text-destructive">{error}</p> : null}
+			</section>
+		</ComposerStackedHeaderFrame> : null}
+	</>;
 }

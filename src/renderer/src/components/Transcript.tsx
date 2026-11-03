@@ -1,3 +1,5 @@
+import { TodoList, todoItems } from "./chat/TodoList";
+import { ListTodoIcon } from "../lib/icons";
 import { MessageImages } from "./chat/MessageImages";
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useId } from "react";
 import { ThinkingOrb } from "thinking-orbs";
@@ -183,6 +185,7 @@ interface TaskView {
 	explorers?: Map<string, ExplorerRun>;
 	/** Show the worker's full run in the dock; absent outside a live session. */
 	open?: (taskId: string) => void;
+	openExplorer?: (toolCallId: string) => void;
 	/** Show a file the agent touched in the dock's Files pane. */
 	openFile?: (path: string) => void;
 }
@@ -354,7 +357,7 @@ const ToolCell = memo(function ToolCell({ cell, active }: { cell: Extract<AgentC
 	// A search is a run too: the explorer's fan-out while it works, what it
 	// found once it is done.
 	if (cell.toolName === "code_search")
-		return <FastContextCard cell={cell} run={view.explorers?.get(cell.toolCallId)} onOpenFile={view.openFile} />;
+		return <FastContextCard cell={cell} run={view.explorers?.get(cell.toolCallId)} onOpenFile={view.openFile} onOpenDetails={view.openExplorer} />;
 
 	const fileEdit = cell.status === "error" ? null : fileEditPreview(cell);
 	if (fileEdit) return <FileEditCell cell={cell} preview={fileEdit} active={active} />;
@@ -504,6 +507,9 @@ const WorkingBlock = memo(function WorkingBlock({
 					</li> : null}
 				</ol>
 			</DisclosureRegion>
+			{!open && stages.some(stage => stage.agent) ? <ol className="m-0 list-none p-0" aria-label={t("workflow.subagentsSection")}>
+				{stages.filter(stage => stage.agent).map(stage => <WorkStageRow key={stage.id} stage={stage} active={active} current={false} />)}
+			</ol> : null}
 			{!open && !settling && summary ? (
 				<div
 					className={cn(
@@ -526,10 +532,14 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	current: boolean;
 }) {
 	const { t } = useTranslation();
-	const [open, setOpen] = useState(false);
+	const [open, setOpen] = useState(Boolean(stage.todo));
 	const detailId = useId();
 	const running = active && (current || stage.items.some((item) => item.kind === "tool" && (item.cell.status === "running" || item.cell.status === "pending")));
 	const title = workStageLabel(stage, t);
+	if (stage.agent) return <li className="min-w-0 pb-2 pl-6 last:pb-0" data-work-stage={stage.id} data-agent-stage="">
+		{stage.items.filter(item => item.kind === "tool").map(item => item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} /> : null)}
+		{stage.items.some(item => item.kind !== "tool") ? <details className="text-xs text-muted-foreground"><summary>{t("workFlow.stage.thinking")}</summary><WorkStageDetails stage={{ ...stage, items: stage.items.filter(item => item.kind !== "tool") }} active={active} /></details> : null}
+	</li>;
 	if (!workStageHasDetails(stage)) return running ? <li className="pl-6"><PlanningLine /></li> : null;
 	const changes = stage.items.reduce((total, item) => {
 		if (item.kind !== "tool" || item.cell.status === "error") return total;
@@ -544,6 +554,7 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 			<button type="button" aria-expanded={open} aria-controls={detailId}
 				onClick={() => setOpen((value) => !value)}
 				className="flex max-w-full items-start gap-1.5 rounded py-0.5 text-left text-[length:var(--app-font-size-chat-body,13px)] leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
+				{stage.todo ? <ListTodoIcon aria-hidden="true" className="mt-1 size-[15px] shrink-0" /> : null}
 				<span className={cn("min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]", running && "shimmer text-foreground/80")}>
 					{title}
 				</span>
@@ -558,6 +569,11 @@ const WorkStageRow = memo(function WorkStageRow({ stage, active, current }: {
 	);
 });
 
+function TodoToolCell({ cell, active }: { cell: Extract<AgentCell, { type: "tool" }>; active: boolean }) {
+ const todos = todoItems(cell);
+ return todos ? <TodoList todos={todos} /> : <ToolCell cell={cell} active={active} />;
+}
+
 /** The original reasoning stays readable once its stage is expanded. */
 export function WorkStageDetails({ stage, active }: { stage: WorkStage; active: boolean }) {
 	return (
@@ -566,7 +582,7 @@ export function WorkStageDetails({ stage, active }: { stage: WorkStage; active: 
 				if (unit.kind === "computer") return <ComputerUseCard key={unit.id} steps={unit.steps} active={active} pending={unit.pending} />;
 				const item = unit.item;
 				return item.kind === "thinking" ? (item.cell.thinking.trim() ? <ThinkingStream key={item.id} text={item.cell.thinking} /> : null)
-					: item.kind === "tool" ? <ToolCell key={item.id} cell={item.cell} active={active} />
+					: item.kind === "tool" ? <TodoToolCell key={item.id} cell={item.cell} active={active} />
 					: item.kind === "message" ? <RemarkCell key={item.id} cell={item.cell} />
 					: <NoticeCell key={item.id} cell={item.cell} />;
 			})}
@@ -606,6 +622,7 @@ const TranscriptView = function Transcript({
 	tasks,
 	explorers,
 	onOpenTask,
+	onOpenExplorer,
 	onOpenFile,
 	onOpenDiff,
 	checkpoints,
@@ -637,6 +654,7 @@ const TranscriptView = function Transcript({
 	/** Fast Context runs, so a `code_search` row can show its search live. */
 	explorers?: ExplorerRun[];
 	onOpenTask?: (taskId: string) => void;
+	onOpenExplorer?: (toolCallId: string) => void;
 	/** Show a file a tool row references in the dock's Files pane. */
 	onOpenFile?: (path: string) => void;
 	onOpenDiff?: (checkpoint: CheckpointSummary, path: string) => void;
@@ -659,8 +677,8 @@ const TranscriptView = function Transcript({
 	// The handlers come from parents that recreate them every render. Reached
 	// through a ref, they stop being a reason for every row to re-render: the
 	// context value and the memoized rows only change with what they show.
-	const handlers = useRef({ onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend, onInteractiveSend });
-	handlers.current = { onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend, onInteractiveSend };
+	const handlers = useRef({ onOpenExplorer, onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend, onInteractiveSend });
+	handlers.current = { onOpenExplorer, onOpenTask, onOpenFile, onRestoreCheckpoint, onForkMessage, onStopCommand, onSend, onInteractiveSend };
 	const sendInteractive = useCallback<SelectionSend>(request => (handlers.current.onInteractiveSend ?? handlers.current.onSend)?.(request), []);
 	const interactiveBusy = streaming === true || settling || interactionsDisabled;
 	const scopeIdentity = useMemo(() => ({}), [cwd, sessionId]);
@@ -689,12 +707,14 @@ const TranscriptView = function Transcript({
 	}), [!!onSend, !!onInteractiveSend, !!onOpenFile, !!onOpenTask, cwd, sessionId, sendInteractive, openInteractiveFile, openInteractiveTask, readProjectJson, interactiveBusy]);
 	const stopCommand = useCallback((id: string) => handlers.current.onStopCommand?.(id) ?? Promise.resolve(false), []);
 	const forkMessage = useCallback((cellId: string) => handlers.current.onForkMessage?.(cellId), []);
+	const openExplorer = useCallback((id: string) => handlers.current.onOpenExplorer?.(id), []);
 	const openTask = useCallback((taskId: string) => handlers.current.onOpenTask?.(taskId), []);
 	const openFile = useCallback((path: string) => handlers.current.onOpenFile?.(path), []);
 	const restoreCheckpoint = useCallback(
 		(checkpoint: CheckpointSummary) => handlers.current.onRestoreCheckpoint?.(checkpoint),
 		[],
 	);
+	const canOpenExplorer = onOpenExplorer !== undefined;
 	const canOpenTask = onOpenTask !== undefined;
 	const canOpenFile = onOpenFile !== undefined;
 	const taskLookup = useMemo<TaskView>(
@@ -703,10 +723,11 @@ const TranscriptView = function Transcript({
 			explorers: new Map(
 				(explorers ?? []).flatMap((run) => (run.toolCallId ? [[run.toolCallId, run] as const] : [])),
 			),
+			openExplorer: canOpenExplorer ? openExplorer : undefined,
 			open: canOpenTask ? openTask : undefined,
 			openFile: canOpenFile ? openFile : undefined,
 		}),
-		[tasks, explorers, canOpenTask, canOpenFile, openTask, openFile],
+		[tasks, explorers, canOpenTask, canOpenFile, openTask, openFile, canOpenExplorer, openExplorer],
 	);
 	// Keyed by the cell the main process resolved each checkpoint onto; ones that
 	// have no cell (compacted away, or on an abandoned branch) only show in the

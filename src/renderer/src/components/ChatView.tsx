@@ -136,6 +136,7 @@ interface ChatViewProps {
 	onToggleBrowser: () => void;
 	/** Show one background worker's full run in the right dock. */
 	onOpenTask?: (taskId: string) => void;
+	onOpenExplorer?: (toolCallId: string) => void;
 	/** Show a file a tool row references in the dock's Files pane. */
 	onOpenFile?: (path: string) => void;
 	/** Show the current turn's selected file diff in the right dock. */
@@ -497,6 +498,7 @@ export function ChatView(props: ChatViewProps) {
 							tasks={snapshot.workflow.tasks}
 							explorers={snapshot.workflow.explorers}
 							onOpenTask={props.onOpenTask}
+							onOpenExplorer={props.onOpenExplorer}
 							onOpenFile={props.onOpenFile}
 							onOpenDiff={props.onOpenDiff}
 							checkpoints={snapshot.checkpoints}

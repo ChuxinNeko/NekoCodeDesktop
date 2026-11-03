@@ -1,3 +1,4 @@
+import { FastContextCard } from "../chat/FastContextCard";
 import { useShortcuts } from "../../hooks/useShortcuts";
 import type { ShortcutId } from "../../lib/shortcuts";
 import type { AgentSnapshot } from "../../../../shared/agent";
@@ -47,7 +48,7 @@ export type DockTool = "agentmap" | "review" | "terminal" | "browser" | "desktop
  * into one tab would make watching two workers a matter of switching a hidden
  * selector inside a tab.
  */
-export type DockTabId = DockTool | "diff" | `task:${string}`;
+export type DockTabId = DockTool | "diff" | `task:${string}` | `explorer:${string}`;
 
 export function taskTabId(taskId: string): DockTabId {
 	return `task:${taskId}`;
@@ -114,6 +115,7 @@ interface RightDockProps {
 	agentSnapshot: AgentSnapshot | null;
 	/** Open a worker's own tab — the agent map's click on a worker. */
 	onOpenTask: (taskId: string) => void;
+	onOpenFile?: (path: string) => void;
 	/** Restore points for the open session, newest first. */
 	checkpoints: readonly CheckpointSummary[];
 	/** A run is in flight, so restoring would race it. */
@@ -149,6 +151,7 @@ export function RightDock({
 	tasks,
 	agentSnapshot,
 	onOpenTask,
+	onOpenFile,
 	checkpoints,
 	checkpointsBusy,
 	onSelect,
@@ -165,6 +168,7 @@ export function RightDock({
 		: agentSnapshot?.checkpoints.find(checkpoint => checkpoint.id === diffRequest?.checkpoint.id);
 
 	const tabLabel = (tab: DockTabId): string => {
+		if (tab.startsWith("explorer:")) return "Fast Context";
 		if (tab === "diff") return t("fileEdit.changes");
 		const taskId = taskIdOfTab(tab);
 		if (taskId === null) return t(DOCK_TITLES[tab as DockTool]);
@@ -172,6 +176,7 @@ export function RightDock({
 	};
 
 	const tabIcon = (tab: DockTabId) => {
+		if (tab.startsWith("explorer:")) return <BotIcon className="size-3.5 shrink-0 opacity-80" />;
 		if (tab === "diff") return <GitBranchIcon className="size-3.5 shrink-0 opacity-80" />;
 		const taskId = taskIdOfTab(tab);
 		if (taskId === null) {
@@ -268,6 +273,8 @@ export function RightDock({
 
 				{tabs.map((tab) => {
 					const taskId = taskIdOfTab(tab);
+					const explorerId = tab.startsWith("explorer:") ? tab.slice(9) : null;
+					const explorerCell = explorerId ? agentSnapshot?.cells.find(cell => cell.type === "tool" && cell.toolCallId === explorerId) : undefined;
 					const hidden = tab !== active;
 					return (
 						<div
@@ -277,7 +284,11 @@ export function RightDock({
 								hidden && "invisible pointer-events-none",
 							)}
 						>
-							{taskId !== null ? (
+							{explorerId !== null ? (
+								<div className="min-h-0 flex-1 overflow-y-auto p-3">
+									{explorerCell?.type === "tool" ? <FastContextCard key={explorerId} cell={explorerCell} run={agentSnapshot?.workflow.explorers?.find(run => run.toolCallId === explorerId)} onOpenFile={onOpenFile} docked /> : <p className="text-sm text-muted-foreground">{t("fastCard.stepsGone")}</p>}
+								</div>
+							) : taskId !== null ? (
 								<CommandStopContext.Provider value={agentSnapshot ? (id) => api.agentStopCommand(agentSnapshot.session.id, id) : undefined}>
 									<TaskDetailPanel task={taskById.get(taskId) ?? null} onCancel={onCancelTask} />
 								</CommandStopContext.Provider>

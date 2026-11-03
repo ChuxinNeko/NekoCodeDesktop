@@ -326,6 +326,7 @@ export const en = {
 	"workflow.previous": "Back",
 	"workflow.stepOf": "Question {current} of {total}",
 	"workflow.title": "Workflow",
+	"workflow.todoUpdate": "Update todos",
 	"workflow.stepsSection": "Steps",
 	"workflow.subagentsSection": "Subagents",
 	"workflow.expand": "Expand workflow upwards",

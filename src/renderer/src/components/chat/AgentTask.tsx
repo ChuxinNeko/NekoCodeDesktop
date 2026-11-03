@@ -10,7 +10,9 @@ import {
 	ChevronRightIcon,
 	HammerIcon,
 	TriangleAlertIcon,
-	XIcon,
+	CircleCheckIcon,
+	CircleAlertIcon,
+	CircleXIcon,
 } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { lastThinkingLine } from "./Thinking";
@@ -81,13 +83,6 @@ function runningSummary(task: WorkflowTask, t: (key: TranslationKey) => string):
 	return "";
 }
 
-/** Keep result previews plain and short; the full Markdown belongs in the detail view. */
-function resultSummary(result?: string): string {
-	const lines = (result ?? "").split("\n").map(line => line.trim()).filter(Boolean);
-	return (lines.find(line => !/^#{1,6}\s/.test(line)) ?? lines[0] ?? "")
-		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/^[\s>#*-]+/, "").replace(/[*`]/g, "").slice(0, 500);
-}
-
 /**
  * How much of the worker pool is in use, as the pool itself.
  *
@@ -151,6 +146,16 @@ export function StepRow({ step }: { step: Extract<TaskStep, { kind: "tool" }> })
 	);
 }
 
+/** Same compact status marks as baocode; abnormal completion remains visible. */
+export function TaskStatusIcon({ task }: { task: Pick<WorkflowTask, "status" | "outcome"> }) {
+	if (task.status === "running") return <span aria-hidden="true" className="task-pixel-loader grid size-3.5 shrink-0 grid-cols-[repeat(3,3px)] grid-rows-[repeat(3,3px)] gap-0.5 text-muted-foreground">
+		{Array.from({ length: 9 }, (_, index) => <span key={index} className="bg-current" style={{ animationDelay: `${index * 0.1}s` }} />)}
+	</span>;
+	const attention = task.outcome && ["blocked", "needs_decision", "needs_escalation"].includes(task.outcome);
+	const Icon = task.status === "failed" || attention ? CircleAlertIcon : task.status === "cancelled" ? CircleXIcon : CircleCheckIcon;
+	return <Icon aria-hidden="true" className={cn("size-3.5 shrink-0", task.status === "failed" ? "text-destructive" : attention || task.status === "cancelled" ? "text-amber-500" : "text-emerald-500")} />;
+}
+
 /**
  * A shared task row: live activity in the workflow, brief results in the transcript.
  * Inline details are a fallback for surfaces without a right-side detail dock.
@@ -190,34 +195,34 @@ export function TaskCard({
 	const newest = task.steps[task.steps.length - 1];
 	const reasoning =
 		newest?.kind === "thinking" && newest.endedAt === undefined ? newest : undefined;
-	const summary = running ? runningSummary(task, t) : variant === "transcript" ? resultSummary(task.result) : "";
+	const summary = running ? runningSummary(task, t).replace(/\s+/g, " ") : [
+		t(KIND_KEYS[task.kind]), formatElapsed(seconds),
+		...(tools.length ? [t(tools.length === 1 ? "workFlow.toolCall" : "workFlow.toolCalls", { count: tools.length })] : []),
+	].join(" · ");
 	const attention = task.outcome && ["blocked", "needs_decision", "needs_escalation"].includes(task.outcome);
 
 	return (
 		<div data-task-summary={variant} data-task-id={task.id} className="@container/task group/task min-w-0">
-			<div className="flex min-w-0 items-start gap-2 rounded-md px-2 py-2 transition-colors hover:bg-muted/35 motion-reduce:transition-none">
-				<span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true">
-					<span className={cn("size-1.5 rounded-full", getStatusDotClassName(task.status, task.outcome))} />
-				</span>
-				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 items-center gap-2">
-						<button type="button"
-							title={[t(KIND_KEYS[task.kind]), task.description, t(onOpen ? "workflow.taskOpenPanel" : expanded ? "workflow.taskCollapse" : "workflow.taskExpand")].join(" · ")}
-							aria-expanded={inlineDetails ? expanded : undefined} aria-controls={inlineDetails ? detailId : undefined}
-							onClick={() => onOpen ? onOpen(task.id) : setOpen(value => !value)}
-							className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-[length:var(--app-font-size-ui,12px)] font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring">
-							<span className="truncate">{task.description}</span>
-							<ChevronRightIcon className={cn("size-3 shrink-0 text-muted-foreground/60", inlineDetails && "workflow-chevron")} data-open={expanded} />
-						</button>
-						<span className={cn("max-w-[45%] shrink-0 truncate text-[length:var(--app-font-size-ui-xs,10px)]", task.status === "failed" ? "text-destructive" : attention ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
-							{t(task.status === "completed" && task.outcome ? `fusion.outcome.${task.outcome}` : STATUS_KEYS[task.status])}
+			<div className={cn("relative flex min-w-0 items-center transition-colors duration-120 motion-reduce:transition-none", variant === "workflow" ? "rounded-md hover:bg-muted/40" : "my-0.5 mb-1.5 rounded-lg border border-border bg-muted/20 hover:border-muted-foreground/40 hover:bg-muted/40 focus-within:border-ring")}>
+				<button type="button"
+					title={[task.description, summary, t(onOpen ? "workflow.taskOpenPanel" : expanded ? "workflow.taskCollapse" : "workflow.taskExpand")].join(" · ")}
+					aria-label={`${task.description} · ${t(task.status === "completed" && task.outcome ? `fusion.outcome.${task.outcome}` : STATUS_KEYS[task.status])} · ${t(onOpen ? "workflow.taskOpenPanel" : expanded ? "workflow.taskCollapse" : "workflow.taskExpand")}`}
+					aria-expanded={inlineDetails ? expanded : undefined} aria-controls={inlineDetails ? detailId : undefined}
+					onClick={() => onOpen ? onOpen(task.id) : setOpen(value => !value)}
+					className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-[9px] pl-3 pr-2.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring">
+					<TaskStatusIcon task={task} />
+					<span className="flex min-w-0 flex-1 items-center leading-[1.4]">
+						<span className={cn("min-w-0 truncate", variant === "workflow" ? "text-[11.5px]" : "text-[13px] font-medium", running && "shimmer")}>{task.description}</span>
+						<span className="ml-1.5 max-w-[50%] shrink truncate text-[12px] text-muted-foreground/75">
+							<span key={summary} className="task-activity-flip inline-block max-w-full truncate align-middle">· {summary}</span>
 						</span>
-						<span className="shrink-0 text-[length:var(--app-font-size-ui-xs,10px)] tabular-nums text-muted-foreground/70">{formatElapsed(seconds)}</span>
-						{running && onCancel ? <Button type="button" size="icon-chip" variant="ghost" className="size-5 text-muted-foreground hover:text-destructive"
-							aria-label={t("workflow.cancelTask")} title={t("workflow.cancelTask")} onClick={() => onCancel(task.id)}><XIcon className="size-3" /></Button> : null}
-					</div>
-					{summary && !expanded ? <p className={cn("mt-0.5 truncate text-[length:var(--app-font-size-ui-sm,11px)] leading-relaxed text-muted-foreground", running && !task.steps.length && "shimmer")} title={summary}>{summary}</p> : null}
-				</div>
+					</span>
+					{variant === "workflow" ? <span className="shrink-0 text-[11.5px] tabular-nums text-muted-foreground">{formatElapsed(seconds)}</span> : null}
+					{attention ? <span className="max-w-[25%] truncate text-[12px] text-amber-700 dark:text-amber-400">{t(`fusion.outcome.${task.outcome!}`)}</span> : null}
+					<ChevronRightIcon aria-hidden="true" className={cn("size-[18px] shrink-0 text-muted-foreground", inlineDetails && "workflow-chevron")} data-open={expanded} />
+				</button>
+				{running && onCancel ? <Button type="button" size="icon-chip" variant="ghost" className="mr-2 size-6 shrink-0 text-muted-foreground hover:text-destructive"
+					aria-label={t("workflow.cancelTask")} title={t("workflow.cancelTask")} onClick={() => onCancel(task.id)}><span aria-hidden="true" className="size-2.5 rounded-[1px] bg-current" /></Button> : null}
 			</div>
 			<DisclosureRegion id={detailId} open={expanded}>
 				<div className="mb-2 ml-[1.375rem] min-w-0 flex flex-col gap-2 border-l border-border/50 px-3 py-1">

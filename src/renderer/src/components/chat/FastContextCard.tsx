@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { TaskStatusIcon } from "./AgentTask";
+import { memo, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { markdownRemarkPlugins, markdownRehypePlugins } from "../../lib/markdownPlugins";
 import type { AgentCell } from "../../../../shared/agent";
@@ -17,7 +18,7 @@ import {
 	type Turn,
 } from "../../lib/fastContext";
 import { FileTypeIcon } from "../../lib/fileIcons";
-import { ChevronRightIcon, FolderIcon, SearchIcon, TriangleAlertIcon, ZapIcon } from "../../lib/icons";
+import { ChevronRightIcon, FolderIcon, SearchIcon } from "../../lib/icons";
 import { cn } from "../../lib/utils";
 import { MUTED_LABEL_TEXT_CLASS_NAME, SOFT_SURFACE_FILL_CLASS_NAME } from "../../surfaceStyles";
 import { lastThinkingLine } from "./Thinking";
@@ -158,24 +159,23 @@ function LocationRow({ location, index, onOpen }: { location: Location; index: n
 }
 
 /**
- * A `code_search` call in the transcript: the Fast Context explorer searching,
- * then what it found.
- *
- * While it runs the card is the search itself — each turn's parallel calls pop
- * in as a row of chips, the newest turns in view, a scan line crossing the top
- * edge and the clock in tenths. When the report lands the fan-out folds away
- * and the locations take its place, each one a click from the file. The steps
- * are live-only, so a reopened session shows the locations and the report.
+ * A compact subagent summary in the transcript, with the full search in the dock.
+ * Without a dock callback it remains an inline disclosure. Reports and file
+ * locations come from the persisted tool cell, so they survive the live run.
  */
 export const FastContextCard = memo(function FastContextCard({
 	cell,
 	run,
 	onOpenFile,
+	onOpenDetails,
+	docked = false,
 }: {
 	cell: Extract<AgentCell, { type: "tool" }>;
 	/** The live run, while the session still knows it. */
 	run?: ExplorerRun;
 	onOpenFile?: (path: string) => void;
+	onOpenDetails?: (toolCallId: string) => void;
+	docked?: boolean;
 }) {
 	const { t } = useTranslation();
 	// The row decides when it is over: the explorer can finish a moment before
@@ -191,8 +191,9 @@ export const FastContextCard = memo(function FastContextCard({
 					? run.status
 					: "running";
 	const running = status === "running";
-	const [open, setOpen] = useState(true);
-	const [details, setDetails] = useState(false);
+	const [open, setOpen] = useState(docked);
+	const detailId = useId();
+	const [details, setDetails] = useState(docked);
 	const now = useTenths(running);
 
 	const query = typeof (cell.args as { query?: unknown } | null)?.query === "string" ? (cell.args as { query: string }).query : "";
@@ -226,47 +227,27 @@ export const FastContextCard = memo(function FastContextCard({
 		: [status === "completed" ? t("fastCard.found", { count: locations.length }) : t(status === "cancelled" ? "fastCard.cancelled" : "fastCard.failed")];
 	const meta = [...summary.filter(Boolean), elapsed !== null ? seconds(elapsed) : null].filter(Boolean).join(" · ");
 
+	const activity = newest?.kind === "tool" ? `${newest.toolName} ${stepSubject(newest).text}`
+		: newest?.kind === "thinking" || newest?.kind === "message" ? lastThinkingLine(newest.text) : "";
+	const trailing = running ? activity || t("fastCard.starting") : meta;
 	return (
-		<div
-			className={cn(
-				"relative overflow-hidden rounded-lg border border-border/60",
-				running && "fast-context-scan",
-				status === "failed" && "border-destructive/40",
-			)}
-		>
-			<button
-				type="button"
-				aria-expanded={open}
-				onClick={() => setOpen((value) => !value)}
-				className="flex w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left"
-			>
-				{status === "failed" ? (
-					<TriangleAlertIcon className="size-3.5 shrink-0 text-destructive" />
-				) : (
-					<ZapIcon
-						className={cn(
-							"size-3.5 shrink-0",
-							running ? "fast-context-bolt text-[var(--color-token-text-link-foreground)]" : MUTED_LABEL_TEXT_CLASS_NAME,
-						)}
-					/>
-				)}
-				<span className="shrink-0 text-[length:var(--app-font-size-chat,12px)] font-medium">Fast Context</span>
-				<span
-					title={query}
-					className={cn(
-						"min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui-sm,11px)]",
-						MUTED_LABEL_TEXT_CLASS_NAME,
-					)}
-				>
-					{query}
-				</span>
-				<span className={cn("shrink-0 tabular-nums text-[length:var(--app-font-size-ui-sm,11px)]", MUTED_LABEL_TEXT_CLASS_NAME)}>
-					{meta}
-				</span>
-				<ChevronRightIcon data-open={open} className={cn("workflow-chevron size-3.5 shrink-0", MUTED_LABEL_TEXT_CLASS_NAME)} />
-			</button>
-
-			<DisclosureRegion open={open}>
+		<div data-fast-context={docked ? "detail" : "summary"} className="min-w-0">
+			<div className="relative my-0.5 mb-1.5 flex min-w-0 items-center rounded-lg border border-border bg-muted/20 transition-colors duration-120 hover:border-muted-foreground/40 hover:bg-muted/40 focus-within:border-ring motion-reduce:transition-none">
+				<button type="button" title={["Fast Context", query, trailing].filter(Boolean).join(" · ")}
+					aria-label={`Fast Context · ${query} · ${running ? t("workflow.running") : t(status === "completed" ? "workflow.completed" : status === "cancelled" ? "fastCard.cancelled" : "fastCard.failed")}`}
+					aria-expanded={onOpenDetails ? undefined : open} aria-controls={onOpenDetails ? undefined : detailId}
+					onClick={() => onOpenDetails ? onOpenDetails(cell.toolCallId) : setOpen(value => !value)}
+					className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-[9px] pl-3 pr-2.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring">
+					<TaskStatusIcon task={{ status }} />
+					<span className="flex min-w-0 flex-1 items-center leading-[1.4]">
+						<span className={cn("min-w-0 truncate text-[13px] font-medium", running && "shimmer")}>Fast Context{query ? ` · ${query}` : ""}</span>
+						<span className="ml-1.5 max-w-[50%] shrink truncate text-[12px] text-muted-foreground/75"><span key={trailing} className="task-activity-flip inline-block max-w-full truncate align-middle">· {trailing}</span></span>
+					</span>
+					{run?.model ? <span title={run.model} className="max-w-[25%] truncate text-[12px] text-muted-foreground/75">{run.model.split("/").pop()}</span> : null}
+					<ChevronRightIcon aria-hidden="true" data-open={open} className={cn("size-[18px] shrink-0 text-muted-foreground", !onOpenDetails && "workflow-chevron")} />
+				</button>
+			</div>
+			<DisclosureRegion id={detailId} open={!onOpenDetails && open}>
 				<div className="flex flex-col gap-1.5 border-t border-border/40 px-2.5 py-2">
 					{/* The search: live while it runs, on request once it is over. */}
 					{running || details ? (

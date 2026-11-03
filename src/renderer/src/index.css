@@ -4254,3 +4254,17 @@ html[data-wallpaper] select optgroup {
   background: var(--composer-glass-surface);
   color: var(--foreground);
 }
+
+/* Subagent card: a stable single line while the latest activity changes. */
+@keyframes task-pixel-fill {
+  0%, 85%, 100% { opacity: .2; }
+  35%, 70% { opacity: 1; }
+}
+@keyframes task-activity-flip {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .task-pixel-loader > span { animation: task-pixel-fill 1.3s steps(1) infinite; }
+  .task-activity-flip { animation: task-activity-flip 180ms ease-out; }
+}

@@ -433,11 +433,12 @@ export default function App() {
 	const liveTasks = useMemo(() => snapshot?.workflow.tasks ?? [], [snapshot]);
 	useEffect(() => {
 		const ids = new Set(liveTasks.map((task) => taskTabId(task.id)));
+		const explorerIds = new Set(snapshot?.cells.flatMap(cell => cell.type === "tool" && cell.toolName === "code_search" ? [`explorer:${cell.toolCallId}`] : []) ?? []);
 		setDockTabs((current) => {
-			const next = current.filter((tab) => !tab.startsWith("task:") || ids.has(tab));
+			const next = current.filter((tab) => tab.startsWith("explorer:") ? explorerIds.has(tab) : !tab.startsWith("task:") || ids.has(tab));
 			return next.length === current.length ? current : next;
 		});
-	}, [liveTasks]);
+	}, [liveTasks, snapshot?.cells]);
 
 	// Whatever removed a tab — a close, a session change — the tab on screen has
 	// to be one that still exists.
@@ -1000,6 +1001,7 @@ export default function App() {
 				})}
 				onToggleTerminal={inPane(() => setTerminalOpen((open) => !open))}
 				onToggleBrowser={inPane(() => toggleDockTool("browser"))}
+				onOpenExplorer={layoutMode === "ide" ? undefined : inPaneInteractive((id: string) => openDockTab(`explorer:${id}`))}
 				onOpenTask={layoutMode === "ide" ? undefined : inPaneInteractive((taskId: string) => openDockTab(taskTabId(taskId)))}
 				onOpenFile={inPaneInteractive(openDockFile)}
 				onOpenDiff={layoutMode === "ide" ? undefined : inPane((checkpoint: CheckpointSummary, path: string) => {
@@ -1372,6 +1374,7 @@ export default function App() {
 							active={dockActive}
 							tasks={liveTasks}
 							agentSnapshot={snapshot ?? null}
+							onOpenFile={openDockFile}
 							onOpenTask={(taskId) => openDockTab(taskTabId(taskId))}
 							checkpoints={snapshot?.checkpoints ?? []}
 							checkpointsBusy={busy || (snapshot?.streaming ?? false)}

@@ -13,6 +13,9 @@ export interface WorkStage {
 	items: WorkItem[];
 	phase?: WorkPhase;
 	topic?: WorkTopic;
+	/** A historical todo update occupies its own second-level heading. */
+	todo?: boolean;
+	agent?: boolean;
 }
 
 export function workCategory(item: WorkItem): WorkCategory {
@@ -103,6 +106,7 @@ const implementKeys: Partial<Record<WorkTopic, TranslationKey>> = {
 
 /** Labels describe a phase's purpose, never a command, filename or internal state. */
 export function workStageLabel(stage: WorkStage, t: TranslateFn): string {
+	if (stage.todo) return t("workflow.todoUpdate");
 	if (stage.title && !fileTitle(stage.title)) return stage.title;
 	const phase = stage.phase ?? (stage.category === "read" || stage.category === "search" ? "investigate" : stage.category === "edit" ? "implement" : stage.category);
 	const key = phase === "investigate" ? inspectKeys[stage.topic ?? "general"]
@@ -209,6 +213,19 @@ export function groupWorkStages(items: readonly WorkItem[], language: Language =
 				return;
 			}
 			if (item.kind !== "tool") return;
+			if (["task", "code_search"].includes(item.cell.toolName)) {
+				if (pending.length) {
+					if (previous && !previous.agent) appendPending(previous);
+					else { stages.push({ id: pendingId, title: "", category: "thinking", items: pending }); pending = []; pendingId = ""; }
+				}
+				stages.push({ id: `stage-${index}-${part}`, title: "", category: "task", agent: true, items: [item] });
+				return;
+			}
+			if (item.cell.toolName === "todo_write") {
+				stages.push({ id: `stage-${index}-${part}`, title: "", category: "tools", todo: true, items: [...pending, item] });
+				pending = []; pendingId = "";
+				return;
+			}
 			const activity = toolActivity(item, edited);
 			const previousHasTool = previous?.items.some(entry => entry.kind === "tool");
 			const plan = previous?.titleSource === "heading" && /设计|规划|方案|页面结构|\b(?:design|plan|architecture)\b/i.test(previous.title);
@@ -217,7 +234,7 @@ export function groupWorkStages(items: readonly WorkItem[], language: Language =
 			const topicChanged = previousHasTool && previous?.titleSource !== "heading" && activity.phase === previous?.phase &&
 				activity.topic !== "general" && previous?.topic !== "general" && activity.topic !== previous?.topic;
 
-			if (!previous || phaseChanged || planEnded || topicChanged) {
+			if (!previous || previous.todo || previous.agent || phaseChanged || planEnded || topicChanged) {
 				previous = { id: pendingId || `stage-${index}-${part}`, title, titleSource: title ? "tool" : undefined, category: workCategory(item), phase: activity.phase ?? (workCategory(item) === "tools" ? "tools" : "command"), topic: activity.topic, items: [] };
 				stages.push(previous);
 			} else {

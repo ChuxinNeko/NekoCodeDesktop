@@ -328,6 +328,7 @@ export const zhCN: Record<TranslationKey, string> = {
 	"workflow.previous": "上一步",
 	"workflow.stepOf": "第 {current} 题，共 {total} 题",
 	"workflow.title": "工作流",
+	"workflow.todoUpdate": "更新待办事项",
 	"workflow.stepsSection": "执行步骤",
 	"workflow.subagentsSection": "子代理",
 	"workflow.expand": "向上展开工作流",
